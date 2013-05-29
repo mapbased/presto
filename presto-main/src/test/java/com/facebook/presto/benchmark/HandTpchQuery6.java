@@ -1,18 +1,15 @@
 package com.facebook.presto.benchmark;
 
-import com.facebook.presto.block.Block;
+import com.facebook.presto.block.BlockBuilder;
 import com.facebook.presto.block.BlockCursor;
 import com.facebook.presto.block.BlockIterable;
-import com.facebook.presto.operator.AbstractFilterAndProjectOperator.AbstractFilterAndProjectIterator;
-import com.facebook.presto.operator.AggregationOperator;
+import com.facebook.presto.operator.AbstractPageIterator;
 import com.facebook.presto.operator.AlignmentOperator;
 import com.facebook.presto.operator.Operator;
 import com.facebook.presto.operator.OperatorStats;
-import com.facebook.presto.operator.PageBuilder;
+import com.facebook.presto.operator.Page;
 import com.facebook.presto.operator.PageIterator;
 import com.facebook.presto.serde.BlocksFileEncoding;
-import com.facebook.presto.sql.planner.plan.AggregationNode.Step;
-import com.facebook.presto.sql.tree.Input;
 import com.facebook.presto.tpch.TpchBlocksProvider;
 import com.facebook.presto.tuple.TupleInfo;
 import com.google.common.collect.ImmutableList;
@@ -21,8 +18,6 @@ import io.airlift.slice.Slices;
 
 import java.util.List;
 
-import static com.facebook.presto.operator.AggregationFunctionDefinition.aggregation;
-import static com.facebook.presto.operator.aggregation.DoubleSumAggregation.DOUBLE_SUM;
 import static com.google.common.base.Charsets.UTF_8;
 import static com.google.common.base.Preconditions.checkState;
 
@@ -52,7 +47,7 @@ public class HandTpchQuery6
 
         AlignmentOperator alignmentOperator = new AlignmentOperator(extendedPrice, discount, shipDate, quantity);
         TpchQuery6Operator tpchQuery6Operator = new TpchQuery6Operator(alignmentOperator);
-        return new AggregationOperator(tpchQuery6Operator, Step.SINGLE, ImmutableList.of(aggregation(DOUBLE_SUM, new Input(0, 0))));
+        return tpchQuery6Operator;
     }
 
     public static class TpchQuery6Operator
@@ -86,60 +81,81 @@ public class HandTpchQuery6
         }
 
         private static class TpchQuery6Iterator
-                extends AbstractFilterAndProjectIterator
+                extends AbstractPageIterator
         {
             private static final Slice MIN_SHIP_DATE = Slices.copiedBuffer("1994-01-01", UTF_8);
             private static final Slice MAX_SHIP_DATE = Slices.copiedBuffer("1995-01-01", UTF_8);
 
+            private final PageIterator pageIterator;
+            private boolean done;
+
             public TpchQuery6Iterator(PageIterator pageIterator)
             {
-                super(ImmutableList.of(TupleInfo.SINGLE_DOUBLE), pageIterator);
+                super(ImmutableList.of(TupleInfo.SINGLE_DOUBLE));
+                this.pageIterator = pageIterator;
+            }
+
+            protected Page computeNext()
+            {
+                if (done) {
+                    return endOfData();
+                }
+                done = true;
+
+
+                double sum = 0;
+                boolean hasNonNull = false;
+                while (pageIterator.hasNext()) {
+                    Page page = pageIterator.next();
+
+
+                    BlockCursor extendedPriceCursor = page.getBlock(0).cursor();
+                    BlockCursor discountCursor = page.getBlock(1).cursor();
+                    BlockCursor shipDateCursor = page.getBlock(2).cursor();
+                    BlockCursor quantityCursor = page.getBlock(3).cursor();
+
+                    int rows = page.getPositionCount();
+                    for (int position = 0; position < rows; position++) {
+                        checkState(extendedPriceCursor.advanceNextPosition());
+                        checkState(discountCursor.advanceNextPosition());
+                        checkState(shipDateCursor.advanceNextPosition());
+                        checkState(quantityCursor.advanceNextPosition());
+
+                        // where shipdate >= '1994-01-01'
+                        //    and shipdate < '1995-01-01'
+                        //    and discount >= 0.05
+                        //    and discount <= 0.07
+                        //    and quantity < 24;
+                        if (filter(discountCursor, shipDateCursor, quantityCursor)) {
+                            if (!discountCursor.isNull(0) && !extendedPriceCursor.isNull(0)) {
+                                sum += extendedPriceCursor.getDouble(0) * discountCursor.getDouble(0);
+                                hasNonNull = true;
+                            }
+                        }
+                    }
+
+                    checkState(!extendedPriceCursor.advanceNextPosition());
+                    checkState(!discountCursor.advanceNextPosition());
+                    checkState(!shipDateCursor.advanceNextPosition());
+                    checkState(!quantityCursor.advanceNextPosition());
+                }
+
+                BlockBuilder builder = new BlockBuilder(TupleInfo.SINGLE_DOUBLE);
+
+                if (hasNonNull) {
+                    builder.append(sum);
+                }
+                else {
+                    builder.appendNull();
+                }
+
+                return new Page(builder.build());
             }
 
             @Override
-            protected void filterAndProjectRowOriented(Block[] blocks, PageBuilder pageBuilder)
+            protected void doClose()
             {
-                filterAndProjectRowOriented(pageBuilder, blocks[0], blocks[1], blocks[2], blocks[3]);
-            }
-
-            private void filterAndProjectRowOriented(PageBuilder pageBuilder, Block extendedPriceBlock, Block discountBlock, Block shipDateBlock, Block quantityBlock)
-            {
-                int rows = extendedPriceBlock.getPositionCount();
-
-                BlockCursor extendedPriceCursor = extendedPriceBlock.cursor();
-                BlockCursor discountCursor = discountBlock.cursor();
-                BlockCursor shipDateCursor = shipDateBlock.cursor();
-                BlockCursor quantityCursor = quantityBlock.cursor();
-
-                for (int position = 0; position < rows; position++) {
-                    checkState(extendedPriceCursor.advanceNextPosition());
-                    checkState(discountCursor.advanceNextPosition());
-                    checkState(shipDateCursor.advanceNextPosition());
-                    checkState(quantityCursor.advanceNextPosition());
-
-                    // where shipdate >= '1994-01-01'
-                    //    and shipdate < '1995-01-01'
-                    //    and discount >= 0.05
-                    //    and discount <= 0.07
-                    //    and quantity < 24;
-                    if (filter(discountCursor, shipDateCursor, quantityCursor)) {
-                        project(pageBuilder, extendedPriceCursor, discountCursor);
-                    }
-                }
-
-                checkState(!extendedPriceCursor.advanceNextPosition());
-                checkState(!discountCursor.advanceNextPosition());
-                checkState(!shipDateCursor.advanceNextPosition());
-                checkState(!quantityCursor.advanceNextPosition());
-            }
-
-            private void project(PageBuilder pageBuilder, BlockCursor extendedPriceCursor, BlockCursor discountCursor)
-            {
-                if (discountCursor.isNull(0) || extendedPriceCursor.isNull(0)) {
-                    pageBuilder.getBlockBuilder(0).appendNull();
-                } else {
-                    pageBuilder.getBlockBuilder(0).append(extendedPriceCursor.getDouble(0) * discountCursor.getDouble(0));
-                }
+                pageIterator.close();
             }
 
             private boolean filter(BlockCursor discountCursor, BlockCursor shipDateCursor, BlockCursor quantityCursor)

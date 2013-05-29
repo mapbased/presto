@@ -39,6 +39,16 @@ public class DoubleSumAggregation
         SINGLE_LONG.setNull(valueSlice, valueOffset, 0);
     }
 
+    public void addInput(double newValue, Slice intermediateValue, int valueOffset)
+    {
+        // mark value not null
+        SINGLE_LONG.setNotNull(intermediateValue, valueOffset, 0);
+
+        // update current value
+        double currentValue = SINGLE_DOUBLE.getDouble(intermediateValue, valueOffset, 0);
+        SINGLE_DOUBLE.setDouble(intermediateValue, valueOffset, 0, currentValue + newValue);
+    }
+
     @Override
     public void addInput(BlockCursor cursor, int field, Slice valueSlice, int valueOffset)
     {
