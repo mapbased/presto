@@ -13,6 +13,7 @@
  */
 package com.facebook.presto.execution;
 
+import com.facebook.presto.OutputBuffers;
 import com.facebook.presto.execution.NodeScheduler.NodeSelector;
 import com.facebook.presto.execution.StateMachine.StateChangeListener;
 import com.facebook.presto.metadata.Node;
@@ -58,7 +59,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
-import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutorService;
@@ -70,6 +70,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static com.facebook.presto.execution.StageInfo.stageStateGetter;
 import static com.facebook.presto.execution.TaskInfo.taskStateGetter;
 import static com.facebook.presto.util.Failures.toFailures;
+import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Predicates.equalTo;
 import static com.google.common.collect.Iterables.all;
 import static com.google.common.collect.Iterables.any;
@@ -112,11 +113,11 @@ public class SqlStageExecution
     private final Set<PlanNodeId> completeSources = new HashSet<>();
 
     @GuardedBy("this")
-    private Set<String> currentOutputBuffers = ImmutableSet.of();
+    private OutputBuffers currentOutputBuffers = new OutputBuffers(0, false);
     @GuardedBy("this")
-    private final Set<String> newOutputBuffers = new TreeSet<>();
-    @GuardedBy("this")
-    private boolean noMoreOutputIds;
+    private OutputBuffers nextOutputBuffers;
+
+    private OutputBuffers subStageOutputBuffers = new OutputBuffers(0, false);
 
     private final ExecutorService executor;
 
@@ -151,15 +152,15 @@ public class SqlStageExecution
             int maxPendingSplitsPerNode,
             ExecutorService executor)
     {
-        Preconditions.checkNotNull(queryId, "queryId is null");
-        Preconditions.checkNotNull(nextStageId, "nextStageId is null");
-        Preconditions.checkNotNull(locationFactory, "locationFactory is null");
-        Preconditions.checkNotNull(plan, "plan is null");
-        Preconditions.checkNotNull(nodeScheduler, "nodeScheduler is null");
-        Preconditions.checkNotNull(remoteTaskFactory, "remoteTaskFactory is null");
-        Preconditions.checkNotNull(session, "session is null");
+        checkNotNull(queryId, "queryId is null");
+        checkNotNull(nextStageId, "nextStageId is null");
+        checkNotNull(locationFactory, "locationFactory is null");
+        checkNotNull(plan, "plan is null");
+        checkNotNull(nodeScheduler, "nodeScheduler is null");
+        checkNotNull(remoteTaskFactory, "remoteTaskFactory is null");
+        checkNotNull(session, "session is null");
         Preconditions.checkArgument(maxPendingSplitsPerNode > 0, "maxPendingSplitsPerNode must be greater than 0");
-        Preconditions.checkNotNull(executor, "executor is null");
+        checkNotNull(executor, "executor is null");
 
         this.stageId = new StageId(queryId, String.valueOf(nextStageId.getAndIncrement()));
         try (SetThreadName setThreadName = new SetThreadName("Stage-%s", stageId)) {
@@ -348,27 +349,33 @@ public class SqlStageExecution
         }
     }
 
-    public synchronized void addOutputBuffer(String outputId)
+    public synchronized void setOutputBuffers(OutputBuffers outputBuffers)
     {
-        Preconditions.checkNotNull(outputId, "outputId is null");
-        Preconditions.checkArgument(!currentOutputBuffers.contains(outputId) && !newOutputBuffers.contains(outputId), "Stage already has an output %s", outputId);
-
-        try (SetThreadName setThreadName = new SetThreadName("Stage-%s", stageId)) {
-            newOutputBuffers.add(outputId);
-
-            // wake up worker thread waiting for new buffers
-            this.notifyAll();
+        checkNotNull(outputBuffers, "outputBuffers is null");
+        if (outputBuffers.getVersion() < currentOutputBuffers.getVersion()) {
+            return;
         }
+        if (nextOutputBuffers != null && outputBuffers.getVersion() < nextOutputBuffers.getVersion()) {
+            return;
+        }
+        this.nextOutputBuffers = outputBuffers;
+        this.notifyAll();
     }
 
-    public synchronized void noMoreOutputBuffers()
+    public synchronized OutputBuffers getCurrentOutputBuffers()
     {
-        try (SetThreadName setThreadName = new SetThreadName("Stage-%s", stageId)) {
-            noMoreOutputIds = true;
+        return currentOutputBuffers;
+    }
 
-            // wake up worker thread waiting for new buffers
-            this.notifyAll();
+    public synchronized OutputBuffers updateToNextOutputBuffers()
+    {
+        if (nextOutputBuffers == null) {
+            return currentOutputBuffers;
         }
+
+        currentOutputBuffers = nextOutputBuffers;
+        nextOutputBuffers = null;
+        return currentOutputBuffers;
     }
 
     @Override
@@ -478,9 +485,7 @@ public class SqlStageExecution
                 stageState.set(StageState.SCHEDULED);
 
                 // tell sub stages there will be no more output buffers
-                for (StageExecutionNode subStage : subStages.values()) {
-                    subStage.noMoreOutputBuffers();
-                }
+                setSubStageNoMoreBufferIds();
 
                 // add the missing exchanges output buffers
                 updateNewExchangesAndBuffers(true);
@@ -577,9 +582,7 @@ public class SqlStageExecution
                 }
 
                 // tell sub stages there will be no more output buffers
-                for (StageExecutionNode subStage : subStages.values()) {
-                    subStage.noMoreOutputBuffers();
-                }
+                setSubStageNoMoreBufferIds();
             }
 
             synchronized (this) {
@@ -651,9 +654,7 @@ public class SqlStageExecution
         }
 
         // tell the sub stages to create a buffer for this task
-        for (StageExecutionNode subStage : subStages.values()) {
-            subStage.addOutputBuffer(nodeIdentifier);
-        }
+        addSubStageBufferId(nodeIdentifier);
 
         return task;
     }
@@ -685,21 +686,10 @@ public class SqlStageExecution
                 .build();
 
         // get new output buffer and update output buffer state
-        boolean outputComplete;
-        ImmutableSet<String> newOutputBuffers;
-        synchronized (this) {
-            outputComplete = noMoreOutputIds;
-            newOutputBuffers = ImmutableSet.copyOf(this.newOutputBuffers);
-
-            this.newOutputBuffers.clear();
-            currentOutputBuffers = ImmutableSet.<String>builder()
-                    .addAll(currentOutputBuffers)
-                    .addAll(newOutputBuffers)
-                    .build();
-        }
+        OutputBuffers outputBuffers = updateToNextOutputBuffers();
 
         // finished state must be decided before update to avoid race conditions
-        boolean finished = allSourceComplete && outputComplete;
+        boolean finished = allSourceComplete && outputBuffers.isNoMoreBufferIds();
 
         // update tasks
         for (RemoteTask task : tasks.values()) {
@@ -707,7 +697,7 @@ public class SqlStageExecution
                 RemoteSplit remoteSplit = createRemoteSplitFor(task.getNodeId(), entry.getValue());
                 task.addSplit(entry.getKey(), remoteSplit);
             }
-            task.addOutputBuffers(newOutputBuffers, outputComplete);
+            task.setOutputBuffers(outputBuffers);
             for (PlanNodeId completeSource : completeSources) {
                 task.noMoreSplits(completeSource);
             }
@@ -722,16 +712,20 @@ public class SqlStageExecution
             // if next loop will finish, don't wait
             Set<PlanNodeId> completeSources = updateCompleteSources();
             boolean allSourceComplete = completeSources.containsAll(fragment.getSourceIds());
-            if (allSourceComplete && noMoreOutputIds) {
+            if (allSourceComplete && getCurrentOutputBuffers().isNoMoreBufferIds()) {
                 return;
             }
-            if (!newOutputBuffers.isEmpty()) {
-                return;
+            // do we have a new set of output buffers?
+            synchronized (this) {
+                if (nextOutputBuffers != null) {
+                    return;
+                }
             }
+            // do we have new exchange locations?
             if (!getNewExchangeLocations().isEmpty()) {
                 return;
             }
-
+            // wait for a state change
             try {
                 TimeUnit.SECONDS.timedWait(this, 1);
             }
@@ -849,6 +843,28 @@ public class SqlStageExecution
         }
     }
 
+    private void addSubStageBufferId(String bufferId)
+    {
+        subStageOutputBuffers = new OutputBuffers(
+                subStageOutputBuffers.getVersion() + 1,
+                subStageOutputBuffers.isNoMoreBufferIds(),
+                ImmutableSet.<String>builder().addAll(subStageOutputBuffers.getBufferIds()).add(bufferId).build());
+        for (StageExecutionNode subStage : subStages.values()) {
+            subStage.setOutputBuffers(subStageOutputBuffers);
+        }
+    }
+
+    private void setSubStageNoMoreBufferIds()
+    {
+        subStageOutputBuffers = new OutputBuffers(
+                subStageOutputBuffers.getVersion() + 1,
+                true,
+                subStageOutputBuffers.getBufferIds());
+        for (StageExecutionNode subStage : subStages.values()) {
+            subStage.setOutputBuffers(subStageOutputBuffers);
+        }
+    }
+
     private RemoteSplit createRemoteSplitFor(String nodeId, URI taskLocation)
     {
         URI splitLocation = uriBuilderFrom(taskLocation).appendPath("results").appendPath(nodeId).build();
@@ -904,9 +920,7 @@ interface StageExecutionNode
 
     Future<?> scheduleStartTasks();
 
-    void addOutputBuffer(String nodeIdentifier);
-
-    void noMoreOutputBuffers();
+    void setOutputBuffers(OutputBuffers outputBuffers);
 
     Iterable<? extends URI> getTaskLocations();
 
