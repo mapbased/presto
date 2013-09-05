@@ -15,9 +15,13 @@ package com.facebook.presto;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.google.common.base.Function;
 import com.google.common.base.Objects;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Maps;
 
+import java.util.Map;
 import java.util.Set;
 
 import static com.google.common.base.Preconditions.checkNotNull;
@@ -26,21 +30,34 @@ public class OutputBuffers
 {
     private final long version;
     private final boolean noMoreBufferIds;
-    private final Set<String> bufferIds;
+    private final Map<String, PagePartitionFunction> buffers;
 
-    public OutputBuffers(long version, boolean noMoreBufferIds, String... bufferIds)
+    public OutputBuffers(long version, boolean noMoreBufferIds, String... buffers)
     {
-        this(version, noMoreBufferIds, ImmutableSet.copyOf(bufferIds));
+        this(version, noMoreBufferIds, ImmutableSet.copyOf(buffers));
+    }
+
+    public OutputBuffers(long version, boolean noMoreBufferIds, Set<String> buffers)
+    {
+        this.version = version;
+        this.noMoreBufferIds = noMoreBufferIds;
+        this.buffers = Maps.toMap(buffers, new Function<String, PagePartitionFunction>() {
+            @Override
+            public PagePartitionFunction apply(String input)
+            {
+                return new UnpartitionedPagePartitionFunction();
+            }
+        });
     }
 
     @JsonCreator
     public OutputBuffers(
             @JsonProperty("version") long version,
             @JsonProperty("noMoreBufferIds") boolean noMoreBufferIds,
-            @JsonProperty("bufferIds") Set<String> bufferIds)
+            @JsonProperty("buffers") Map<String, PagePartitionFunction> buffers)
     {
         this.version = version;
-        this.bufferIds = ImmutableSet.copyOf(checkNotNull(bufferIds, "bufferIds is null"));
+        this.buffers = ImmutableMap.copyOf(checkNotNull(buffers, "buffers is null"));
         this.noMoreBufferIds = noMoreBufferIds;
     }
 
@@ -57,15 +74,15 @@ public class OutputBuffers
     }
 
     @JsonProperty
-    public Set<String> getBufferIds()
+    public Map<String, PagePartitionFunction> getBuffers()
     {
-        return bufferIds;
+        return buffers;
     }
 
     @Override
     public int hashCode()
     {
-        return Objects.hashCode(version, noMoreBufferIds, bufferIds);
+        return Objects.hashCode(version, noMoreBufferIds, buffers);
     }
 
     @Override
@@ -80,7 +97,7 @@ public class OutputBuffers
         final OutputBuffers other = (OutputBuffers) obj;
         return Objects.equal(this.version, other.version) &&
                 Objects.equal(this.noMoreBufferIds, other.noMoreBufferIds) &&
-                Objects.equal(this.bufferIds, other.bufferIds);
+                Objects.equal(this.buffers, other.buffers);
     }
 
     @Override
@@ -89,7 +106,7 @@ public class OutputBuffers
         return Objects.toStringHelper(this)
                 .add("version", version)
                 .add("noMoreBufferIds", noMoreBufferIds)
-                .add("bufferIds", bufferIds)
+                .add("bufferIds", buffers)
                 .toString();
     }
 }

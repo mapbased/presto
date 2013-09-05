@@ -37,7 +37,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static com.facebook.presto.block.BlockAssertions.assertBlockEquals;
-import static com.facebook.presto.execution.BufferResult.bufferResult;
 import static com.facebook.presto.execution.BufferResult.emptyResults;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
@@ -628,11 +627,11 @@ public class TestSharedBuffer
 
     private void assertBufferResultEquals(BufferResult actual, BufferResult expected)
     {
-        assertEquals(actual.getElements().size(), expected.getElements().size());
-        assertEquals(actual.getStartingSequenceId(), expected.getStartingSequenceId());
-        for (int i = 0; i < actual.getElements().size(); i++) {
-            Page actualPage = actual.getElements().get(i);
-            Page expectedPage = expected.getElements().get(i);
+        assertEquals(actual.getPages().size(), expected.getPages().size());
+        assertEquals(actual.getToken(), expected.getToken());
+        for (int i = 0; i < actual.getPages().size(); i++) {
+            Page actualPage = actual.getPages().get(i);
+            Page expectedPage = expected.getPages().get(i);
             assertEquals(actualPage.getChannelCount(), expectedPage.getChannelCount());
             for (int channel = 0; channel < actualPage.getChannelCount(); channel++) {
                 assertBlockEquals(actualPage.getBlock(channel), expectedPage.getBlock(channel));
@@ -641,7 +640,13 @@ public class TestSharedBuffer
         assertEquals(actual.isBufferClosed(), expected.isBufferClosed());
     }
 
-    private static class GetPagesJob
+    public static BufferResult bufferResult(long token, Page firstPage, Page... otherPages)
+    {
+        List<Page> pages = ImmutableList.<Page>builder().add(firstPage).add(otherPages).build();
+        return new BufferResult(token, token + pages.size(), false, pages);
+    }
+
+    private static class GetPagesJob 
             implements Runnable
     {
         private final SharedBuffer sharedBuffer;
@@ -717,8 +722,8 @@ public class TestSharedBuffer
                     try {
                         BufferResult result = sharedBuffer.get("queue", sequenceId, sizeOfPages(batchSize), MAX_WAIT);
                         assertTrue(!result.isEmpty());
-                        this.elements.addAll(result.getElements());
-                        sequenceId = result.getStartingSequenceId() + result.getElements().size();
+                        this.elements.addAll(result.getPages());
+                        sequenceId = result.getToken() + result.getPages().size();
                         sharedBuffer.acknowledge("queue", sequenceId);
                     }
                     catch (FailedQueryException e) {
