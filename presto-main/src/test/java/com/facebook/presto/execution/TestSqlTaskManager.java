@@ -183,13 +183,13 @@ public class TestSqlTaskManager
 
         BufferResult results = sqlTaskManager.getTaskResults(taskId, "out", 0, new DataSize(1, Unit.MEGABYTE), new Duration(1, TimeUnit.SECONDS));
         assertEquals(results.isBufferClosed(), false);
-        assertEquals(results.getElements().size(), 1);
-        assertEquals(results.getElements().get(0).getPositionCount(), 1);
+        assertEquals(results.getPages().size(), 1);
+        assertEquals(results.getPages().get(0).getPositionCount(), 1);
 
-        results = sqlTaskManager.getTaskResults(taskId, "out", results.getStartingSequenceId() + results.getElements().size(), new DataSize(1, Unit.MEGABYTE), new Duration(1, TimeUnit.SECONDS));
+        results = sqlTaskManager.getTaskResults(taskId, "out", results.getToken() + results.getPages().size(), new DataSize(1, Unit.MEGABYTE), new Duration(1, TimeUnit.SECONDS));
         // todo this should be true
         assertEquals(results.isBufferClosed(), false);
-        assertEquals(results.getElements().size(), 0);
+        assertEquals(results.getPages().size(), 0);
 
         sqlTaskManager.waitForStateChange(taskInfo.getTaskId(), taskInfo.getState(), new Duration(1, TimeUnit.SECONDS));
         taskInfo = sqlTaskManager.getTaskInfo(taskInfo.getTaskId(), false);

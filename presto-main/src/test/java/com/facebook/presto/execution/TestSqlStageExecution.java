@@ -104,6 +104,7 @@ public class TestSqlStageExecution
                     new NodeScheduler(nodeManager, new NodeSchedulerConfig()), new MockRemoteTaskFactory(executor),
                     SESSION,
                     1,
+                    8,
                     executor);
 
             stageExecution.setOutputBuffers(new OutputBuffers(0, true, "out"));
