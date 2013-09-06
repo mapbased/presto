@@ -17,6 +17,7 @@ import com.facebook.presto.spi.ColumnHandle;
 import com.facebook.presto.spi.Domain;
 import com.facebook.presto.spi.Domains;
 import com.facebook.presto.sql.analyzer.Type;
+import com.facebook.presto.sql.planner.PlanFragment.Partitioning;
 import com.facebook.presto.sql.planner.plan.AggregationNode;
 import com.facebook.presto.sql.planner.plan.ExchangeNode;
 import com.facebook.presto.sql.planner.plan.FilterNode;
@@ -94,7 +95,7 @@ public class PlanPrinter
 
     public static String graphvizLogicalPlan(PlanNode plan, Map<Symbol, Type> types)
     {
-        PlanFragment fragment = new PlanFragment(new PlanFragmentId("graphviz_plan"), plan.getId(), types, plan);
+        PlanFragment fragment = new PlanFragment(new PlanFragmentId("graphviz_plan"), plan, types, Partitioning.NONE, plan.getId());
         return GraphvizPrinter.printLogical(ImmutableList.of(fragment));
     }
 

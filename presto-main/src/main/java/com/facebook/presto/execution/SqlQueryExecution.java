@@ -198,7 +198,7 @@ public class SqlQueryExecution
         Plan plan = logicalPlanner.plan(analysis);
 
         // fragment the plan
-        SubPlan subplan = new DistributedLogicalPlanner(metadata, idAllocator).createSubplans(plan, false);
+        SubPlan subplan = new DistributedLogicalPlanner(metadata, idAllocator).createSubPlans(plan, false);
 
         stateMachine.recordAnalysisTime(analysisStart);
         return subplan;
