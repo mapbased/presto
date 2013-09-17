@@ -13,38 +13,37 @@
  */
 package com.facebook.presto.operator;
 
-import com.facebook.presto.block.Block;
 import com.facebook.presto.block.BlockBuilder;
 import com.facebook.presto.block.BlockCursor;
-import com.facebook.presto.block.uncompressed.UncompressedBlock;
 import com.facebook.presto.operator.aggregation.AggregationFunction;
 import com.facebook.presto.operator.aggregation.FixedWidthAggregationFunction;
 import com.facebook.presto.operator.aggregation.VariableWidthAggregationFunction;
 import com.facebook.presto.sql.planner.plan.AggregationNode.Step;
 import com.facebook.presto.sql.tree.Input;
 import com.facebook.presto.tuple.TupleInfo;
+import com.facebook.presto.tuple.TupleInfo.Type;
 import com.google.common.base.Function;
 import com.google.common.base.Preconditions;
+import com.google.common.collect.AbstractIterator;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
-import com.google.common.collect.Iterators;
+import com.google.common.primitives.Ints;
 import com.google.common.util.concurrent.ListenableFuture;
 import io.airlift.slice.SizeOf;
 import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
-import it.unimi.dsi.fastutil.longs.Long2IntOpenCustomHashMap;
-import it.unimi.dsi.fastutil.longs.LongHash.Strategy;
+import it.unimi.dsi.fastutil.longs.Long2IntMap.Entry;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
+import it.unimi.dsi.fastutil.objects.ObjectIterator;
 
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 
-import static com.facebook.presto.operator.SyntheticAddress.decodeSliceIndex;
-import static com.facebook.presto.operator.SyntheticAddress.decodeSliceOffset;
-import static com.facebook.presto.operator.SyntheticAddress.encodeSyntheticAddress;
+import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
+import static com.google.common.collect.Iterables.transform;
 
 public class HashAggregationOperator
         implements Operator
@@ -53,8 +52,8 @@ public class HashAggregationOperator
             implements OperatorFactory
     {
         private final int operatorId;
-        private final TupleInfo groupByTupleInfo;
-        private final int groupByChannel;
+        private final List<TupleInfo> groupByTupleInfos;
+        private final List<Integer> groupByChannels;
         private final Step step;
         private final List<AggregationFunctionDefinition> functionDefinitions;
         private final int expectedGroups;
@@ -63,20 +62,20 @@ public class HashAggregationOperator
 
         public HashAggregationOperatorFactory(
                 int operatorId,
-                TupleInfo groupByTupleInfo,
-                int groupByChannel,
+                List<TupleInfo> groupByTupleInfos,
+                List<Integer> groupByChannels,
                 Step step,
                 List<AggregationFunctionDefinition> functionDefinitions,
                 int expectedGroups)
         {
             this.operatorId = operatorId;
-            this.groupByTupleInfo = groupByTupleInfo;
-            this.groupByChannel = groupByChannel;
+            this.groupByTupleInfos = groupByTupleInfos;
+            this.groupByChannels = groupByChannels;
             this.step = step;
             this.functionDefinitions = functionDefinitions;
             this.expectedGroups = expectedGroups;
 
-            this.tupleInfos = toTupleInfos(groupByTupleInfo, step, functionDefinitions);
+            this.tupleInfos = toTupleInfos(groupByTupleInfos, step, functionDefinitions);
         }
 
         @Override
@@ -93,8 +92,8 @@ public class HashAggregationOperator
             OperatorContext operatorContext = driverContext.addOperatorContext(operatorId, HashAggregationOperator.class.getSimpleName());
             return new HashAggregationOperator(
                     operatorContext,
-                    groupByTupleInfo,
-                    groupByChannel,
+                    groupByTupleInfos,
+                    groupByChannels,
                     step,
                     functionDefinitions,
                     expectedGroups
@@ -108,11 +107,9 @@ public class HashAggregationOperator
         }
     }
 
-    private static final int LOOKUP_SLICE_INDEX = 0xFF_FF_FF_FF;
-
     private final OperatorContext operatorContext;
-    private final TupleInfo groupByTupleInfo;
-    private final int groupByChannel;
+    private final List<TupleInfo> groupByTupleInfos;
+    private final List<Integer> groupByChannels;
     private final Step step;
     private final List<AggregationFunctionDefinition> functionDefinitions;
     private final int expectedGroups;
@@ -126,26 +123,25 @@ public class HashAggregationOperator
 
     public HashAggregationOperator(
             OperatorContext operatorContext,
-            TupleInfo groupByTupleInfo,
-            int groupByChannel,
+            List<TupleInfo> groupByTupleInfos,
+            List<Integer> groupByChannels,
             Step step,
             List<AggregationFunctionDefinition> functionDefinitions,
             int expectedGroups)
     {
         this.operatorContext = checkNotNull(operatorContext, "operatorContext is null");
-        Preconditions.checkArgument(groupByChannel >= 0, "groupByChannel is negative");
         Preconditions.checkNotNull(step, "step is null");
         Preconditions.checkNotNull(functionDefinitions, "functionDefinitions is null");
         Preconditions.checkNotNull(operatorContext, "operatorContext is null");
 
-        this.groupByTupleInfo = groupByTupleInfo;
-        this.groupByChannel = groupByChannel;
+        this.groupByTupleInfos = groupByTupleInfos;
+        this.groupByChannels = groupByChannels;
         this.functionDefinitions = ImmutableList.copyOf(functionDefinitions);
         this.step = step;
         this.expectedGroups = expectedGroups;
         this.memoryManager = new HashMemoryManager(operatorContext);
 
-        this.tupleInfos = toTupleInfos(groupByTupleInfo, step, functionDefinitions);
+        this.tupleInfos = toTupleInfos(groupByTupleInfos, step, functionDefinitions);
     }
 
     @Override
@@ -194,8 +190,8 @@ public class HashAggregationOperator
                     functionDefinitions,
                     step,
                     expectedGroups,
-                    groupByChannel,
-                    groupByTupleInfo,
+                    groupByTupleInfos,
+                    groupByChannels,
                     memoryManager);
 
             // assume initial aggregationBuilder is not full
@@ -234,10 +230,10 @@ public class HashAggregationOperator
         return outputIterator.next();
     }
 
-    private static List<TupleInfo> toTupleInfos(TupleInfo groupByTupleInfo, Step step, List<AggregationFunctionDefinition> functionDefinitions)
+    private static List<TupleInfo> toTupleInfos(List<TupleInfo> groupByTupleInfo, Step step, List<AggregationFunctionDefinition> functionDefinitions)
     {
         ImmutableList.Builder<TupleInfo> tupleInfos = ImmutableList.builder();
-        tupleInfos.add(groupByTupleInfo);
+        tupleInfos.addAll(groupByTupleInfo);
         for (AggregationFunctionDefinition functionDefinition : functionDefinitions) {
             if (step != Step.PARTIAL) {
                 tupleInfos.add(functionDefinition.getFunction().getFinalTupleInfo());
@@ -251,27 +247,30 @@ public class HashAggregationOperator
 
     private static class GroupByHashAggregationBuilder
     {
+        private final GroupByHash groupByHash;
         private final List<Aggregator> aggregates;
-        private final SliceHashStrategy hashStrategy;
-        private final Long2IntOpenCustomHashMap addressToGroupId;
-        private final List<UncompressedBlock> groupByBlocks = new ArrayList<>();
-        private final int groupByChannel;
-        private final TupleInfo groupByTupleInfo;
         private final HashMemoryManager memoryManager;
-
-        private BlockBuilder blockBuilder;
-        private int nextGroupId;
 
         private GroupByHashAggregationBuilder(
                 List<AggregationFunctionDefinition> functionDefinitions,
                 Step step,
                 int expectedGroups,
-                int groupByChannel,
-                TupleInfo groupByTupleInfo,
+                List<TupleInfo> groupByTupleInfos,
+                List<Integer> groupByChannels,
                 HashMemoryManager memoryManager)
         {
-            this.groupByChannel = groupByChannel;
-            this.groupByTupleInfo = groupByTupleInfo;
+
+
+            ImmutableList<Type> groupByTypes = ImmutableList.copyOf(transform(groupByTupleInfos, new Function<TupleInfo, Type>()
+            {
+                public Type apply(TupleInfo tupleInfo)
+                {
+                    checkArgument(tupleInfo.getFieldCount() == 1);
+                    return tupleInfo.getTypes().get(0);
+                }
+            }));
+
+            this.groupByHash = new GroupByHash(groupByTypes, Ints.toArray(groupByChannels), expectedGroups);
             this.memoryManager = memoryManager;
 
             // wrapper each function with an aggregator
@@ -280,103 +279,20 @@ public class HashAggregationOperator
                 builder.add(createAggregator(functionDefinition, step, expectedGroups));
             }
             aggregates = builder.build();
-
-            // create hash table
-            hashStrategy = new SliceHashStrategy(groupByTupleInfo);
-            addressToGroupId = new Long2IntOpenCustomHashMap(expectedGroups, hashStrategy);
-
-            // initialize hash table
-            addressToGroupId.defaultReturnValue(-1);
-            Slice slice = Slices.allocate((int) BlockBuilder.DEFAULT_MAX_BLOCK_SIZE.toBytes());
-            hashStrategy.addSlice(slice);
-
-            // Group by keys are packed into new blocks
-            blockBuilder = new BlockBuilder(groupByTupleInfo, slice.length(), slice.getOutput());
         }
 
         private void processPage(Page page)
         {
-            // open cursors
-            Block[] blocks = page.getBlocks();
-            BlockCursor[] cursors = new BlockCursor[blocks.length];
-            for (int i = 0; i < blocks.length; i++) {
-                cursors[i] = blocks[i].cursor();
-            }
+            Page groupedPage = groupByHash.group(page);
 
-            Slice groupBySlice = ((UncompressedBlock) blocks[groupByChannel]).getSlice();
-            hashStrategy.setLookupSlice(groupBySlice);
-
-            // process row at a time
-            int rows = page.getPositionCount();
-            for (int position = 0; position < rows; position++) {
-                for (BlockCursor cursor : cursors) {
-                    checkState(cursor.advanceNextPosition());
-                }
-
-                int groupId = putIfAbsent(groupBySlice, cursors);
-
-                // process the row
-                processRow(cursors, groupId);
-            }
-
-            // verify all cursors are complete
-            for (BlockCursor cursor : cursors) {
-                checkState(!cursor.advanceNextPosition());
-            }
-        }
-
-        private int putIfAbsent(Slice groupBySlice, BlockCursor[] cursors)
-        {
-            // lookup the group id (row number of the key)
-            int rawOffset = cursors[groupByChannel].getRawOffset();
-            int groupId = addressToGroupId.get(encodeSyntheticAddress(LOOKUP_SLICE_INDEX, rawOffset));
-            if (groupId < 0) {
-                groupId = addNewGroup(groupBySlice, rawOffset);
-            }
-            return groupId;
-        }
-
-        private int addNewGroup(Slice groupBySlice, int rawOffset)
-        {
-            // copy group by tuple (key) to hash
-            int length = groupByTupleInfo.size(groupBySlice, rawOffset);
-            if (blockBuilder.writableBytes() < length) {
-                UncompressedBlock block = blockBuilder.build();
-                groupByBlocks.add(block);
-                Slice slice = Slices.allocate(Math.max((int) BlockBuilder.DEFAULT_MAX_BLOCK_SIZE.toBytes(), length));
-                blockBuilder = new BlockBuilder(groupByTupleInfo, slice.length(), slice.getOutput());
-                hashStrategy.addSlice(slice);
-            }
-            int groupByValueRawOffset = blockBuilder.size();
-            blockBuilder.appendTuple(groupBySlice, rawOffset, length);
-
-            // record group id in hash
-            int groupId = nextGroupId++;
-            addressToGroupId.put(encodeSyntheticAddress(groupByBlocks.size(), groupByValueRawOffset), groupId);
-
-            // initialize the aggregates
-            initializeRow(groupId);
-
-            return groupId;
-        }
-
-        private void initializeRow(int groupId)
-        {
             for (Aggregator aggregate : aggregates) {
-                aggregate.initialize(groupId);
-            }
-        }
-
-        private void processRow(BlockCursor[] cursors, int groupId)
-        {
-            for (Aggregator aggregate : aggregates) {
-                aggregate.addValue(cursors, groupId);
+                aggregate.processPage(groupedPage);
             }
         }
 
         public boolean isFull()
         {
-            long memorySize = hashStrategy.getEstimatedSize();
+            long memorySize = groupByHash.getEstimatedSize();
             for (Aggregator aggregate : aggregates) {
                 memorySize += aggregate.getEstimatedSize();
             }
@@ -385,38 +301,53 @@ public class HashAggregationOperator
 
         public Iterator<Page> build()
         {
-            // add the last block if it is not empty
-            if (!blockBuilder.isEmpty()) {
-                UncompressedBlock block = blockBuilder.build();
-                groupByBlocks.add(block);
+            List<Type> types = groupByHash.getTypes();
+            ImmutableList.Builder<TupleInfo> tupleInfos =  ImmutableList.builder();
+            for (Type type : types) {
+                tupleInfos.add(new TupleInfo(type));
+            }
+            for (Aggregator aggregator : aggregates) {
+                tupleInfos.add(aggregator.getTupleInfo());
             }
 
-            return Iterators.transform(groupByBlocks.iterator(), new Function<UncompressedBlock, Page>()
+            final PageBuilder pageBuilder = new PageBuilder(tupleInfos.build());
+            return new AbstractIterator<Page>()
             {
-                private int currentPosition = 0;
+
+                private final ObjectIterator<Entry> pagePositionToGroup = groupByHash.getPagePositionToGroupId().long2IntEntrySet().fastIterator();
 
                 @Override
-                public Page apply(UncompressedBlock groupByBlock)
+                protected Page computeNext()
                 {
-                    // build  the page channel at at time
-                    Block[] blocks = new Block[aggregates.size() + 1];
-                    blocks[0] = groupByBlock;
-                    int pagePositionCount = groupByBlock.getPositionCount();
-                    for (int channel = 1; channel < aggregates.size() + 1; channel++) {
-                        Aggregator aggregator = aggregates.get(channel - 1);
-                        // todo there is no need to eval for intermediates since buffer is already in block form
-                        BlockBuilder blockBuilder = new BlockBuilder(aggregator.getTupleInfo());
-                        for (int position = 0; position < pagePositionCount; position++) {
-                            aggregator.evaluate(currentPosition + position, blockBuilder);
-                        }
-                        blocks[channel] = blockBuilder.build();
+                    if (!pagePositionToGroup.hasNext()) {
+                        return endOfData();
                     }
 
-                    Page page = new Page(blocks);
-                    currentPosition += pagePositionCount;
+                    pageBuilder.reset();
+
+                    List<Type> types = groupByHash.getTypes();
+                    BlockBuilder[] groupByBlockBuilders = new BlockBuilder[types.size()];
+                    for (int i = 0; i < types.size(); i++) {
+                        groupByBlockBuilders[i] = pageBuilder.getBlockBuilder(i);
+                    }
+
+                    while (!pageBuilder.isFull() && pagePositionToGroup.hasNext()) {
+                        Entry next = pagePositionToGroup.next();
+                        long pagePosition = next.getLongKey();
+                        int groupId = next.getIntValue();
+
+                        groupByHash.getValues(pagePosition, groupByBlockBuilders);
+
+                        for (int i = 0; i < aggregates.size(); i++) {
+                            Aggregator aggregator = aggregates.get(i);
+                            aggregator.evaluate(groupId, pageBuilder.getBlockBuilder(types.size() + i));
+                        }
+                    }
+
+                    Page page = pageBuilder.build();
                     return page;
                 }
-            });
+            };
         }
     }
 
@@ -478,11 +409,9 @@ public class HashAggregationOperator
 
         TupleInfo getTupleInfo();
 
-        void initialize(int position);
+        void processPage(Page page);
 
-        void addValue(BlockCursor[] cursors, int position);
-
-        void evaluate(int position, BlockBuilder output);
+        void evaluate(int groupId, BlockBuilder output);
     }
 
     private static class FixedWidthAggregator
@@ -494,7 +423,9 @@ public class HashAggregationOperator
         private final int fixedWidthSize;
         private final int sliceSize;
         private final List<Slice> slices = new ArrayList<>();
-        private int currentMaxPosition;
+
+        private int largestGroupId;
+        private int currentMaxGroupId;
 
         private FixedWidthAggregator(FixedWidthAggregationFunction function, Input input, Step step)
         {
@@ -505,7 +436,7 @@ public class HashAggregationOperator
             this.sliceSize = (int) (BlockBuilder.DEFAULT_MAX_BLOCK_SIZE.toBytes() / fixedWidthSize) * fixedWidthSize;
             Slice slice = Slices.allocate(sliceSize);
             slices.add(slice);
-            currentMaxPosition = sliceSize / fixedWidthSize;
+            currentMaxGroupId = sliceSize / fixedWidthSize;
         }
 
         @Override
@@ -527,37 +458,56 @@ public class HashAggregationOperator
         }
 
         @Override
-        public void initialize(int position)
+        public void processPage(Page page)
         {
-            // add more slices if necessary
-            while (position >= currentMaxPosition) {
-                Slice slice = Slices.allocate(sliceSize);
-                slices.add(slice);
-                currentMaxPosition += sliceSize / fixedWidthSize;
+            BlockCursor groupIdCursor = page.getBlock(page.getChannelCount() - 1).cursor();
+            BlockCursor valueCursor = null;
+            if (input != null) {
+                valueCursor = page.getBlock(input.getChannel()).cursor();
             }
 
-            int globalOffset = position * fixedWidthSize;
+            // process row at a time
+            int rows = page.getPositionCount();
+            for (int i = 0; i < rows; i++) {
+                checkState(groupIdCursor.advanceNextPosition());
+                checkState(valueCursor == null || valueCursor.advanceNextPosition());
 
-            int sliceIndex = globalOffset / sliceSize; // todo do this with shifts?
-            Slice slice = slices.get(sliceIndex);
-            int sliceOffset = globalOffset - (sliceIndex * sliceSize);
-            function.initialize(slice, sliceOffset);
+                int groupId = Ints.checkedCast(groupIdCursor.getLong(0));
+                initializeGroup(groupId);
+
+                // process the row
+                processRow(groupId, valueCursor, 0);
+            }
+
+            // verify cursors are complete
+            checkState(!groupIdCursor.advanceNextPosition());
+            checkState(valueCursor == null || !valueCursor.advanceNextPosition());
         }
 
-        @Override
-        public void addValue(BlockCursor[] cursors, int position)
+        public void initializeGroup(int groupId)
         {
-            BlockCursor cursor;
-            int field = -1;
-            if (input != null) {
-                cursor = cursors[input.getChannel()];
-                field = input.getField();
-            }
-            else {
-                cursor = null;
+            // add more slices if necessary
+            while (groupId >= currentMaxGroupId) {
+                Slice slice = Slices.allocate(sliceSize);
+                slices.add(slice);
+                currentMaxGroupId += sliceSize / fixedWidthSize;
             }
 
-            int globalOffset = position * fixedWidthSize;
+            while (groupId >= largestGroupId) {
+                int globalOffset = largestGroupId * fixedWidthSize;
+
+                int sliceIndex = globalOffset / sliceSize; // todo do this with shifts?
+                Slice slice = slices.get(sliceIndex);
+                int sliceOffset = globalOffset - (sliceIndex * sliceSize);
+                function.initialize(slice, sliceOffset);
+
+                largestGroupId++;
+            }
+        }
+
+        private void processRow(int groupId, BlockCursor cursor, int field)
+        {
+            int globalOffset = groupId * fixedWidthSize;
 
             int sliceIndex = globalOffset / sliceSize; // todo do this with shifts?
             Slice slice = slices.get(sliceIndex);
@@ -573,9 +523,9 @@ public class HashAggregationOperator
         }
 
         @Override
-        public void evaluate(int position, BlockBuilder output)
+        public void evaluate(int groupId, BlockBuilder output)
         {
-            int offset = position * fixedWidthSize;
+            int offset = groupId * fixedWidthSize;
 
             int sliceIndex = offset / sliceSize; // todo do this with shifts
             Slice slice = slices.get(sliceIndex);
@@ -600,7 +550,6 @@ public class HashAggregationOperator
         private final ObjectArrayList<T> intermediateValues;
         private long totalElementSizeInBytes;
 
-        private final BlockCursor[] blockCursors;
         private final int[] fields;
 
         private VariableWidthAggregator(VariableWidthAggregationFunction<T> function, List<Input> inputs, Step step, int expectedGroups)
@@ -610,7 +559,6 @@ public class HashAggregationOperator
             this.step = step;
             this.intermediateValues = new ObjectArrayList<>(expectedGroups);
 
-            this.blockCursors = new BlockCursor[inputs.size()];
             this.fields = new int[inputs.size()];
 
             for (int i = 0; i < fields.length; i++) {
@@ -637,21 +585,42 @@ public class HashAggregationOperator
         }
 
         @Override
-        public void initialize(int position)
+        public void processPage(Page page)
         {
-            Preconditions.checkState(position == intermediateValues.size(), "expected array to grow by 1");
-            intermediateValues.add(function.initialize());
-        }
+            BlockCursor[] blockCursors = new BlockCursor[inputs.size()];
 
-        @Override
-        public void addValue(BlockCursor[] cursors, int position)
-        {
+            BlockCursor groupIdCursor = page.getBlock(page.getChannelCount() - 1).cursor();
             for (int i = 0; i < blockCursors.length; i++) {
-                blockCursors[i] = cursors[inputs.get(i).getChannel()];
+                blockCursors[i] = page.getBlock(inputs.get(i).getChannel()).cursor();
             }
 
+            // process row at a time
+            int rows = page.getPositionCount();
+            for (int i = 0; i < rows; i++) {
+                checkState(groupIdCursor.advanceNextPosition());
+                for (BlockCursor blockCursor : blockCursors) {
+                    checkState(blockCursor.advanceNextPosition());
+                }
+
+                int groupId = Ints.checkedCast(groupIdCursor.getLong(0));
+                while (groupId >= intermediateValues.size()) {
+                    intermediateValues.add(function.initialize());
+                }
+
+                processRow(groupId, blockCursors);
+            }
+
+            // verify cursors are complete
+            checkState(!groupIdCursor.advanceNextPosition());
+            for (BlockCursor blockCursor : blockCursors) {
+                checkState(!blockCursor.advanceNextPosition());
+            }
+        }
+
+        private void processRow(int groupId, BlockCursor[] blockCursors)
+        {
             // if this is a final aggregation, the input is an intermediate value
-            T oldValue = intermediateValues.get(position);
+            T oldValue = intermediateValues.get(groupId);
             long oldSize = 0;
             if (oldValue != null) {
                 oldSize = function.estimateSizeInBytes(oldValue);
@@ -664,7 +633,7 @@ public class HashAggregationOperator
             else {
                 newValue = function.addInput(blockCursors, fields, oldValue);
             }
-            intermediateValues.set(position, newValue);
+            intermediateValues.set(groupId, newValue);
 
             long newSize = 0;
             if (newValue != null) {
@@ -674,9 +643,9 @@ public class HashAggregationOperator
         }
 
         @Override
-        public void evaluate(int position, BlockBuilder output)
+        public void evaluate(int groupId, BlockBuilder output)
         {
-            T value = intermediateValues.get(position);
+            T value = intermediateValues.get(groupId);
             // if this is a partial, the output is an intermediate value
             if (step == Step.PARTIAL) {
                 function.evaluateIntermediate(value, output);
@@ -684,74 +653,6 @@ public class HashAggregationOperator
             else {
                 function.evaluateFinal(value, output);
             }
-        }
-    }
-
-    public static class SliceHashStrategy
-            implements Strategy
-    {
-        private final TupleInfo tupleInfo;
-        private final List<Slice> slices;
-        private Slice lookupSlice;
-        private long memorySize;
-
-        public SliceHashStrategy(TupleInfo tupleInfo)
-        {
-            this.tupleInfo = tupleInfo;
-            this.slices = ObjectArrayList.wrap(new Slice[1024], 0);
-        }
-
-        public long getEstimatedSize()
-        {
-            return memorySize;
-        }
-
-        public void setLookupSlice(Slice lookupSlice)
-        {
-            this.lookupSlice = lookupSlice;
-        }
-
-        public void addSlice(Slice slice)
-        {
-            memorySize += slice.length();
-            slices.add(slice);
-        }
-
-        @Override
-        public int hashCode(long sliceAddress)
-        {
-            Slice slice = getSliceForSyntheticAddress(sliceAddress);
-            int offset = (int) sliceAddress;
-            int length = tupleInfo.size(slice, offset);
-            int hashCode = slice.hashCode(offset, length);
-            return hashCode;
-        }
-
-        @Override
-        public boolean equals(long leftSliceAddress, long rightSliceAddress)
-        {
-            Slice leftSlice = getSliceForSyntheticAddress(leftSliceAddress);
-            int leftOffset = decodeSliceOffset(leftSliceAddress);
-            int leftLength = tupleInfo.size(leftSlice, leftOffset);
-
-            Slice rightSlice = getSliceForSyntheticAddress(rightSliceAddress);
-            int rightOffset = decodeSliceOffset(rightSliceAddress);
-            int rightLength = tupleInfo.size(rightSlice, rightOffset);
-
-            return leftSlice.equals(leftOffset, leftLength, rightSlice, rightOffset, rightLength);
-        }
-
-        private Slice getSliceForSyntheticAddress(long sliceAddress)
-        {
-            int sliceIndex = decodeSliceIndex(sliceAddress);
-            Slice slice;
-            if (sliceIndex == LOOKUP_SLICE_INDEX) {
-                slice = lookupSlice;
-            }
-            else {
-                slice = slices.get(sliceIndex);
-            }
-            return slice;
         }
     }
 }

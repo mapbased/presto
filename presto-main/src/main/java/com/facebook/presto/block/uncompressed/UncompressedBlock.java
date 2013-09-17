@@ -15,6 +15,7 @@ package com.facebook.presto.block.uncompressed;
 
 import com.facebook.presto.block.Block;
 import com.facebook.presto.block.BlockCursor;
+import com.facebook.presto.block.RandomAccessBlock;
 import com.facebook.presto.serde.UncompressedBlockEncoding;
 import com.facebook.presto.tuple.TupleInfo;
 import com.facebook.presto.tuple.TupleInfo.Type;
@@ -100,6 +101,29 @@ public class UncompressedBlock
     {
         Preconditions.checkPositionIndexes(positionOffset, positionOffset + length, positionCount);
         return cursor().getRegionAndAdvance(length);
+    }
+
+    @Override
+    public RandomAccessBlock toRandomAccessBlock()
+    {
+        if (tupleInfo.getFieldCount() != 1) {
+            throw new IllegalStateException("Multi channel random access blocks not supported");
+        }
+
+        Type type = tupleInfo.getTypes().get(0);
+        if (type == Type.BOOLEAN) {
+            return new UncompressedBooleanBlock(positionCount, slice);
+        }
+        if (type == Type.FIXED_INT_64) {
+            return new UncompressedLongBlock(slice);
+        }
+        if (type == Type.DOUBLE) {
+            return new UncompressedDoubleBlock(positionCount, slice);
+        }
+        if (type == Type.VARIABLE_BINARY) {
+            return new UncompressedSliceBlock(this);
+        }
+        throw new IllegalStateException("Unsupported type " + tupleInfo.getTypes().get(0));
     }
 
     @Override
