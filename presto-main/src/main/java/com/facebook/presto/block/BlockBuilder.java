@@ -35,7 +35,7 @@ public class BlockBuilder
     private final TupleInfo tupleInfo;
     private final int maxBlockSize;
     private final SliceOutput sliceOutput;
-    private int count;
+    private int positionCount;
 
     private TupleInfo.Builder tupleBuilder;
 
@@ -69,10 +69,15 @@ public class BlockBuilder
         return tupleInfo;
     }
 
+    public int getPositionCount()
+    {
+        return positionCount;
+    }
+
     public boolean isEmpty()
     {
         checkState(!tupleBuilder.isPartial(), "Tuple is not complete");
-        return count == 0;
+        return positionCount == 0;
     }
 
     public boolean isFull()
@@ -165,7 +170,7 @@ public class BlockBuilder
 
         // copy tuple to output
         sliceOutput.writeBytes(slice, offset, length);
-        count++;
+        positionCount++;
 
         return this;
     }
@@ -174,7 +179,7 @@ public class BlockBuilder
     {
         if (tupleBuilder.isComplete()) {
             tupleBuilder.finish();
-            count++;
+            positionCount++;
         }
     }
 
@@ -183,7 +188,7 @@ public class BlockBuilder
         checkState(!tupleBuilder.isPartial(), "Tuple is not complete");
         checkState(!isEmpty(), "Cannot build an empty block");
 
-        return new UncompressedBlock(count, tupleInfo, sliceOutput.slice());
+        return new UncompressedBlock(positionCount, tupleInfo, sliceOutput.slice());
     }
 
     @Override
@@ -191,7 +196,7 @@ public class BlockBuilder
     {
         final StringBuilder sb = new StringBuilder();
         sb.append("BlockBuilder");
-        sb.append("{count=").append(count);
+        sb.append("{count=").append(positionCount);
         sb.append(", size=").append(sliceOutput.size());
         sb.append(", maxSize=").append(maxBlockSize);
         sb.append(", tupleInfo=").append(tupleInfo);
