@@ -36,7 +36,8 @@ import static com.facebook.presto.operator.OperatorAssertion.assertOperatorEqual
 import static com.facebook.presto.operator.OperatorAssertion.toPages;
 import static com.facebook.presto.operator.RowPagesBuilder.rowPagesBuilder;
 import static com.facebook.presto.operator.aggregation.CountAggregation.COUNT;
-import static com.facebook.presto.operator.aggregation.CountColumnAggregation.COUNT_COLUMN;
+import static com.facebook.presto.operator.aggregation.CountColumnAggregation.COUNT_BOOLEAN_COLUMN;
+import static com.facebook.presto.operator.aggregation.CountColumnAggregation.COUNT_STRING_COLUMN;
 import static com.facebook.presto.operator.aggregation.LongAverageAggregation.LONG_AVERAGE;
 import static com.facebook.presto.operator.aggregation.LongSumAggregation.LONG_SUM;
 import static com.facebook.presto.operator.aggregation.VarBinaryMaxAggregation.VAR_BINARY_MAX;
@@ -91,8 +92,8 @@ public class TestHashAggregationOperator
                         aggregation(LONG_SUM, new Input(3, 0)),
                         aggregation(LONG_AVERAGE, new Input(3, 0)),
                         aggregation(VAR_BINARY_MAX, new Input(2, 0)),
-                        aggregation(COUNT_COLUMN, new Input(0, 0)),
-                        aggregation(COUNT_COLUMN, new Input(4, 0))),
+                        aggregation(COUNT_STRING_COLUMN, new Input(0, 0)),
+                        aggregation(COUNT_BOOLEAN_COLUMN, new Input(4, 0))),
                 100_000);
 
         Operator operator = operatorFactory.createOperator(driverContext);

@@ -16,92 +16,126 @@ package com.facebook.presto.operator.aggregation;
 import com.facebook.presto.block.Block;
 import com.facebook.presto.block.BlockBuilder;
 import com.facebook.presto.block.BlockCursor;
-import com.facebook.presto.tuple.TupleInfo;
-import com.google.common.collect.Ordering;
+import com.facebook.presto.operator.GroupByIdBlock;
 import io.airlift.slice.Slice;
+import it.unimi.dsi.fastutil.objects.ObjectBigArrays;
+
+import static com.facebook.presto.tuple.TupleInfo.SINGLE_VARBINARY;
+import static com.facebook.presto.tuple.TupleInfo.Type.VARIABLE_BINARY;
+import static com.google.common.base.Preconditions.checkState;
 
 public class VarBinaryMinAggregation
-        implements VariableWidthAggregationFunction<Slice>
+        extends SimpleAggregationFunction
 {
     public static final VarBinaryMinAggregation VAR_BINARY_MIN = new VarBinaryMinAggregation();
 
-    @Override
-    public TupleInfo getFinalTupleInfo()
+    public VarBinaryMinAggregation()
     {
-        return TupleInfo.SINGLE_VARBINARY;
+        super(SINGLE_VARBINARY, SINGLE_VARBINARY, VARIABLE_BINARY);
     }
 
     @Override
-    public TupleInfo getIntermediateTupleInfo()
+    protected GroupedAccumulator createGroupedAccumulator(long expectedSize, int valueChannel)
     {
-        return TupleInfo.SINGLE_VARBINARY;
+        return new VarBinaryGroupedAccumulator(expectedSize, valueChannel);
     }
 
-    @Override
-    public Slice initialize()
+    public static class VarBinaryGroupedAccumulator
+            extends SimpleGroupedAccumulator
     {
-        return null;
-    }
+        private Slice[][] minValues;
 
-    @Override
-    public Slice addInput(int positionCount, Block[] blocks, int[] fields, Slice currentMax)
-    {
-        BlockCursor cursor = blocks[0].cursor();
-
-        while (cursor.advanceNextPosition()) {
-            currentMax = addInternal(cursor, fields[0], currentMax);
+        public VarBinaryGroupedAccumulator(long expectedSize, int valueChannel)
+        {
+            super(valueChannel, SINGLE_VARBINARY, SINGLE_VARBINARY);
+            this.minValues = ObjectBigArrays.newBigArray(new Slice[0][], expectedSize);
         }
 
-        return currentMax;
+        @Override
+        protected void processInput(GroupByIdBlock groupIdsBlock, Block valuesBlock)
+        {
+            minValues = ObjectBigArrays.grow(minValues, groupIdsBlock.getMaxGroupId() + 1);
+
+            BlockCursor values = valuesBlock.cursor();
+
+            for (int position = 0; position < groupIdsBlock.getPositionCount(); position++) {
+                checkState(values.advanceNextPosition());
+
+                // skip null values
+                if (!values.isNull(0)) {
+                    long groupId = groupIdsBlock.getLong(position);
+
+                    Slice value = values.getSlice(0);
+
+                    Slice min = min(value, ObjectBigArrays.get(minValues, groupId));
+                    ObjectBigArrays.set(minValues, groupId, min);
+                }
+            }
+            checkState(!values.advanceNextPosition());
+        }
+
+        @Override
+        public void evaluateFinal(int groupId, BlockBuilder output)
+        {
+            Slice value = ObjectBigArrays.get(minValues, groupId);
+            if (value == null) {
+                output.appendNull();
+            }
+            else {
+                output.append(value);
+            }
+        }
     }
 
     @Override
-    public Slice addInput(BlockCursor[] cursors, int[] fields, Slice currentMax)
+    protected Accumulator createAccumulator(int valueChannel)
     {
-        return addInternal(cursors[0], fields[0], currentMax);
+        return new VarBinaryMinAccumulator(valueChannel);
     }
 
-    @Override
-    public Slice addIntermediate(BlockCursor[] cursors, int[] fields, Slice currentMax)
+    public static class VarBinaryMinAccumulator
+            extends SimpleAccumulator
     {
-        return addInternal(cursors[0], fields[0], currentMax);
+        private Slice min;
+
+        public VarBinaryMinAccumulator(int valueChannel)
+        {
+            super(valueChannel, SINGLE_VARBINARY, SINGLE_VARBINARY);
+        }
+
+        @Override
+        protected void processInput(Block block)
+        {
+            BlockCursor values = block.cursor();
+
+            for (int position = 0; position < block.getPositionCount(); position++) {
+                checkState(values.advanceNextPosition());
+                if (!values.isNull(0)) {
+                    min = min(min, values.getSlice(0));
+                }
+            }
+        }
+
+        @Override
+        public void evaluateFinal(BlockBuilder out)
+        {
+            if (min != null) {
+                out.append(min);
+            }
+            else {
+                out.appendNull();
+            }
+        }
     }
 
-    @Override
-    public void evaluateIntermediate(Slice currentValue, BlockBuilder output)
+    private static Slice min(Slice a, Slice b)
     {
-        evaluateFinal(currentValue, output);
-    }
-
-    @Override
-    public void evaluateFinal(Slice currentValue, BlockBuilder output)
-    {
-        if (currentValue != null) {
-            output.append(currentValue);
+        if (a == null) {
+            return b;
         }
-        else {
-            output.appendNull();
+        if (b == null) {
+            return a;
         }
-    }
-
-    @Override
-    public long estimateSizeInBytes(Slice value)
-    {
-        return value.length();
-    }
-
-    private Slice addInternal(BlockCursor cursor, int field, Slice currentMin)
-    {
-        if (cursor.isNull(field)) {
-            return currentMin;
-        }
-
-        Slice value = cursor.getSlice(field);
-        if (currentMin == null) {
-            return value;
-        }
-        else {
-            return Ordering.natural().min(currentMin, value);
-        }
+        return a.compareTo(b) < 0 ? a : b;
     }
 }
