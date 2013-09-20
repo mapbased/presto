@@ -16,102 +16,128 @@ package com.facebook.presto.operator.aggregation;
 import com.facebook.presto.block.Block;
 import com.facebook.presto.block.BlockBuilder;
 import com.facebook.presto.block.BlockCursor;
-import com.facebook.presto.tuple.TupleInfo;
-import io.airlift.slice.Slice;
+import com.facebook.presto.operator.GroupByIdBlock;
+import it.unimi.dsi.fastutil.booleans.BooleanBigArrays;
+import it.unimi.dsi.fastutil.longs.LongBigArrays;
 
 import static com.facebook.presto.tuple.TupleInfo.SINGLE_LONG;
+import static com.facebook.presto.tuple.TupleInfo.Type.FIXED_INT_64;
+import static com.google.common.base.Preconditions.checkState;
 
 public class LongMaxAggregation
-        implements FixedWidthAggregationFunction
+        extends SimpleAggregationFunction
 {
     public static final LongMaxAggregation LONG_MAX = new LongMaxAggregation();
 
-    @Override
-    public int getFixedSize()
+    public LongMaxAggregation()
     {
-        return SINGLE_LONG.getFixedSize();
+        super(SINGLE_LONG, SINGLE_LONG, FIXED_INT_64);
     }
 
     @Override
-    public TupleInfo getFinalTupleInfo()
+    protected GroupedAccumulator createGroupedAccumulator(long expectedSize, int valueChannel)
     {
-        return SINGLE_LONG;
+        return new LongMaxGroupedAccumulator(expectedSize, valueChannel);
     }
 
-    @Override
-    public TupleInfo getIntermediateTupleInfo()
+    public static class LongMaxGroupedAccumulator
+            extends SimpleGroupedAccumulator
     {
-        return SINGLE_LONG;
-    }
+        private long maxGroupId = -1;
+        private boolean[][] notNull;
+        private long[][] maxes;
 
-    @Override
-    public void initialize(Slice valueSlice, int valueOffset)
-    {
-        // mark value null
-        SINGLE_LONG.setNull(valueSlice, valueOffset, 0);
-        SINGLE_LONG.setLong(valueSlice, valueOffset, 0, Long.MIN_VALUE);
-    }
+        public LongMaxGroupedAccumulator(long expectedSize, int valueChannel)
+        {
+            super(valueChannel, SINGLE_LONG, SINGLE_LONG);
 
-    @Override
-    public void addInput(BlockCursor cursor, int field, Slice valueSlice, int valueOffset)
-    {
-        if (cursor.isNull(field)) {
-            return;
+            this.notNull = BooleanBigArrays.newBigArray(expectedSize);
+
+            this.maxes = LongBigArrays.newBigArray(expectedSize);
         }
 
-        // mark value not null
-        SINGLE_LONG.setNotNull(valueSlice, valueOffset, 0);
+        @Override
+        protected void processInput(GroupByIdBlock groupIdsBlock, Block valuesBlock)
+        {
+            long newMaxGroupId = groupIdsBlock.getMaxGroupId();
+            if (newMaxGroupId > maxGroupId) {
+                notNull = BooleanBigArrays.grow(notNull, newMaxGroupId + 1);
+                maxes = LongBigArrays.grow(maxes, newMaxGroupId + 1);
+                LongBigArrays.fill(maxes, maxGroupId + 1, newMaxGroupId + 1, Long.MIN_VALUE);
+                maxGroupId = newMaxGroupId;
+            }
 
-        // update current value
-        long currentValue = SINGLE_LONG.getLong(valueSlice, valueOffset, 0);
-        long newValue = cursor.getLong(field);
-        SINGLE_LONG.setLong(valueSlice, valueOffset, 0, Math.max(currentValue, newValue));
+            BlockCursor values = valuesBlock.cursor();
+
+            for (int position = 0; position < groupIdsBlock.getPositionCount(); position++) {
+                checkState(values.advanceNextPosition());
+
+                long groupId = groupIdsBlock.getLong(position);
+
+                if (!values.isNull(0)) {
+                    BooleanBigArrays.set(notNull, groupId, true);
+
+                    long value = values.getLong(0);
+                    value = Math.max(value, LongBigArrays.get(maxes, groupId));
+                    LongBigArrays.set(maxes, groupId, value);
+                }
+            }
+            checkState(!values.advanceNextPosition());
+        }
+
+        @Override
+        public void evaluateFinal(int groupId, BlockBuilder output)
+        {
+            if (BooleanBigArrays.get(notNull, groupId)) {
+                long value = LongBigArrays.get(maxes, groupId);
+                output.append(value);
+            }
+            else {
+                output.appendNull();
+            }
+        }
     }
 
     @Override
-    public void addInput(int positionCount, Block block, int field, Slice valueSlice, int valueOffset)
+    protected Accumulator createAccumulator(int valueChannel)
     {
-        // initialize
-        boolean hasNonNull = !SINGLE_LONG.isNull(valueSlice, valueOffset);
-        long max = SINGLE_LONG.getLong(valueSlice, valueOffset, 0);
+        return new LongMaxAccumulator(valueChannel);
+    }
 
-        // process block
-        BlockCursor cursor = block.cursor();
-        while (cursor.advanceNextPosition()) {
-            if (!cursor.isNull(field)) {
-                hasNonNull = true;
-                max = Math.max(max, cursor.getLong(field));
+    public static class LongMaxAccumulator
+            extends SimpleAccumulator
+    {
+        private boolean notNull;
+        private long max = Long.MIN_VALUE;
+
+        public LongMaxAccumulator(int valueChannel)
+        {
+            super(valueChannel, SINGLE_LONG, SINGLE_LONG);
+        }
+
+        @Override
+        protected void processInput(Block block)
+        {
+            BlockCursor values = block.cursor();
+
+            for (int position = 0; position < block.getPositionCount(); position++) {
+                checkState(values.advanceNextPosition());
+                if (!values.isNull(0)) {
+                    notNull = true;
+                    max = Math.max(max, values.getLong(0));
+                }
             }
         }
 
-        // write new value
-        if (hasNonNull) {
-            SINGLE_LONG.setNotNull(valueSlice, valueOffset, 0);
-            SINGLE_LONG.setLong(valueSlice, valueOffset, 0, max);
-        }
-    }
-
-    @Override
-    public void addIntermediate(BlockCursor cursor, int field, Slice valueSlice, int valueOffset)
-    {
-        addInput(cursor, field, valueSlice, valueOffset);
-    }
-
-    @Override
-    public void evaluateIntermediate(Slice valueSlice, int valueOffset, BlockBuilder output)
-    {
-        evaluateFinal(valueSlice, valueOffset, output);
-    }
-
-    @Override
-    public void evaluateFinal(Slice valueSlice, int valueOffset, BlockBuilder output)
-    {
-        if (!SINGLE_LONG.isNull(valueSlice, valueOffset, 0)) {
-            long currentValue = SINGLE_LONG.getLong(valueSlice, valueOffset, 0);
-            output.append(currentValue);
-        }
-        else {
-            output.appendNull();
+        @Override
+        public void evaluateFinal(BlockBuilder out)
+        {
+            if (notNull) {
+                out.append(max);
+            }
+            else {
+                out.appendNull();
+            }
         }
     }
 }

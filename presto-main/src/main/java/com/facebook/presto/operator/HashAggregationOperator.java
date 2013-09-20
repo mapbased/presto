@@ -14,29 +14,20 @@
 package com.facebook.presto.operator;
 
 import com.facebook.presto.block.BlockBuilder;
-import com.facebook.presto.block.BlockCursor;
+import com.facebook.presto.operator.aggregation.GroupedAccumulator;
 import com.facebook.presto.operator.aggregation.AggregationFunction;
-import com.facebook.presto.operator.aggregation.FixedWidthAggregationFunction;
-import com.facebook.presto.operator.aggregation.VariableWidthAggregationFunction;
 import com.facebook.presto.sql.planner.plan.AggregationNode.Step;
-import com.facebook.presto.sql.tree.Input;
 import com.facebook.presto.tuple.TupleInfo;
 import com.facebook.presto.tuple.TupleInfo.Type;
 import com.google.common.base.Function;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.AbstractIterator;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Iterables;
 import com.google.common.primitives.Ints;
 import com.google.common.util.concurrent.ListenableFuture;
-import io.airlift.slice.SizeOf;
-import io.airlift.slice.Slice;
-import io.airlift.slice.Slices;
 import it.unimi.dsi.fastutil.longs.Long2IntMap.Entry;
-import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import it.unimi.dsi.fastutil.objects.ObjectIterator;
 
-import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 
@@ -248,7 +239,7 @@ public class HashAggregationOperator
     private static class GroupByHashAggregationBuilder
     {
         private final GroupByHash groupByHash;
-        private final List<Aggregator> aggregates;
+        private final List<AggregationWrapper> aggregates;
         private final HashMemoryManager memoryManager;
 
         private GroupByHashAggregationBuilder(
@@ -259,8 +250,6 @@ public class HashAggregationOperator
                 List<Integer> groupByChannels,
                 HashMemoryManager memoryManager)
         {
-
-
             ImmutableList<Type> groupByTypes = ImmutableList.copyOf(transform(groupByTupleInfos, new Function<TupleInfo, Type>()
             {
                 public Type apply(TupleInfo tupleInfo)
@@ -274,26 +263,26 @@ public class HashAggregationOperator
             this.memoryManager = memoryManager;
 
             // wrapper each function with an aggregator
-            ImmutableList.Builder<Aggregator> builder = ImmutableList.builder();
+            ImmutableList.Builder<AggregationWrapper> builder = ImmutableList.builder();
             for (AggregationFunctionDefinition functionDefinition : checkNotNull(functionDefinitions, "functionDefinitions is null")) {
-                builder.add(createAggregator(functionDefinition, step, expectedGroups));
+                builder.add(new AggregationWrapper(functionDefinition, step, expectedGroups));
             }
             aggregates = builder.build();
         }
 
         private void processPage(Page page)
         {
-            Page groupedPage = groupByHash.group(page);
+            GroupByIdBlock groupIds = groupByHash.getGroupIds(page.getBlocks());
 
-            for (Aggregator aggregate : aggregates) {
-                aggregate.processPage(groupedPage);
+            for (AggregationWrapper aggregate : aggregates) {
+                aggregate.processPage(groupIds, page);
             }
         }
 
         public boolean isFull()
         {
             long memorySize = groupByHash.getEstimatedSize();
-            for (Aggregator aggregate : aggregates) {
+            for (AggregationWrapper aggregate : aggregates) {
                 memorySize += aggregate.getEstimatedSize();
             }
             return memoryManager.canUse(memorySize);
@@ -306,7 +295,7 @@ public class HashAggregationOperator
             for (Type type : types) {
                 tupleInfos.add(new TupleInfo(type));
             }
-            for (Aggregator aggregator : aggregates) {
+            for (AggregationWrapper aggregator : aggregates) {
                 tupleInfos.add(aggregator.getTupleInfo());
             }
 
@@ -339,8 +328,9 @@ public class HashAggregationOperator
                         groupByHash.getValues(pagePosition, groupByBlockBuilders);
 
                         for (int i = 0; i < aggregates.size(); i++) {
-                            Aggregator aggregator = aggregates.get(i);
-                            aggregator.evaluate(groupId, pageBuilder.getBlockBuilder(types.size() + i));
+                            AggregationWrapper aggregator = aggregates.get(i);
+                            BlockBuilder output = pageBuilder.getBlockBuilder(types.size() + i);
+                            aggregator.evaluate(groupId, output);
                         }
                     }
 
@@ -386,272 +376,63 @@ public class HashAggregationOperator
         }
     }
 
-    @SuppressWarnings("rawtypes")
-    private static Aggregator createAggregator(AggregationFunctionDefinition functionDefinition, Step step, int expectedGroups)
+    private static class AggregationWrapper
     {
-        AggregationFunction function = functionDefinition.getFunction();
-        if (function instanceof VariableWidthAggregationFunction) {
-            return new VariableWidthAggregator((VariableWidthAggregationFunction) functionDefinition.getFunction(), functionDefinition.getInputs(), step, expectedGroups);
-        }
-        else {
-            Input input = null;
-            if (!functionDefinition.getInputs().isEmpty()) {
-                input = Iterables.getOnlyElement(functionDefinition.getInputs());
-            }
-
-            return new FixedWidthAggregator((FixedWidthAggregationFunction) functionDefinition.getFunction(), input, step);
-        }
-    }
-
-    private interface Aggregator
-    {
-        long getEstimatedSize();
-
-        TupleInfo getTupleInfo();
-
-        void processPage(Page page);
-
-        void evaluate(int groupId, BlockBuilder output);
-    }
-
-    private static class FixedWidthAggregator
-            implements Aggregator
-    {
-        private final FixedWidthAggregationFunction function;
-        private final Input input;
+        private final GroupedAccumulator aggregation;
         private final Step step;
-        private final int fixedWidthSize;
-        private final int sliceSize;
-        private final List<Slice> slices = new ArrayList<>();
 
-        private int largestGroupId;
-        private int currentMaxGroupId;
+        private final int intermediateChannel;
 
-        private FixedWidthAggregator(FixedWidthAggregationFunction function, Input input, Step step)
+        private AggregationWrapper(AggregationFunctionDefinition functionDefinition, Step step, int expectedGroups)
         {
-            this.function = function;
-            this.input = input;
+            AggregationFunction function = functionDefinition.getFunction();
+
+            if (step != Step.FINAL) {
+                int[] argumentChannels = new int[functionDefinition.getInputs().size()];
+                for (int i = 0; i < argumentChannels.length; i++) {
+                    argumentChannels[i] = functionDefinition.getInputs().get(i).getChannel();
+                }
+                intermediateChannel = -1;
+                aggregation = function.createGroupedAggregation(expectedGroups, argumentChannels);
+            }
+            else {
+                checkArgument(functionDefinition.getInputs().size() == 1, "Expected a single input for an intermediate aggregation");
+                intermediateChannel = functionDefinition.getInputs().get(0).getChannel();
+                aggregation = function.createGroupedIntermediateAggregation(expectedGroups);
+            }
             this.step = step;
-            this.fixedWidthSize = this.function.getFixedSize();
-            this.sliceSize = (int) (BlockBuilder.DEFAULT_MAX_BLOCK_SIZE.toBytes() / fixedWidthSize) * fixedWidthSize;
-            Slice slice = Slices.allocate(sliceSize);
-            slices.add(slice);
-            currentMaxGroupId = sliceSize / fixedWidthSize;
         }
 
-        @Override
         public long getEstimatedSize()
         {
-            return slices.size() * sliceSize;
+            return aggregation.getEstimatedSize();
         }
 
-        @Override
         public TupleInfo getTupleInfo()
         {
-            // if this is a partial, the output is an intermediate value
             if (step == Step.PARTIAL) {
-                return function.getIntermediateTupleInfo();
+                return aggregation.getIntermediateTupleInfo();
             }
             else {
-                return function.getFinalTupleInfo();
+                return aggregation.getFinalTupleInfo();
             }
         }
 
-        @Override
-        public void processPage(Page page)
+        public void processPage(GroupByIdBlock groupIds, Page page)
         {
-            BlockCursor groupIdCursor = page.getBlock(page.getChannelCount() - 1).cursor();
-            BlockCursor valueCursor = null;
-            if (input != null) {
-                valueCursor = page.getBlock(input.getChannel()).cursor();
-            }
-
-            // process row at a time
-            int rows = page.getPositionCount();
-            for (int i = 0; i < rows; i++) {
-                checkState(groupIdCursor.advanceNextPosition());
-                checkState(valueCursor == null || valueCursor.advanceNextPosition());
-
-                int groupId = Ints.checkedCast(groupIdCursor.getLong(0));
-                initializeGroup(groupId);
-
-                // process the row
-                processRow(groupId, valueCursor, 0);
-            }
-
-            // verify cursors are complete
-            checkState(!groupIdCursor.advanceNextPosition());
-            checkState(valueCursor == null || !valueCursor.advanceNextPosition());
-        }
-
-        public void initializeGroup(int groupId)
-        {
-            // add more slices if necessary
-            while (groupId >= currentMaxGroupId) {
-                Slice slice = Slices.allocate(sliceSize);
-                slices.add(slice);
-                currentMaxGroupId += sliceSize / fixedWidthSize;
-            }
-
-            while (groupId >= largestGroupId) {
-                int globalOffset = largestGroupId * fixedWidthSize;
-
-                int sliceIndex = globalOffset / sliceSize; // todo do this with shifts?
-                Slice slice = slices.get(sliceIndex);
-                int sliceOffset = globalOffset - (sliceIndex * sliceSize);
-                function.initialize(slice, sliceOffset);
-
-                largestGroupId++;
-            }
-        }
-
-        private void processRow(int groupId, BlockCursor cursor, int field)
-        {
-            int globalOffset = groupId * fixedWidthSize;
-
-            int sliceIndex = globalOffset / sliceSize; // todo do this with shifts?
-            Slice slice = slices.get(sliceIndex);
-            int sliceOffset = globalOffset - (sliceIndex * sliceSize);
-
-            // if this is a final aggregation, the input is an intermediate value
             if (step == Step.FINAL) {
-                function.addIntermediate(cursor, field, slice, sliceOffset);
-            }
-            else {
-                function.addInput(cursor, field, slice, sliceOffset);
+                aggregation.addIntermediate(groupIds, page.getBlock(intermediateChannel));
+            } else {
+                aggregation.addInput(groupIds, page);
             }
         }
 
-        @Override
         public void evaluate(int groupId, BlockBuilder output)
         {
-            int offset = groupId * fixedWidthSize;
-
-            int sliceIndex = offset / sliceSize; // todo do this with shifts
-            Slice slice = slices.get(sliceIndex);
-            int sliceOffset = offset - (sliceIndex * sliceSize);
-
-            // if this is a partial, the output is an intermediate value
             if (step == Step.PARTIAL) {
-                function.evaluateIntermediate(slice, sliceOffset, output);
-            }
-            else {
-                function.evaluateFinal(slice, sliceOffset, output);
-            }
-        }
-    }
-
-    private static class VariableWidthAggregator<T>
-            implements Aggregator
-    {
-        private final VariableWidthAggregationFunction<T> function;
-        private final List<Input> inputs;
-        private final Step step;
-        private final ObjectArrayList<T> intermediateValues;
-        private long totalElementSizeInBytes;
-
-        private final int[] fields;
-
-        private VariableWidthAggregator(VariableWidthAggregationFunction<T> function, List<Input> inputs, Step step, int expectedGroups)
-        {
-            this.function = function;
-            this.inputs = inputs;
-            this.step = step;
-            this.intermediateValues = new ObjectArrayList<>(expectedGroups);
-
-            this.fields = new int[inputs.size()];
-
-            for (int i = 0; i < fields.length; i++) {
-                fields[i] = inputs.get(i).getField();
-            }
-        }
-
-        @Override
-        public long getEstimatedSize()
-        {
-            return SizeOf.sizeOf(intermediateValues.elements()) + totalElementSizeInBytes;
-        }
-
-        @Override
-        public TupleInfo getTupleInfo()
-        {
-            // if this is a partial, the output is an intermediate value
-            if (step == Step.PARTIAL) {
-                return function.getIntermediateTupleInfo();
-            }
-            else {
-                return function.getFinalTupleInfo();
-            }
-        }
-
-        @Override
-        public void processPage(Page page)
-        {
-            BlockCursor[] blockCursors = new BlockCursor[inputs.size()];
-
-            BlockCursor groupIdCursor = page.getBlock(page.getChannelCount() - 1).cursor();
-            for (int i = 0; i < blockCursors.length; i++) {
-                blockCursors[i] = page.getBlock(inputs.get(i).getChannel()).cursor();
-            }
-
-            // process row at a time
-            int rows = page.getPositionCount();
-            for (int i = 0; i < rows; i++) {
-                checkState(groupIdCursor.advanceNextPosition());
-                for (BlockCursor blockCursor : blockCursors) {
-                    checkState(blockCursor.advanceNextPosition());
-                }
-
-                int groupId = Ints.checkedCast(groupIdCursor.getLong(0));
-                while (groupId >= intermediateValues.size()) {
-                    intermediateValues.add(function.initialize());
-                }
-
-                processRow(groupId, blockCursors);
-            }
-
-            // verify cursors are complete
-            checkState(!groupIdCursor.advanceNextPosition());
-            for (BlockCursor blockCursor : blockCursors) {
-                checkState(!blockCursor.advanceNextPosition());
-            }
-        }
-
-        private void processRow(int groupId, BlockCursor[] blockCursors)
-        {
-            // if this is a final aggregation, the input is an intermediate value
-            T oldValue = intermediateValues.get(groupId);
-            long oldSize = 0;
-            if (oldValue != null) {
-                oldSize = function.estimateSizeInBytes(oldValue);
-            }
-
-            T newValue;
-            if (step == Step.FINAL) {
-                newValue = function.addIntermediate(blockCursors, fields, oldValue);
-            }
-            else {
-                newValue = function.addInput(blockCursors, fields, oldValue);
-            }
-            intermediateValues.set(groupId, newValue);
-
-            long newSize = 0;
-            if (newValue != null) {
-                newSize = function.estimateSizeInBytes(newValue);
-            }
-            totalElementSizeInBytes += newSize - oldSize;
-        }
-
-        @Override
-        public void evaluate(int groupId, BlockBuilder output)
-        {
-            T value = intermediateValues.get(groupId);
-            // if this is a partial, the output is an intermediate value
-            if (step == Step.PARTIAL) {
-                function.evaluateIntermediate(value, output);
-            }
-            else {
-                function.evaluateFinal(value, output);
+                aggregation.evaluateIntermediate(groupId, output);
+            } else {
+                aggregation.evaluateFinal(groupId, output);
             }
         }
     }

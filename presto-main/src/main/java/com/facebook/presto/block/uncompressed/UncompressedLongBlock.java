@@ -95,7 +95,7 @@ public class UncompressedLongBlock
     public long getLong(int position)
     {
         int entryOffset = position * ENTRY_SIZE;
-        Preconditions.checkState(position > 0 && entryOffset + ENTRY_SIZE < slice.length(), "position is not valid");
+        Preconditions.checkState(position >= 0 && entryOffset + ENTRY_SIZE <= slice.length(), "position is not valid");
         return slice.getLong(entryOffset + SIZE_OF_BYTE);
     }
 
@@ -115,7 +115,7 @@ public class UncompressedLongBlock
     public boolean isNull(int position)
     {
         int entryOffset = position * ENTRY_SIZE;
-        Preconditions.checkState(position > 0 && entryOffset + ENTRY_SIZE < slice.length(), "position is not valid");
+        Preconditions.checkState(position >= 0 && entryOffset + ENTRY_SIZE <= slice.length(), "position is not valid");
         return slice.getByte(entryOffset) != 0;
     }
 

@@ -16,138 +16,184 @@ package com.facebook.presto.operator.aggregation;
 import com.facebook.presto.block.Block;
 import com.facebook.presto.block.BlockBuilder;
 import com.facebook.presto.block.BlockCursor;
-import com.facebook.presto.tuple.TupleInfo;
-import com.facebook.presto.tuple.TupleInfo.Type;
+import com.facebook.presto.operator.GroupByIdBlock;
 import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
+import it.unimi.dsi.fastutil.doubles.DoubleBigArrays;
+import it.unimi.dsi.fastutil.longs.LongBigArrays;
 
 import static com.facebook.presto.tuple.TupleInfo.SINGLE_DOUBLE;
 import static com.facebook.presto.tuple.TupleInfo.SINGLE_VARBINARY;
+import static com.facebook.presto.tuple.TupleInfo.Type.FIXED_INT_64;
+import static com.google.common.base.Preconditions.checkState;
 import static io.airlift.slice.SizeOf.SIZE_OF_DOUBLE;
 import static io.airlift.slice.SizeOf.SIZE_OF_LONG;
 
 public class LongAverageAggregation
-        implements FixedWidthAggregationFunction
+        extends SimpleAggregationFunction
 {
     public static final LongAverageAggregation LONG_AVERAGE = new LongAverageAggregation();
 
-    private static final TupleInfo TUPLE_INFO = new TupleInfo(Type.FIXED_INT_64, Type.DOUBLE);
-
-    @Override
-    public int getFixedSize()
+    public LongAverageAggregation()
     {
-        return TUPLE_INFO.getFixedSize();
+        super(SINGLE_DOUBLE, SINGLE_VARBINARY, FIXED_INT_64);
     }
 
     @Override
-    public TupleInfo getFinalTupleInfo()
+    protected GroupedAccumulator createGroupedAccumulator(long expectedSize, int valueChannel)
     {
-        return SINGLE_DOUBLE;
+        return new LongSumGroupedAccumulator(expectedSize, valueChannel);
     }
 
-    @Override
-    public TupleInfo getIntermediateTupleInfo()
+    public static class LongSumGroupedAccumulator
+            extends SimpleGroupedAccumulator
     {
-        return SINGLE_VARBINARY;
-    }
+        private long[][] counts;
+        private double[][] sums;
 
-    @Override
-    public void initialize(Slice valueSlice, int valueOffset)
-    {
-        // mark value null
-        TUPLE_INFO.setNull(valueSlice, valueOffset, 0);
-    }
-
-    @Override
-    public void addInput(BlockCursor cursor, int field, Slice valueSlice, int valueOffset)
-    {
-        if (cursor.isNull(field)) {
-            return;
+        public LongSumGroupedAccumulator(long expectedSize, int valueChannel)
+        {
+            super(valueChannel, SINGLE_DOUBLE, SINGLE_VARBINARY);
+            this.counts = LongBigArrays.newBigArray(expectedSize);
+            this.sums = DoubleBigArrays.newBigArray(expectedSize);
         }
 
-        // mark value not null
-        TUPLE_INFO.setNotNull(valueSlice, valueOffset, 0);
+        @Override
+        protected void processInput(GroupByIdBlock groupIdsBlock, Block valuesBlock)
+        {
+            counts = LongBigArrays.grow(counts, groupIdsBlock.getMaxGroupId() + 1);
+            sums = DoubleBigArrays.grow(sums, groupIdsBlock.getMaxGroupId() + 1);
 
-        // increment count
-        TUPLE_INFO.setLong(valueSlice, valueOffset, 0, TUPLE_INFO.getLong(valueSlice, valueOffset, 0) + 1);
+            BlockCursor values = valuesBlock.cursor();
 
-        // add value to sum
-        long newValue = cursor.getLong(field);
-        TUPLE_INFO.setDouble(valueSlice, valueOffset, 1, TUPLE_INFO.getDouble(valueSlice, valueOffset, 1) + newValue);
+            for (int position = 0; position < groupIdsBlock.getPositionCount(); position++) {
+                checkState(values.advanceNextPosition());
+
+                long groupId = groupIdsBlock.getLong(position);
+
+                if (!values.isNull(0)) {
+                    LongBigArrays.incr(counts, groupId);
+
+                    long value = values.getLong(0);
+                    DoubleBigArrays.add(sums, groupId, value);
+                }
+            }
+            checkState(!values.advanceNextPosition());
+        }
+
+        @Override
+        protected void processIntermediate(GroupByIdBlock groupIdsBlock, Block valuesBlock)
+        {
+            counts = LongBigArrays.grow(counts, groupIdsBlock.getMaxGroupId() + 1);
+            sums = DoubleBigArrays.grow(sums, groupIdsBlock.getMaxGroupId() + 1);
+
+            BlockCursor intermediateValues = valuesBlock.cursor();
+
+            for (int position = 0; position < groupIdsBlock.getPositionCount(); position++) {
+                checkState(intermediateValues.advanceNextPosition());
+
+                long groupId = groupIdsBlock.getLong(position);
+
+                Slice value = intermediateValues.getSlice(0);
+                long count = value.getLong(0);
+                LongBigArrays.add(counts, groupId, count);
+
+                double sum = value.getDouble(SIZE_OF_LONG);
+                DoubleBigArrays.add(sums, groupId, sum);
+            }
+            checkState(!intermediateValues.advanceNextPosition());
+        }
+
+        @Override
+        public void evaluateIntermediate(int groupId, BlockBuilder output)
+        {
+            long count = LongBigArrays.get(counts, groupId);
+            double sum = DoubleBigArrays.get(sums, groupId);
+
+            // todo replace this when general fixed with values are supported
+            Slice value = Slices.allocate(SIZE_OF_LONG + SIZE_OF_DOUBLE);
+            value.setLong(0, count);
+            value.setDouble(SIZE_OF_LONG, sum);
+            output.append(value);
+        }
+
+        @Override
+        public void evaluateFinal(int groupId, BlockBuilder output)
+        {
+            long count = LongBigArrays.get(counts, groupId);
+            if (count != 0) {
+                double value = DoubleBigArrays.get(sums, groupId);
+                output.append(value / count);
+            }
+            else {
+                output.appendNull();
+            }
+        }
     }
 
     @Override
-    public void addInput(int positionCount, Block block, int field, Slice valueSlice, int valueOffset)
+    protected Accumulator createAccumulator(int valueChannel)
     {
-        // initialize with current value
-        boolean hasNonNull = !TUPLE_INFO.isNull(valueSlice, valueOffset);
-        long count = TUPLE_INFO.getLong(valueSlice, valueOffset, 0);
-        double sum = TUPLE_INFO.getDouble(valueSlice, valueOffset, 1);
+        return new LongAverageAccumulator(valueChannel);
+    }
 
-        // process block
-        BlockCursor cursor = block.cursor();
-        while (cursor.advanceNextPosition()) {
-            if (!cursor.isNull(field)) {
-                hasNonNull = true;
-                count++;
-                sum += cursor.getLong(field);
+    public static class LongAverageAccumulator
+            extends SimpleAccumulator
+    {
+        private long count;
+        private double sum;
+
+        public LongAverageAccumulator(int valueChannel)
+        {
+            super(valueChannel, SINGLE_DOUBLE, SINGLE_VARBINARY);
+        }
+
+        @Override
+        protected void processInput(Block block)
+        {
+            BlockCursor values = block.cursor();
+
+            for (int position = 0; position < block.getPositionCount(); position++) {
+                checkState(values.advanceNextPosition());
+                if (!values.isNull(0)) {
+                    count++;
+                    sum += values.getLong(0);
+                }
             }
         }
 
-        // write new value
-        if (hasNonNull) {
-            TUPLE_INFO.setNotNull(valueSlice, valueOffset, 0);
-            TUPLE_INFO.setLong(valueSlice, valueOffset, 0, count);
-            TUPLE_INFO.setDouble(valueSlice, valueOffset, 1, sum);
-        }
-    }
+        @Override
+        protected void processIntermediate(Block block)
+        {
+            BlockCursor intermediates = block.cursor();
 
-    @Override
-    public void addIntermediate(BlockCursor cursor, int field, Slice valueSlice, int valueOffset)
-    {
-        if (cursor.isNull(field)) {
-            return;
+            for (int position = 0; position < block.getPositionCount(); position++) {
+                checkState(intermediates.advanceNextPosition());
+                Slice value = intermediates.getSlice(0);
+                count += value.getLong(0);
+                sum += value.getDouble(SIZE_OF_LONG);
+            }
         }
 
-        // mark value not null
-        TUPLE_INFO.setNotNull(valueSlice, valueOffset, 0);
-
-        // decode value
-        Slice value = cursor.getSlice(field);
-        long count = value.getLong(0);
-        double sum = value.getDouble(SIZE_OF_LONG);
-
-        // add counts
-        TUPLE_INFO.setLong(valueSlice, valueOffset, 0, TUPLE_INFO.getLong(valueSlice, valueOffset, 0) + count);
-
-        // add sums
-        TUPLE_INFO.setDouble(valueSlice, valueOffset, 1, TUPLE_INFO.getDouble(valueSlice, valueOffset, 1) + sum);
-    }
-
-    @Override
-    public void evaluateIntermediate(Slice valueSlice, int valueOffset, BlockBuilder output)
-    {
-        if (!TUPLE_INFO.isNull(valueSlice, valueOffset, 0)) {
+        @Override
+        public void evaluateIntermediate(BlockBuilder out)
+        {
+            // todo replace this when general fixed with values are supported
             Slice value = Slices.allocate(SIZE_OF_LONG + SIZE_OF_DOUBLE);
-            value.setLong(0, TUPLE_INFO.getLong(valueSlice, valueOffset, 0));
-            value.setDouble(SIZE_OF_LONG, TUPLE_INFO.getDouble(valueSlice, valueOffset, 1));
-            output.append(value);
+            value.setLong(0, count);
+            value.setDouble(SIZE_OF_LONG, sum);
+            out.append(value);
         }
-        else {
-            output.appendNull();
-        }
-    }
 
-    @Override
-    public void evaluateFinal(Slice valueSlice, int valueOffset, BlockBuilder output)
-    {
-        if (!TUPLE_INFO.isNull(valueSlice, valueOffset, 0)) {
-            long count = TUPLE_INFO.getLong(valueSlice, valueOffset, 0);
-            double sum = TUPLE_INFO.getDouble(valueSlice, valueOffset, 1);
-            output.append(sum / count);
-        }
-        else {
-            output.appendNull();
+        @Override
+        public void evaluateFinal(BlockBuilder out)
+        {
+            if (count != 0) {
+                out.append(sum / count);
+            }
+            else {
+                out.appendNull();
+            }
         }
     }
 }

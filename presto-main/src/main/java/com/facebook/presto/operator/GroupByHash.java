@@ -32,7 +32,6 @@ import it.unimi.dsi.fastutil.longs.Long2IntOpenCustomHashMap;
 import it.unimi.dsi.fastutil.longs.LongHash.Strategy;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 
-import java.util.Arrays;
 import java.util.List;
 
 import static com.facebook.presto.operator.SyntheticAddress.decodePosition;
@@ -86,26 +85,7 @@ public class GroupByHash
         return types;
     }
 
-    public Page group(Page input)
-    {
-        // handle empty pages directly since empty blocks are not allowed
-        if (input.getPositionCount() == 0) {
-            return new Page(input.getPositionCount(), new Block[input.getChannelCount() + 1]);
-        }
-
-        // generate the group id channel
-        UncompressedBlock groupIds = getGroupIds(input.getBlocks());
-
-        // create output page as copy of input page with one additional channel for the group id
-        Block[] output = Arrays.copyOf(input.getBlocks(), input.getChannelCount() + 1);
-
-        // group id channel is the last channel
-        output[input.getChannelCount()] = groupIds;
-
-        return new Page(input.getPositionCount(), output);
-    }
-
-    public UncompressedBlock getGroupIds(Block... blocks)
+    public GroupByIdBlock getGroupIds(Block... blocks)
     {
         int positionCount = blocks[0].getPositionCount();
 
@@ -132,7 +112,8 @@ public class GroupByHash
             }
             blockBuilder.append(groupId);
         }
-        return blockBuilder.build();
+        UncompressedBlock block = blockBuilder.build();
+        return new GroupByIdBlock(nextGroupId - 1, block.getSlice());
     }
 
     private int addNewGroup(BlockCursor... row)

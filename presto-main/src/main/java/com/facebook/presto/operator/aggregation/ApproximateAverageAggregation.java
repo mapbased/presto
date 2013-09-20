@@ -24,94 +24,63 @@ import io.airlift.slice.Slices;
 import it.unimi.dsi.fastutil.doubles.DoubleBigArrays;
 import it.unimi.dsi.fastutil.longs.LongBigArrays;
 
-import static com.facebook.presto.tuple.TupleInfo.SINGLE_DOUBLE;
 import static com.facebook.presto.tuple.TupleInfo.SINGLE_VARBINARY;
+import static com.facebook.presto.tuple.TupleInfo.Type.DOUBLE;
+import static com.facebook.presto.tuple.TupleInfo.Type.FIXED_INT_64;
 import static com.google.common.base.Preconditions.checkState;
 
-/**
- * Generate the variance for a given set of values. This implements the
- * <a href="http://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Online_algorithm">online algorithm</a>.
- */
-public abstract class AbstractVarianceAggregation
+public class ApproximateAverageAggregation
         extends SimpleAggregationFunction
 {
-    protected final boolean population;
+    public static final AggregationFunction LONG_APPROXIMATE_AVERAGE_AGGREGATION = new ApproximateAverageAggregation(FIXED_INT_64);
+    public static final AggregationFunction DOUBLE_APPROXIMATE_AVERAGE_AGGREGATION = new ApproximateAverageAggregation(DOUBLE);
 
     /**
      * Describes the tuple used by to calculate the variance.
      */
-    static final TupleInfo VARIANCE_CONTEXT_INFO = new TupleInfo(
-            Type.FIXED_INT_64,  // n
-            Type.DOUBLE,        // mean
-            Type.DOUBLE);       // m2
+    private static final TupleInfo VARIANCE_CONTEXT_INFO = new TupleInfo(
+            FIXED_INT_64,  // n
+            DOUBLE,        // mean
+            DOUBLE);       // m2
 
 
-    AbstractVarianceAggregation(boolean population, Type parameterType)
+    private final boolean inputIsLong;
+
+    public ApproximateAverageAggregation(Type parameterType)
     {
         // Intermediate type should be a fixed width structure
-        super(SINGLE_DOUBLE, SINGLE_VARBINARY, parameterType);
+        super(SINGLE_VARBINARY, SINGLE_VARBINARY, parameterType);
 
-        this.population = population;
+        if (parameterType == Type.FIXED_INT_64) {
+            this.inputIsLong = true;
+        }
+        else if (parameterType == Type.DOUBLE) {
+            this.inputIsLong = false;
+        } else {
+            throw new IllegalArgumentException("Expected parameter type to be FIXED_INT_64 or DOUBLE, but was " + parameterType);
+        }
     }
 
-    public static class VarianceGroupedAccumulator
+    @Override
+    protected GroupedAccumulator createGroupedAccumulator(long expectedSize, int valueChannel)
+    {
+        return new ApproximateAverageGroupedAccumulator(expectedSize, valueChannel, inputIsLong);
+    }
+
+    public static class ApproximateAverageGroupedAccumulator
             extends SimpleGroupedAccumulator
     {
         private final boolean inputIsLong;
-        private final boolean population;
-        private final boolean standardDeviation;
 
         private long[][] counts;
         private double[][] means;
         private double[][] m2s;
 
-        public static VarianceGroupedAccumulator longVarianceGrouped(long expectedSize, int valueChannel)
+        private ApproximateAverageGroupedAccumulator(long expectedSize, int valueChannel, boolean inputIsLong)
         {
-            return new VarianceGroupedAccumulator(expectedSize, valueChannel, true, false, false);
-        }
-
-        public static VarianceGroupedAccumulator longVariancePopulationGrouped(long expectedSize, int valueChannel)
-        {
-            return new VarianceGroupedAccumulator(expectedSize, valueChannel, true, true, false);
-        }
-
-        public static VarianceGroupedAccumulator longStandardDeviationGrouped(long expectedSize, int valueChannel)
-        {
-            return new VarianceGroupedAccumulator(expectedSize, valueChannel, true, false, true);
-        }
-
-        public static VarianceGroupedAccumulator longStandardDeviationPopulationGrouped(long expectedSize, int valueChannel)
-        {
-            return new VarianceGroupedAccumulator(expectedSize, valueChannel, true, true, true);
-        }
-
-        public static VarianceGroupedAccumulator doubleVarianceGrouped(long expectedSize, int valueChannel)
-        {
-            return new VarianceGroupedAccumulator(expectedSize, valueChannel, false, false, false);
-        }
-
-        public static VarianceGroupedAccumulator doubleVariancePopulationGrouped(long expectedSize, int valueChannel)
-        {
-            return new VarianceGroupedAccumulator(expectedSize, valueChannel, false, true, false);
-        }
-
-        public static VarianceGroupedAccumulator doubleStandardDeviationGrouped(long expectedSize, int valueChannel)
-        {
-            return new VarianceGroupedAccumulator(expectedSize, valueChannel, false, false, true);
-        }
-
-        public static VarianceGroupedAccumulator doubleStandardDeviationPopulationGrouped(long expectedSize, int valueChannel)
-        {
-            return new VarianceGroupedAccumulator(expectedSize, valueChannel, false, true, true);
-        }
-
-        private VarianceGroupedAccumulator(long expectedSize, int valueChannel, boolean inputIsLong, boolean population, boolean standardDeviation)
-        {
-            super(valueChannel, SINGLE_DOUBLE, SINGLE_VARBINARY);
+            super(valueChannel, SINGLE_VARBINARY, SINGLE_VARBINARY);
 
             this.inputIsLong = inputIsLong;
-            this.population = population;
-            this.standardDeviation = standardDeviation;
 
             this.counts = LongBigArrays.newBigArray(expectedSize);
             this.means = DoubleBigArrays.newBigArray(expectedSize);
@@ -218,93 +187,40 @@ public abstract class AbstractVarianceAggregation
         public void evaluateFinal(int groupId, BlockBuilder output)
         {
             long count = LongBigArrays.get(counts, groupId);
-            if (population) {
-                if (count == 0) {
-                    output.appendNull();
-                }
-                else {
-                    double m2 = DoubleBigArrays.get(m2s, groupId);
-                    double result = m2 / count;
-                    if (standardDeviation) {
-                        result = Math.sqrt(result);
-                    }
-                    output.append(result);
-                }
+            if (count == 0) {
+                output.appendNull();
             }
             else {
-                if (count < 2) {
-                    output.appendNull();
-                }
-                else {
-                    double m2 = DoubleBigArrays.get(m2s, groupId);
-                    double result = m2 / (count - 1);
-                    if (standardDeviation) {
-                        result = Math.sqrt(result);
-                    }
-                    output.append(result);
-                }
+                double mean = DoubleBigArrays.get(means, groupId);
+                double m2 = DoubleBigArrays.get(m2s, groupId);
+                double variance = m2 / count;
+
+                String result = formatApproximateAverage(count, mean, variance);
+                output.append(result);
             }
         }
     }
 
-    public static class VarianceAccumulator
+    @Override
+    protected Accumulator createAccumulator(int valueChannel)
+    {
+        return new ApproximateAverageAccumulator(valueChannel, inputIsLong);
+    }
+
+    public static class ApproximateAverageAccumulator
             extends SimpleAccumulator
     {
         private final boolean inputIsLong;
-        private final boolean population;
-        private final boolean standardDeviation;
 
         private long currentCount;
         private double currentMean;
         private double currentM2;
 
-        public static VarianceAccumulator longVariance(int valueChannel)
+        private ApproximateAverageAccumulator(int valueChannel, boolean inputIsLong)
         {
-            return new VarianceAccumulator(valueChannel, true, false, false);
-        }
-
-        public static VarianceAccumulator longVariancePopulation(int valueChannel)
-        {
-            return new VarianceAccumulator(valueChannel, true, true, false);
-        }
-
-        public static VarianceAccumulator longStandardDeviation(int valueChannel)
-        {
-            return new VarianceAccumulator(valueChannel, true, false, true);
-        }
-
-        public static VarianceAccumulator longStandardDeviationPopulation(int valueChannel)
-        {
-            return new VarianceAccumulator(valueChannel, true, true, true);
-        }
-
-        public static VarianceAccumulator doubleVariance(int valueChannel)
-        {
-            return new VarianceAccumulator(valueChannel, false, false, false);
-        }
-
-        public static VarianceAccumulator doubleVariancePopulation(int valueChannel)
-        {
-            return new VarianceAccumulator(valueChannel, false, true, false);
-        }
-
-        public static VarianceAccumulator doubleStandardDeviation(int valueChannel)
-        {
-            return new VarianceAccumulator(valueChannel, false, false, true);
-        }
-
-        public static VarianceAccumulator doubleStandardDeviationPopulation(int valueChannel)
-        {
-            return new VarianceAccumulator(valueChannel, false, true, true);
-        }
-
-        private VarianceAccumulator(int valueChannel, boolean inputIsLong, boolean population, boolean standardDeviation)
-        {
-            super(valueChannel, SINGLE_DOUBLE, SINGLE_VARBINARY);
+            super(valueChannel, SINGLE_VARBINARY, SINGLE_VARBINARY);
 
             this.inputIsLong = inputIsLong;
-            this.population = population;
-            this.standardDeviation = standardDeviation;
         }
 
         @Override
@@ -379,30 +295,27 @@ public abstract class AbstractVarianceAggregation
         @Override
         public void evaluateFinal(BlockBuilder output)
         {
-            if (population) {
-                if (currentCount == 0) {
-                    output.appendNull();
-                }
-                else {
-                    double result = currentM2 / currentCount;
-                    if (standardDeviation) {
-                        result = Math.sqrt(result);
-                    }
-                    output.append(result);
-                }
+            if (currentCount == 0) {
+                output.appendNull();
             }
             else {
-                if (currentCount < 2) {
-                    output.appendNull();
-                }
-                else {
-                    double result = currentM2 / (currentCount - 1);
-                    if (standardDeviation) {
-                        result = Math.sqrt(result);
-                    }
-                    output.append(result);
-                }
+                String result = formatApproximateAverage(currentCount, currentMean, currentM2 / currentCount);
+                output.append(result);
             }
         }
+    }
+
+    private static String formatApproximateAverage(long count, double mean, double variance)
+    {
+        // The multiplier 2.575 corresponds to the z-score of 99% confidence interval
+        // (http://upload.wikimedia.org/wikipedia/commons/b/bb/Normal_distribution_and_scales.gif)
+        double Z_SCORE = 2.575;
+
+        // Error bars at 99% confidence interval
+        StringBuilder sb = new StringBuilder();
+        sb.append(mean);
+        sb.append(" +/- ");
+        sb.append(Z_SCORE * Math.sqrt(variance / count));
+        return sb.toString();
     }
 }
