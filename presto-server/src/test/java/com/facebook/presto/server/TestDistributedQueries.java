@@ -19,6 +19,7 @@ import com.facebook.presto.client.Column;
 import com.facebook.presto.client.QueryError;
 import com.facebook.presto.client.QueryResults;
 import com.facebook.presto.client.StatementClient;
+import com.facebook.presto.metadata.AllNodes;
 import com.facebook.presto.metadata.QualifiedTableName;
 import com.facebook.presto.metadata.QualifiedTablePrefix;
 import com.facebook.presto.tuple.Tuple;
@@ -29,6 +30,7 @@ import com.google.common.base.Function;
 import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.io.Closeables;
 import io.airlift.http.client.AsyncHttpClient;
 import io.airlift.http.client.HttpClientConfig;
@@ -50,6 +52,7 @@ import static com.google.common.collect.Iterables.transform;
 import static io.airlift.json.JsonCodec.jsonCodec;
 import static java.lang.String.format;
 import static java.util.Collections.nCopies;
+import static org.testng.Assert.assertEquals;
 
 public class TestDistributedQueries
         extends AbstractTestQueries
@@ -106,8 +109,11 @@ public class TestDistributedQueries
                         .setConnectTimeout(new Duration(1, TimeUnit.DAYS))
                         .setReadTimeout(new Duration(10, TimeUnit.DAYS)));
 
+        Thread.sleep(10000);
         for (TestingPrestoServer server : servers) {
-            server.refreshServiceSelectors();
+            AllNodes allNodes = server.refreshServiceSelectors();
+            assertEquals(allNodes.getInactiveNodes(), ImmutableSet.of());
+            assertEquals(allNodes.getActiveNodes().size(), 3);
         }
 
         log.info("Loading data...");

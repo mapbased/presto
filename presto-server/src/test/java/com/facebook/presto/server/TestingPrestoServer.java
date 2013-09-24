@@ -15,6 +15,7 @@ package com.facebook.presto.server;
 
 import com.facebook.presto.connector.ConnectorManager;
 import com.facebook.presto.failureDetector.FailureDetectorModule;
+import com.facebook.presto.metadata.AllNodes;
 import com.facebook.presto.metadata.Metadata;
 import com.facebook.presto.metadata.NodeManager;
 import com.facebook.presto.tpch.TpchBlocksProvider;
@@ -167,11 +168,12 @@ public class TestingPrestoServer
         return metadata;
     }
 
-    public final void refreshServiceSelectors()
+    public final AllNodes refreshServiceSelectors()
     {
         serviceSelectorManager.forceRefresh();
         nodeManager.refreshNodes(true);
         assertTrue(nodeManager.getCurrentNode().isPresent(), "Current node is not in active set");
+        return nodeManager.getAllNodes();
     }
 
     private static class InMemoryTpchModule
