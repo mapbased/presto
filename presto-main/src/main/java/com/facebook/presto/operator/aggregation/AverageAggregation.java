@@ -17,6 +17,7 @@ import com.facebook.presto.block.Block;
 import com.facebook.presto.block.BlockBuilder;
 import com.facebook.presto.block.BlockCursor;
 import com.facebook.presto.operator.GroupByIdBlock;
+import com.facebook.presto.tuple.TupleInfo.Type;
 import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
 import it.unimi.dsi.fastutil.doubles.DoubleBigArrays;
@@ -24,42 +25,53 @@ import it.unimi.dsi.fastutil.longs.LongBigArrays;
 
 import static com.facebook.presto.tuple.TupleInfo.SINGLE_DOUBLE;
 import static com.facebook.presto.tuple.TupleInfo.SINGLE_VARBINARY;
-import static com.facebook.presto.tuple.TupleInfo.Type.FIXED_INT_64;
 import static com.google.common.base.Preconditions.checkState;
 import static io.airlift.slice.SizeOf.SIZE_OF_DOUBLE;
 import static io.airlift.slice.SizeOf.SIZE_OF_LONG;
 
-public class LongAverageAggregation
+public class AverageAggregation
         extends SimpleAggregationFunction
 {
-    public static final LongAverageAggregation LONG_AVERAGE = new LongAverageAggregation();
+    private final boolean inputIsLong;
 
-    public LongAverageAggregation()
+    public AverageAggregation(Type parameterType)
     {
-        super(SINGLE_DOUBLE, SINGLE_VARBINARY, FIXED_INT_64);
+        super(SINGLE_DOUBLE, SINGLE_VARBINARY, parameterType);
+
+        if (parameterType == Type.FIXED_INT_64) {
+            this.inputIsLong = true;
+        }
+        else if (parameterType == Type.DOUBLE) {
+            this.inputIsLong = false;
+        } else {
+            throw new IllegalArgumentException("Expected parameter type to be FIXED_INT_64 or DOUBLE, but was " + parameterType);
+        }
     }
 
     @Override
     protected GroupedAccumulator createGroupedAccumulator(long expectedSize, int valueChannel)
     {
-        return new LongSumGroupedAccumulator(expectedSize, valueChannel);
+        return new AverageGroupedAccumulator(expectedSize, valueChannel, inputIsLong);
     }
 
-    public static class LongSumGroupedAccumulator
+    public static class AverageGroupedAccumulator
             extends SimpleGroupedAccumulator
     {
+        private final boolean inputIsLong;
+
         private long[][] counts;
         private double[][] sums;
 
-        public LongSumGroupedAccumulator(long expectedSize, int valueChannel)
+        public AverageGroupedAccumulator(long expectedSize, int valueChannel, boolean inputIsLong)
         {
             super(valueChannel, SINGLE_DOUBLE, SINGLE_VARBINARY);
+            this.inputIsLong = inputIsLong;
             this.counts = LongBigArrays.newBigArray(expectedSize);
             this.sums = DoubleBigArrays.newBigArray(expectedSize);
         }
 
         @Override
-        protected void processInput(GroupByIdBlock groupIdsBlock, Block valuesBlock)
+        public void processInput(GroupByIdBlock groupIdsBlock, Block valuesBlock)
         {
             counts = LongBigArrays.grow(counts, groupIdsBlock.getMaxGroupId() + 1);
             sums = DoubleBigArrays.grow(sums, groupIdsBlock.getMaxGroupId() + 1);
@@ -74,7 +86,13 @@ public class LongAverageAggregation
                 if (!values.isNull(0)) {
                     LongBigArrays.incr(counts, groupId);
 
-                    long value = values.getLong(0);
+                    double value;
+                    if (inputIsLong) {
+                        value = values.getLong(0);
+                    }
+                    else {
+                        value = values.getDouble(0);
+                    }
                     DoubleBigArrays.add(sums, groupId, value);
                 }
             }
@@ -82,12 +100,12 @@ public class LongAverageAggregation
         }
 
         @Override
-        protected void processIntermediate(GroupByIdBlock groupIdsBlock, Block valuesBlock)
+        public void processIntermediate(GroupByIdBlock groupIdsBlock, Block block)
         {
             counts = LongBigArrays.grow(counts, groupIdsBlock.getMaxGroupId() + 1);
             sums = DoubleBigArrays.grow(sums, groupIdsBlock.getMaxGroupId() + 1);
 
-            BlockCursor intermediateValues = valuesBlock.cursor();
+            BlockCursor intermediateValues = block.cursor();
 
             for (int position = 0; position < groupIdsBlock.getPositionCount(); position++) {
                 checkState(intermediateValues.advanceNextPosition());
@@ -134,18 +152,21 @@ public class LongAverageAggregation
     @Override
     protected Accumulator createAccumulator(int valueChannel)
     {
-        return new LongAverageAccumulator(valueChannel);
+        return new AverageAccumulator(valueChannel, inputIsLong);
     }
 
-    public static class LongAverageAccumulator
+    public static class AverageAccumulator
             extends SimpleAccumulator
     {
+        private final boolean inputIsLong;
+
         private long count;
         private double sum;
 
-        public LongAverageAccumulator(int valueChannel)
+        public AverageAccumulator(int valueChannel, boolean inputIsLong)
         {
             super(valueChannel, SINGLE_DOUBLE, SINGLE_VARBINARY);
+            this.inputIsLong = inputIsLong;
         }
 
         @Override
@@ -157,7 +178,12 @@ public class LongAverageAggregation
                 checkState(values.advanceNextPosition());
                 if (!values.isNull(0)) {
                     count++;
-                    sum += values.getLong(0);
+                    if (inputIsLong) {
+                        sum += values.getLong(0);
+                    }
+                    else {
+                        sum += values.getDouble(0);
+                    }
                 }
             }
         }
