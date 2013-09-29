@@ -32,11 +32,9 @@ import static com.google.common.base.Preconditions.checkState;
  * Generate the variance for a given set of values. This implements the
  * <a href="http://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Online_algorithm">online algorithm</a>.
  */
-public abstract class AbstractVarianceAggregation
+public class VarianceAggregation
         extends SimpleAggregationFunction
 {
-    protected final boolean population;
-
     /**
      * Describes the tuple used by to calculate the variance.
      */
@@ -46,12 +44,32 @@ public abstract class AbstractVarianceAggregation
             Type.DOUBLE);       // m2
 
 
-    AbstractVarianceAggregation(boolean population, Type parameterType)
+    protected final boolean population;
+    protected final boolean inputIsLong;
+    protected final boolean standardDeviation;
+
+    public VarianceAggregation(Type parameterType,
+            boolean population,
+            boolean standardDeviation)
     {
         // Intermediate type should be a fixed width structure
         super(SINGLE_DOUBLE, SINGLE_VARBINARY, parameterType);
-
         this.population = population;
+        if (parameterType == Type.FIXED_INT_64) {
+            this.inputIsLong = true;
+        }
+        else if (parameterType == Type.DOUBLE) {
+            this.inputIsLong = false;
+        } else {
+            throw new IllegalArgumentException("Expected parameter type to be FIXED_INT_64 or DOUBLE, but was " + parameterType);
+        }
+        this.standardDeviation = standardDeviation;
+    }
+
+    @Override
+    protected GroupedAccumulator createGroupedAccumulator(long expectedSize, int valueChannel)
+    {
+        return new VarianceGroupedAccumulator(expectedSize, valueChannel, inputIsLong, population, standardDeviation);
     }
 
     public static class VarianceGroupedAccumulator
@@ -64,46 +82,6 @@ public abstract class AbstractVarianceAggregation
         private long[][] counts;
         private double[][] means;
         private double[][] m2s;
-
-        public static VarianceGroupedAccumulator longVarianceGrouped(long expectedSize, int valueChannel)
-        {
-            return new VarianceGroupedAccumulator(expectedSize, valueChannel, true, false, false);
-        }
-
-        public static VarianceGroupedAccumulator longVariancePopulationGrouped(long expectedSize, int valueChannel)
-        {
-            return new VarianceGroupedAccumulator(expectedSize, valueChannel, true, true, false);
-        }
-
-        public static VarianceGroupedAccumulator longStandardDeviationGrouped(long expectedSize, int valueChannel)
-        {
-            return new VarianceGroupedAccumulator(expectedSize, valueChannel, true, false, true);
-        }
-
-        public static VarianceGroupedAccumulator longStandardDeviationPopulationGrouped(long expectedSize, int valueChannel)
-        {
-            return new VarianceGroupedAccumulator(expectedSize, valueChannel, true, true, true);
-        }
-
-        public static VarianceGroupedAccumulator doubleVarianceGrouped(long expectedSize, int valueChannel)
-        {
-            return new VarianceGroupedAccumulator(expectedSize, valueChannel, false, false, false);
-        }
-
-        public static VarianceGroupedAccumulator doubleVariancePopulationGrouped(long expectedSize, int valueChannel)
-        {
-            return new VarianceGroupedAccumulator(expectedSize, valueChannel, false, true, false);
-        }
-
-        public static VarianceGroupedAccumulator doubleStandardDeviationGrouped(long expectedSize, int valueChannel)
-        {
-            return new VarianceGroupedAccumulator(expectedSize, valueChannel, false, false, true);
-        }
-
-        public static VarianceGroupedAccumulator doubleStandardDeviationPopulationGrouped(long expectedSize, int valueChannel)
-        {
-            return new VarianceGroupedAccumulator(expectedSize, valueChannel, false, true, true);
-        }
 
         private VarianceGroupedAccumulator(long expectedSize, int valueChannel, boolean inputIsLong, boolean population, boolean standardDeviation)
         {
@@ -247,6 +225,12 @@ public abstract class AbstractVarianceAggregation
         }
     }
 
+    @Override
+    protected Accumulator createAccumulator(int valueChannel)
+    {
+        return new VarianceAccumulator(valueChannel, inputIsLong, population, standardDeviation);
+    }
+
     public static class VarianceAccumulator
             extends SimpleAccumulator
     {
@@ -257,46 +241,6 @@ public abstract class AbstractVarianceAggregation
         private long currentCount;
         private double currentMean;
         private double currentM2;
-
-        public static VarianceAccumulator longVariance(int valueChannel)
-        {
-            return new VarianceAccumulator(valueChannel, true, false, false);
-        }
-
-        public static VarianceAccumulator longVariancePopulation(int valueChannel)
-        {
-            return new VarianceAccumulator(valueChannel, true, true, false);
-        }
-
-        public static VarianceAccumulator longStandardDeviation(int valueChannel)
-        {
-            return new VarianceAccumulator(valueChannel, true, false, true);
-        }
-
-        public static VarianceAccumulator longStandardDeviationPopulation(int valueChannel)
-        {
-            return new VarianceAccumulator(valueChannel, true, true, true);
-        }
-
-        public static VarianceAccumulator doubleVariance(int valueChannel)
-        {
-            return new VarianceAccumulator(valueChannel, false, false, false);
-        }
-
-        public static VarianceAccumulator doubleVariancePopulation(int valueChannel)
-        {
-            return new VarianceAccumulator(valueChannel, false, true, false);
-        }
-
-        public static VarianceAccumulator doubleStandardDeviation(int valueChannel)
-        {
-            return new VarianceAccumulator(valueChannel, false, false, true);
-        }
-
-        public static VarianceAccumulator doubleStandardDeviationPopulation(int valueChannel)
-        {
-            return new VarianceAccumulator(valueChannel, false, true, true);
-        }
 
         private VarianceAccumulator(int valueChannel, boolean inputIsLong, boolean population, boolean standardDeviation)
         {
