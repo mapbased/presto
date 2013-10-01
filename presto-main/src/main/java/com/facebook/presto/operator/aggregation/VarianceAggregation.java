@@ -17,7 +17,6 @@ import com.facebook.presto.block.Block;
 import com.facebook.presto.block.BlockBuilder;
 import com.facebook.presto.block.BlockCursor;
 import com.facebook.presto.operator.GroupByIdBlock;
-import com.facebook.presto.tuple.TupleInfo;
 import com.facebook.presto.tuple.TupleInfo.Type;
 import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
@@ -27,6 +26,8 @@ import it.unimi.dsi.fastutil.longs.LongBigArrays;
 import static com.facebook.presto.tuple.TupleInfo.SINGLE_DOUBLE;
 import static com.facebook.presto.tuple.TupleInfo.SINGLE_VARBINARY;
 import static com.google.common.base.Preconditions.checkState;
+import static io.airlift.slice.SizeOf.SIZE_OF_DOUBLE;
+import static io.airlift.slice.SizeOf.SIZE_OF_LONG;
 
 /**
  * Generate the variance for a given set of values. This implements the
@@ -35,15 +36,6 @@ import static com.google.common.base.Preconditions.checkState;
 public class VarianceAggregation
         extends SimpleAggregationFunction
 {
-    /**
-     * Describes the tuple used by to calculate the variance.
-     */
-    static final TupleInfo VARIANCE_CONTEXT_INFO = new TupleInfo(
-            Type.FIXED_INT_64,  // n
-            Type.DOUBLE,        // mean
-            Type.DOUBLE);       // m2
-
-
     protected final boolean population;
     protected final boolean inputIsLong;
     protected final boolean standardDeviation;
@@ -60,7 +52,8 @@ public class VarianceAggregation
         }
         else if (parameterType == Type.DOUBLE) {
             this.inputIsLong = false;
-        } else {
+        }
+        else {
             throw new IllegalArgumentException("Expected parameter type to be FIXED_INT_64 or DOUBLE, but was " + parameterType);
         }
         this.standardDeviation = standardDeviation;
@@ -153,9 +146,9 @@ public class VarianceAggregation
                     long groupId = groupIdsBlock.getLong(position);
 
                     Slice slice = values.getSlice(0);
-                    long inputCount = VARIANCE_CONTEXT_INFO.getLong(slice, 0);
-                    double inputMean = VARIANCE_CONTEXT_INFO.getDouble(slice, 1);
-                    double inputM2 = VARIANCE_CONTEXT_INFO.getDouble(slice, 2);
+                    long inputCount = getCount(slice);
+                    double inputMean = getMean(slice);
+                    double inputM2 = getM2(slice);
 
                     long currentCount = LongBigArrays.get(counts, groupId);
                     double currentMean = DoubleBigArrays.get(means, groupId);
@@ -183,13 +176,7 @@ public class VarianceAggregation
             double mean = DoubleBigArrays.get(means, groupId);
             double m2 = DoubleBigArrays.get(m2s, groupId);
 
-            Slice intermediateValue = Slices.allocate(VARIANCE_CONTEXT_INFO.getFixedSize());
-            VARIANCE_CONTEXT_INFO.setNotNull(intermediateValue, 0);
-            VARIANCE_CONTEXT_INFO.setLong(intermediateValue, 0, count);
-            VARIANCE_CONTEXT_INFO.setDouble(intermediateValue, 1, mean);
-            VARIANCE_CONTEXT_INFO.setDouble(intermediateValue, 2, m2);
-
-            output.append(intermediateValue);
+            output.append(createIntermediate(count, mean, m2));
         }
 
         @Override
@@ -289,9 +276,9 @@ public class VarianceAggregation
 
                 if (!values.isNull(0)) {
                     Slice slice = values.getSlice(0);
-                    long inputCount = VARIANCE_CONTEXT_INFO.getLong(slice, 0);
-                    double inputMean = VARIANCE_CONTEXT_INFO.getDouble(slice, 1);
-                    double inputM2 = VARIANCE_CONTEXT_INFO.getDouble(slice, 2);
+                    long inputCount = getCount(slice);
+                    double inputMean = getMean(slice);
+                    double inputM2 = getM2(slice);
 
                     // Use numerically stable variant
                     long newCount = currentCount + inputCount;
@@ -311,13 +298,7 @@ public class VarianceAggregation
         @Override
         public void evaluateIntermediate(BlockBuilder output)
         {
-            Slice intermediateValue = Slices.allocate(VARIANCE_CONTEXT_INFO.getFixedSize());
-            VARIANCE_CONTEXT_INFO.setNotNull(intermediateValue, 0);
-            VARIANCE_CONTEXT_INFO.setLong(intermediateValue, 0, currentCount);
-            VARIANCE_CONTEXT_INFO.setDouble(intermediateValue, 1, currentMean);
-            VARIANCE_CONTEXT_INFO.setDouble(intermediateValue, 2, currentM2);
-
-            output.append(intermediateValue);
+            output.append(createIntermediate(currentCount, currentMean, currentM2));
         }
 
         @Override
@@ -348,5 +329,29 @@ public class VarianceAggregation
                 }
             }
         }
+    }
+
+    public static long getCount(Slice slice)
+    {
+        return slice.getLong(0);
+    }
+
+    public static double getMean(Slice slice)
+    {
+        return slice.getDouble(SIZE_OF_LONG);
+    }
+
+    public static double getM2(Slice slice)
+    {
+        return slice.getDouble(SIZE_OF_LONG + SIZE_OF_DOUBLE);
+    }
+
+    public static Slice createIntermediate(long count, double mean, double m2)
+    {
+        Slice slice = Slices.allocate(SIZE_OF_LONG + SIZE_OF_DOUBLE + SIZE_OF_DOUBLE);
+        slice.setLong(0, count);
+        slice.setDouble(SIZE_OF_LONG, mean);
+        slice.setDouble(SIZE_OF_LONG + SIZE_OF_DOUBLE, m2);
+        return slice;
     }
 }

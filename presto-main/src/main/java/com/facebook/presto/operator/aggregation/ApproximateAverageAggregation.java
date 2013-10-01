@@ -17,30 +17,21 @@ import com.facebook.presto.block.Block;
 import com.facebook.presto.block.BlockBuilder;
 import com.facebook.presto.block.BlockCursor;
 import com.facebook.presto.operator.GroupByIdBlock;
-import com.facebook.presto.tuple.TupleInfo;
 import com.facebook.presto.tuple.TupleInfo.Type;
 import io.airlift.slice.Slice;
-import io.airlift.slice.Slices;
 import it.unimi.dsi.fastutil.doubles.DoubleBigArrays;
 import it.unimi.dsi.fastutil.longs.LongBigArrays;
 
+import static com.facebook.presto.operator.aggregation.VarianceAggregation.createIntermediate;
+import static com.facebook.presto.operator.aggregation.VarianceAggregation.getCount;
+import static com.facebook.presto.operator.aggregation.VarianceAggregation.getM2;
+import static com.facebook.presto.operator.aggregation.VarianceAggregation.getMean;
 import static com.facebook.presto.tuple.TupleInfo.SINGLE_VARBINARY;
-import static com.facebook.presto.tuple.TupleInfo.Type.DOUBLE;
-import static com.facebook.presto.tuple.TupleInfo.Type.FIXED_INT_64;
 import static com.google.common.base.Preconditions.checkState;
 
 public class ApproximateAverageAggregation
         extends SimpleAggregationFunction
 {
-    /**
-     * Describes the tuple used by to calculate the variance.
-     */
-    private static final TupleInfo VARIANCE_CONTEXT_INFO = new TupleInfo(
-            FIXED_INT_64,  // n
-            DOUBLE,        // mean
-            DOUBLE);       // m2
-
-
     private final boolean inputIsLong;
 
     public ApproximateAverageAggregation(Type parameterType)
@@ -141,9 +132,9 @@ public class ApproximateAverageAggregation
                     long groupId = groupIdsBlock.getLong(position);
 
                     Slice slice = values.getSlice(0);
-                    long inputCount = VARIANCE_CONTEXT_INFO.getLong(slice, 0);
-                    double inputMean = VARIANCE_CONTEXT_INFO.getDouble(slice, 1);
-                    double inputM2 = VARIANCE_CONTEXT_INFO.getDouble(slice, 2);
+                    long inputCount = getCount(slice);
+                    double inputMean = getMean(slice);
+                    double inputM2 = getM2(slice);
 
                     long currentCount = LongBigArrays.get(counts, groupId);
                     double currentMean = DoubleBigArrays.get(means, groupId);
@@ -171,13 +162,7 @@ public class ApproximateAverageAggregation
             double mean = DoubleBigArrays.get(means, groupId);
             double m2 = DoubleBigArrays.get(m2s, groupId);
 
-            Slice intermediateValue = Slices.allocate(VARIANCE_CONTEXT_INFO.getFixedSize());
-            VARIANCE_CONTEXT_INFO.setNotNull(intermediateValue, 0);
-            VARIANCE_CONTEXT_INFO.setLong(intermediateValue, 0, count);
-            VARIANCE_CONTEXT_INFO.setDouble(intermediateValue, 1, mean);
-            VARIANCE_CONTEXT_INFO.setDouble(intermediateValue, 2, m2);
-
-            output.append(intermediateValue);
+            output.append(createIntermediate(count, mean, m2));
         }
 
         @Override
@@ -258,9 +243,9 @@ public class ApproximateAverageAggregation
 
                 if (!values.isNull(0)) {
                     Slice slice = values.getSlice(0);
-                    long inputCount = VARIANCE_CONTEXT_INFO.getLong(slice, 0);
-                    double inputMean = VARIANCE_CONTEXT_INFO.getDouble(slice, 1);
-                    double inputM2 = VARIANCE_CONTEXT_INFO.getDouble(slice, 2);
+                    long inputCount = getCount(slice);
+                    double inputMean = getMean(slice);
+                    double inputM2 = getM2(slice);
 
                     // Use numerically stable variant
                     long newCount = currentCount + inputCount;
@@ -280,13 +265,7 @@ public class ApproximateAverageAggregation
         @Override
         public void evaluateIntermediate(BlockBuilder output)
         {
-            Slice intermediateValue = Slices.allocate(VARIANCE_CONTEXT_INFO.getFixedSize());
-            VARIANCE_CONTEXT_INFO.setNotNull(intermediateValue, 0);
-            VARIANCE_CONTEXT_INFO.setLong(intermediateValue, 0, currentCount);
-            VARIANCE_CONTEXT_INFO.setDouble(intermediateValue, 1, currentMean);
-            VARIANCE_CONTEXT_INFO.setDouble(intermediateValue, 2, currentM2);
-
-            output.append(intermediateValue);
+            output.append(createIntermediate(currentCount, currentMean, currentM2));
         }
 
         @Override
