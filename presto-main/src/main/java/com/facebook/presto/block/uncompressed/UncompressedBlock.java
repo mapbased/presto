@@ -72,22 +72,20 @@ public class UncompressedBlock
     @Override
     public BlockCursor cursor()
     {
-        if (tupleInfo.getFieldCount() == 1) {
-            Type type = tupleInfo.getTypes().get(0);
-            if (type == Type.BOOLEAN) {
-                return new UncompressedBooleanBlockCursor(positionCount, slice);
-            }
-            if (type == Type.FIXED_INT_64) {
-                return new UncompressedLongBlockCursor(positionCount, slice);
-            }
-            if (type == Type.DOUBLE) {
-                return new UncompressedDoubleBlockCursor(positionCount, slice);
-            }
-            if (type == Type.VARIABLE_BINARY) {
-                return new UncompressedSliceBlockCursor(positionCount, slice);
-            }
+        Type type = tupleInfo.getType();
+        if (type == Type.BOOLEAN) {
+            return new UncompressedBooleanBlockCursor(positionCount, slice);
         }
-        return new UncompressedBlockCursor(tupleInfo, positionCount, slice);
+        else if (type == Type.FIXED_INT_64) {
+            return new UncompressedLongBlockCursor(positionCount, slice);
+        }
+        else if (type == Type.DOUBLE) {
+            return new UncompressedDoubleBlockCursor(positionCount, slice);
+        }
+        else if (type == Type.VARIABLE_BINARY) {
+            return new UncompressedSliceBlockCursor(positionCount, slice);
+        }
+        throw new IllegalStateException("Unsupported type " + type);
     }
 
     @Override
@@ -106,24 +104,22 @@ public class UncompressedBlock
     @Override
     public RandomAccessBlock toRandomAccessBlock()
     {
-        if (tupleInfo.getFieldCount() != 1) {
-            throw new IllegalStateException("Multi channel random access blocks not supported");
-        }
-
-        Type type = tupleInfo.getTypes().get(0);
+        Type type = tupleInfo.getType();
         if (type == Type.BOOLEAN) {
             return new UncompressedBooleanBlock(positionCount, slice);
         }
-        if (type == Type.FIXED_INT_64) {
+        else if (type == Type.FIXED_INT_64) {
             return new UncompressedLongBlock(slice);
         }
-        if (type == Type.DOUBLE) {
+        else if (type == Type.DOUBLE) {
             return new UncompressedDoubleBlock(positionCount, slice);
         }
-        if (type == Type.VARIABLE_BINARY) {
+        else if (type == Type.VARIABLE_BINARY) {
             return new UncompressedSliceBlock(this);
         }
-        throw new IllegalStateException("Unsupported type " + tupleInfo.getTypes().get(0));
+        else {
+            throw new IllegalStateException("Unsupported type " + type);
+        }
     }
 
     @Override
