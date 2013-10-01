@@ -63,10 +63,10 @@ public class VarBinaryMaxAggregation
                 checkState(values.advanceNextPosition());
 
                 // skip null values
-                if (!values.isNull(0)) {
+                if (!values.isNull()) {
                     long groupId = groupIdsBlock.getLong(position);
 
-                    Slice value = values.getSlice(0);
+                    Slice value = values.getSlice();
 
                     Slice max = max(value, ObjectBigArrays.get(maxValues, groupId));
                     ObjectBigArrays.set(maxValues, groupId, max);
@@ -111,8 +111,8 @@ public class VarBinaryMaxAggregation
 
             for (int position = 0; position < block.getPositionCount(); position++) {
                 checkState(values.advanceNextPosition());
-                if (!values.isNull(0)) {
-                    max = max(max, values.getSlice(0));
+                if (!values.isNull()) {
+                    max = max(max, values.getSlice());
                 }
             }
         }

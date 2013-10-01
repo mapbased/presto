@@ -128,7 +128,6 @@ public class UncompressedSliceBlock
     public Slice getSlice(int position)
     {
         checkReadablePosition(position);
-        Preconditions.checkElementIndex(0, 1, "field");
 
         int offset = offsets[position];
         int size = slice.getInt(offset + SIZE_OF_BYTE);
