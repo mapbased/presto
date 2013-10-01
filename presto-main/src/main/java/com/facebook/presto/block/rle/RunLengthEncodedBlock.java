@@ -87,32 +87,32 @@ public class RunLengthEncodedBlock
     public boolean getBoolean(int position)
     {
         checkReadablePosition(position);
-        return value.getBoolean(0);
+        return value.getBoolean();
     }
 
     @Override
     public long getLong(int position)
     {
-        return value.getLong(0);
+        return value.getLong();
     }
 
     @Override
     public double getDouble(int position)
     {
-        return value.getDouble(0);
+        return value.getDouble();
     }
 
     @Override
     public Slice getSlice(int position)
     {
-        return value.getSlice(0);
+        return value.getSlice();
     }
 
     @Override
     public boolean isNull(int position)
     {
         checkReadablePosition(position);
-        return value.isNull(0);
+        return value.isNull();
     }
 
     @Override

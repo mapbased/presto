@@ -113,7 +113,7 @@ public class CountAggregation
                 checkState(intermediates.advanceNextPosition());
 
                 long groupId = groupIdsBlock.getLong(position);
-                LongBigArrays.add(counts, groupId, intermediates.getLong(0));
+                LongBigArrays.add(counts, groupId, intermediates.getLong());
             }
         }
 
@@ -171,7 +171,7 @@ public class CountAggregation
 
             for (int position = 0; position < block.getPositionCount(); position++) {
                 checkState(intermediates.advanceNextPosition());
-                count += intermediates.getLong(0);
+                count += intermediates.getLong();
             }
         }
 

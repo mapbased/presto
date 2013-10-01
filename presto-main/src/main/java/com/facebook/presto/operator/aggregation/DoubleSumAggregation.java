@@ -66,10 +66,10 @@ public class DoubleSumAggregation
 
                 long groupId = groupIdsBlock.getLong(position);
 
-                if (!values.isNull(0)) {
+                if (!values.isNull()) {
                     BooleanBigArrays.set(notNull, groupId, true);
 
-                    double value = values.getDouble(0);
+                    double value = values.getDouble();
                     DoubleBigArrays.add(sums, groupId, value);
                 }
             }
@@ -113,9 +113,9 @@ public class DoubleSumAggregation
 
             for (int position = 0; position < block.getPositionCount(); position++) {
                 checkState(intermediates.advanceNextPosition());
-                if (!intermediates.isNull(0)) {
+                if (!intermediates.isNull()) {
                     notNull = true;
-                    sum += intermediates.getDouble(0);
+                    sum += intermediates.getDouble();
                 }
             }
         }

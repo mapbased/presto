@@ -66,11 +66,11 @@ public class BooleanMinAggregation
                 checkState(values.advanceNextPosition());
 
                 // skip null values
-                if (!values.isNull(0)) {
+                if (!values.isNull()) {
                     long groupId = groupIdsBlock.getLong(position);
 
                     // if value is false, update the min to false
-                    if (!values.getBoolean(0)) {
+                    if (!values.getBoolean()) {
                         ByteBigArrays.set(minValues, groupId, FALSE_VALUE);
                     }
                     else {
@@ -121,11 +121,11 @@ public class BooleanMinAggregation
 
             for (int position = 0; position < block.getPositionCount(); position++) {
                 checkState(values.advanceNextPosition());
-                if (!values.isNull(0)) {
+                if (!values.isNull()) {
                     notNull = true;
 
                     // if value is false, update the max to false
-                    if (!values.getBoolean(0)) {
+                    if (!values.getBoolean()) {
                         min = false;
                     }
                 }

@@ -52,21 +52,20 @@ public class TupleInputResolver
         int channel = input.getChannel();
         if (inputs != null) {
             TupleReadable tuple = inputs[channel];
-            int field = input.getField();
 
-            if (tuple.isNull(field)) {
+            if (tuple.isNull()) {
                 return null;
             }
 
             switch (tuple.getTupleInfo().getType()) {
                 case BOOLEAN:
-                    return tuple.getBoolean(field);
+                    return tuple.getBoolean();
                 case FIXED_INT_64:
-                    return tuple.getLong(field);
+                    return tuple.getLong();
                 case DOUBLE:
-                    return tuple.getDouble(field);
+                    return tuple.getDouble();
                 case VARIABLE_BINARY:
-                    return tuple.getSlice(field);
+                    return tuple.getSlice();
                 default:
                     throw new UnsupportedOperationException("not yet implemented");
             }

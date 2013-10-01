@@ -74,10 +74,10 @@ public class DoubleMinAggregation
 
                 long groupId = groupIdsBlock.getLong(position);
 
-                if (!values.isNull(0)) {
+                if (!values.isNull()) {
                     BooleanBigArrays.set(notNull, groupId, true);
 
-                    double value = values.getDouble(0);
+                    double value = values.getDouble();
                     value = Math.min(value, DoubleBigArrays.get(minValues, groupId));
                     DoubleBigArrays.set(minValues, groupId, value);
                 }
@@ -122,9 +122,9 @@ public class DoubleMinAggregation
 
             for (int position = 0; position < block.getPositionCount(); position++) {
                 checkState(values.advanceNextPosition());
-                if (!values.isNull(0)) {
+                if (!values.isNull()) {
                     notNull = true;
-                    min = Math.min(min, values.getDouble(0));
+                    min = Math.min(min, values.getDouble());
                 }
             }
         }

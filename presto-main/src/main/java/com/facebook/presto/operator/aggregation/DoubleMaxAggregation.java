@@ -74,10 +74,10 @@ public class DoubleMaxAggregation
 
                 long groupId = groupIdsBlock.getLong(position);
 
-                if (!values.isNull(0)) {
+                if (!values.isNull()) {
                     BooleanBigArrays.set(notNull, groupId, true);
 
-                    double value = values.getDouble(0);
+                    double value = values.getDouble();
                     value = Math.max(value, DoubleBigArrays.get(maxValues, groupId));
                     DoubleBigArrays.set(maxValues, groupId, value);
                 }
@@ -122,9 +122,9 @@ public class DoubleMaxAggregation
 
             for (int position = 0; position < block.getPositionCount(); position++) {
                 checkState(values.advanceNextPosition());
-                if (!values.isNull(0)) {
+                if (!values.isNull()) {
                     notNull = true;
-                    max = Math.max(max, values.getDouble(0));
+                    max = Math.max(max, values.getDouble());
                 }
             }
         }

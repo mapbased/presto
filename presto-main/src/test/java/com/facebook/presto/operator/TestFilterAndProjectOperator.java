@@ -72,7 +72,7 @@ public class TestFilterAndProjectOperator
             @Override
             public boolean filter(TupleReadable... cursors)
             {
-                long value = cursors[1].getLong(0);
+                long value = cursors[1].getLong();
                 return 10 <= value && value < 20;
             }
 
@@ -82,7 +82,7 @@ public class TestFilterAndProjectOperator
                 long value = cursor.getLong(0);
                 return 10 <= value && value < 20;
             }
-        }, singleColumn(VARIABLE_BINARY, 0, 0), new Add5Projection(1));
+        }, singleColumn(VARIABLE_BINARY, 0), new Add5Projection(1));
 
         Operator operator = operatorFactory.createOperator(driverContext);
 
@@ -121,11 +121,11 @@ public class TestFilterAndProjectOperator
         @Override
         public void project(TupleReadable[] cursors, BlockBuilder output)
         {
-            if (cursors[channelIndex].isNull(0)) {
+            if (cursors[channelIndex].isNull()) {
                 output.appendNull();
             }
             else {
-                output.append(cursors[channelIndex].getLong(0) + 5);
+                output.append(cursors[channelIndex].getLong() + 5);
             }
         }
 
