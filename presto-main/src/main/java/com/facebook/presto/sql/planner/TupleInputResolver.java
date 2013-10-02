@@ -21,7 +21,6 @@ import io.airlift.slice.Slices;
 
 import java.util.Map;
 
-import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 
@@ -71,8 +70,6 @@ public class TupleInputResolver
             }
         }
         else if (cursor != null) {
-            checkArgument(input.getField() == 0, "Field for cursor must be 0 but is %s", input.getField());
-
             if (cursor.isNull(channel)) {
                 return null;
             }
