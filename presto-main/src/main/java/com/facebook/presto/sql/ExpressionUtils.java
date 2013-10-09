@@ -32,6 +32,7 @@ import java.util.Iterator;
 import java.util.List;
 
 import static com.facebook.presto.sql.planner.DeterminismEvaluator.deterministic;
+import static com.facebook.presto.sql.tree.BooleanLiteral.FALSE_LITERAL;
 import static com.facebook.presto.sql.tree.BooleanLiteral.TRUE_LITERAL;
 import static com.google.common.base.Predicates.not;
 import static com.google.common.collect.Iterables.filter;
@@ -45,6 +46,19 @@ public class ExpressionUtils
             return ImmutableList.<Expression>builder()
                     .addAll(extractConjuncts(and.getLeft()))
                     .addAll(extractConjuncts(and.getRight()))
+                    .build();
+        }
+
+        return ImmutableList.of(expression);
+    }
+
+    public static List<Expression> extractDisjuncts(Expression expression)
+    {
+        if (expression instanceof LogicalBinaryExpression && ((LogicalBinaryExpression) expression).getType() == LogicalBinaryExpression.Type.OR) {
+            LogicalBinaryExpression or = (LogicalBinaryExpression) expression;
+            return ImmutableList.<Expression>builder()
+                    .addAll(extractConjuncts(or.getLeft()))
+                    .addAll(extractConjuncts(or.getRight()))
                     .build();
         }
 
@@ -94,6 +108,12 @@ public class ExpressionUtils
 
     public static Expression combineConjuncts(Iterable<Expression> expressions)
     {
+        return combineConjunctsWithDefault(expressions, TRUE_LITERAL);
+    }
+
+
+    public static Expression combineConjunctsWithDefault(Iterable<Expression> expressions, Expression emptyDefault)
+    {
         Preconditions.checkNotNull(expressions, "expressions is null");
 
         // Flatten all the expressions into their component conjuncts
@@ -116,7 +136,44 @@ public class ExpressionUtils
         Iterable<Expression> deterministicConjuncts = ImmutableSet.copyOf(Iterables.filter(expressions, deterministic()));
 
         expressions = Iterables.concat(nonDeterministicConjuncts, deterministicConjuncts);
-        return Iterables.isEmpty(expressions) ? TRUE_LITERAL : and(expressions);
+        return Iterables.isEmpty(expressions) ? emptyDefault : and(expressions);
+    }
+
+    public static Expression combineDisjuncts(Expression... expressions)
+    {
+        return combineDisjuncts(Arrays.asList(expressions));
+    }
+
+    public static Expression combineDisjuncts(Iterable<Expression> expressions)
+    {
+        return combineDisjunctsWithDefault(expressions, FALSE_LITERAL);
+    }
+
+    public static Expression combineDisjunctsWithDefault(Iterable<Expression> expressions, Expression emptyDefault)
+    {
+        Preconditions.checkNotNull(expressions, "expressions is null");
+
+        // Flatten all the expressions into their component disjuncts
+        expressions = Iterables.concat(Iterables.transform(expressions, new Function<Expression, Iterable<Expression>>()
+        {
+            @Override
+            public Iterable<Expression> apply(Expression expression)
+            {
+                return extractDisjuncts(expression);
+            }
+        }));
+
+        // Strip out all false literal disjuncts
+        expressions = Iterables.filter(expressions, not(Predicates.<Expression>equalTo(FALSE_LITERAL)));
+
+        // Capture all non-deterministic disjuncts
+        Iterable<Expression> nonDeterministicDisjuncts = Iterables.filter(expressions, not(deterministic()));
+
+        // Capture and de-dupe all deterministic disjuncts
+        Iterable<Expression> deterministicDisjuncts = ImmutableSet.copyOf(Iterables.filter(expressions, deterministic()));
+
+        expressions = Iterables.concat(nonDeterministicDisjuncts, deterministicDisjuncts);
+        return Iterables.isEmpty(expressions) ? emptyDefault : or(expressions);
     }
 
     public static Function<Symbol, QualifiedNameReference> symbolToQualifiedNameReference()

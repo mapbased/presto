@@ -19,6 +19,7 @@ import com.facebook.presto.metadata.MetadataUtil;
 import com.facebook.presto.metadata.QualifiedTableName;
 import com.facebook.presto.spi.ColumnHandle;
 import com.facebook.presto.spi.ColumnMetadata;
+import com.facebook.presto.spi.Partition;
 import com.facebook.presto.spi.TableHandle;
 import com.facebook.presto.spi.TableMetadata;
 import com.facebook.presto.sql.analyzer.Analysis;
@@ -191,7 +192,7 @@ class QueryPlanner
         }
 
         ImmutableMap<Symbol, ColumnHandle> assignments = columns.build();
-        TableScanNode tableScan = new TableScanNode(idAllocator.getNextId(), table, ImmutableList.copyOf(assignments.keySet()), assignments, TRUE_LITERAL, TRUE_LITERAL);
+        TableScanNode tableScan = new TableScanNode(idAllocator.getNextId(), table, ImmutableList.copyOf(assignments.keySet()), assignments, Optional.<List<Partition>>absent());
 
         return new RelationPlan(tableScan, new TupleDescriptor(), ImmutableList.<Symbol>of());
     }

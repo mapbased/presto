@@ -14,7 +14,6 @@
 package com.facebook.presto.sql.planner.optimizations;
 
 import com.facebook.presto.metadata.FunctionHandle;
-import com.facebook.presto.spi.ColumnHandle;
 import com.facebook.presto.sql.analyzer.Session;
 import com.facebook.presto.sql.analyzer.Type;
 import com.facebook.presto.sql.planner.DependencyExtractor;
@@ -45,8 +44,6 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.ListMultimap;
-import com.google.common.collect.Maps;
-import com.google.common.collect.Sets;
 
 import java.util.Collection;
 import java.util.Map;
@@ -202,10 +199,9 @@ public class PruneUnreferencedOutputs
             }
             checkState(!requiredTableScanOutputs.isEmpty());
 
-            Set<Symbol> requiredSymbols = Sets.union(requiredTableScanOutputs, DependencyExtractor.extractUnique(node.getPartitionPredicate()));
-            Map<Symbol, ColumnHandle> newAssignments = Maps.filterKeys(node.getAssignments(), in(requiredSymbols));
+            ImmutableList<Symbol> newOutputSymbols = ImmutableList.copyOf(Iterables.filter(node.getOutputSymbols(), in(requiredTableScanOutputs)));
 
-            return new TableScanNode(node.getId(), node.getTable(), ImmutableList.copyOf(requiredTableScanOutputs), newAssignments, node.getPartitionPredicate(), node.getUpstreamPredicateHint());
+            return new TableScanNode(node.getId(), node.getTable(), newOutputSymbols, node.getAssignments(), node.getPartitions());
         }
 
         @Override

@@ -13,6 +13,9 @@
  */
 package com.facebook.presto.util;
 
+import com.facebook.presto.spi.ColumnHandle;
+import com.facebook.presto.spi.Domain;
+import com.facebook.presto.sql.planner.DomainUtils;
 import com.facebook.presto.sql.planner.PlanFragment;
 import com.facebook.presto.sql.planner.SubPlan;
 import com.facebook.presto.sql.planner.Symbol;
@@ -303,7 +306,8 @@ public final class GraphvizPrinter
         @Override
         public Void visitTableScan(TableScanNode node, Void context)
         {
-            printNode(node, format("TableScan[%s]", node.getTable()), format("partition predicate=%s", node.getPartitionPredicate()), NODE_COLORS.get(NodeType.TABLESCAN));
+            Map<Symbol, Domain<?>> domainMap = DomainUtils.columnHandleToSymbol(node.getPartitionsDomainSummary(), node.getAssignments());
+            printNode(node, format("TableScan[%s]", node.getTable()), format("domain=%s", domainMap), NODE_COLORS.get(NodeType.TABLESCAN));
             return null;
         }
 

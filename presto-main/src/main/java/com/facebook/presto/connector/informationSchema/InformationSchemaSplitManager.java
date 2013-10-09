@@ -16,14 +16,19 @@ package com.facebook.presto.connector.informationSchema;
 import com.facebook.presto.metadata.NodeManager;
 import com.facebook.presto.spi.ColumnHandle;
 import com.facebook.presto.spi.ConnectorSplitManager;
+import com.facebook.presto.spi.Domain;
+import com.facebook.presto.spi.Domains;
 import com.facebook.presto.spi.HostAddress;
 import com.facebook.presto.spi.Partition;
+import com.facebook.presto.spi.PartitionResult;
 import com.facebook.presto.spi.Split;
 import com.facebook.presto.spi.TableHandle;
+import com.facebook.presto.sql.planner.DomainUtils;
 import com.google.common.base.Objects;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
+import com.google.common.collect.Maps;
 
 import javax.inject.Inject;
 
@@ -33,6 +38,8 @@ import java.util.Map.Entry;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.Predicates.in;
+import static com.google.common.base.Predicates.not;
 
 public class InformationSchemaSplitManager
         implements ConnectorSplitManager
@@ -59,15 +66,18 @@ public class InformationSchemaSplitManager
     }
 
     @Override
-    public List<Partition> getPartitions(TableHandle table, Map<ColumnHandle, Object> bindings)
+    public PartitionResult getPartitions(TableHandle table, Map<ColumnHandle, Domain<?>> domainMap)
     {
         checkNotNull(table, "table is null");
-        checkNotNull(bindings, "bindings is null");
+        checkNotNull(domainMap, "domainMap is null");
 
         checkArgument(table instanceof InformationSchemaTableHandle, "TableHandle must be an InformationSchemaTableHandle");
         InformationSchemaTableHandle informationSchemaTableHandle = (InformationSchemaTableHandle) table;
 
-        return ImmutableList.<Partition>of(new InformationSchemaPartition(informationSchemaTableHandle, bindings));
+        Map<ColumnHandle, Comparable<?>> bindings = Domains.extractSingleValues(domainMap);
+
+        ImmutableList<Partition> partitions = ImmutableList.<Partition>of(new InformationSchemaPartition(informationSchemaTableHandle, bindings));
+        return new PartitionResult(partitions, domainMap);
     }
 
     @Override
@@ -85,7 +95,7 @@ public class InformationSchemaSplitManager
         List<HostAddress> localAddress = ImmutableList.of(nodeManager.getCurrentNode().getHostAndPort());
 
         ImmutableMap.Builder<String, Object> filters = ImmutableMap.builder();
-        for (Entry<ColumnHandle, Object> entry : informationSchemaPartition.getFilters().entrySet()) {
+        for (Entry<ColumnHandle, Comparable<?>> entry : informationSchemaPartition.getFilters().entrySet()) {
             InformationSchemaColumnHandle informationSchemaColumnHandle = (InformationSchemaColumnHandle) entry.getKey();
             filters.put(informationSchemaColumnHandle.getColumnName(), entry.getValue());
         }
@@ -99,11 +109,11 @@ public class InformationSchemaSplitManager
             implements Partition
     {
         private final InformationSchemaTableHandle table;
-        private final Map<ColumnHandle, Object> filters;
+        private final Map<ColumnHandle, Comparable<?>> filters;
 
-        public InformationSchemaPartition(InformationSchemaTableHandle table, Map<ColumnHandle, Object> filters)
+        public InformationSchemaPartition(InformationSchemaTableHandle table, Map<ColumnHandle, Comparable<?>> filters)
         {
-            this.table = table;
+            this.table = checkNotNull(table, "table is null");
             this.filters = ImmutableMap.copyOf(checkNotNull(filters, "filters is null"));
         }
 
@@ -119,12 +129,12 @@ public class InformationSchemaSplitManager
         }
 
         @Override
-        public Map<ColumnHandle, Object> getKeys()
+        public Map<ColumnHandle, Domain<?>> getDomainMap()
         {
-            return ImmutableMap.of();
+            return Domains.singleValuesMapToDomain(filters);
         }
 
-        public Map<ColumnHandle, Object> getFilters()
+        public Map<ColumnHandle, Comparable<?>> getFilters()
         {
             return filters;
         }

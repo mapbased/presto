@@ -21,6 +21,7 @@ import com.facebook.presto.metadata.NativeTableHandle;
 import com.facebook.presto.metadata.QualifiedTableName;
 import com.facebook.presto.spi.ColumnHandle;
 import com.facebook.presto.spi.ColumnMetadata;
+import com.facebook.presto.spi.Partition;
 import com.facebook.presto.spi.TableHandle;
 import com.facebook.presto.spi.TableMetadata;
 import com.facebook.presto.sql.analyzer.Analysis;
@@ -145,7 +146,7 @@ public class LogicalPlanner
             }
 
             ImmutableList<Symbol> outputSymbols = outputSymbolsBuilder.build();
-            plan = new RelationPlan(new TableScanNode(idAllocator.getNextId(), sourceTableHandle, outputSymbols, inputColumnsBuilder.build(), TRUE_LITERAL, TRUE_LITERAL), new TupleDescriptor(fields.build()), outputSymbols);
+            plan = new RelationPlan(new TableScanNode(idAllocator.getNextId(), sourceTableHandle, outputSymbols, inputColumnsBuilder.build(), Optional.<List<Partition>>absent()), new TupleDescriptor(fields.build()), outputSymbols);
 
             targetColumnHandles = columnHandleBuilder.build();
         }

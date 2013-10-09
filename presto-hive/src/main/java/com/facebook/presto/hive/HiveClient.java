@@ -20,7 +20,11 @@ import com.facebook.presto.spi.ConnectorHandleResolver;
 import com.facebook.presto.spi.ConnectorMetadata;
 import com.facebook.presto.spi.ConnectorRecordSetProvider;
 import com.facebook.presto.spi.ConnectorSplitManager;
+import com.facebook.presto.spi.Domain;
+import com.facebook.presto.spi.Domains;
 import com.facebook.presto.spi.Partition;
+import com.facebook.presto.spi.PartitionResult;
+import com.facebook.presto.spi.Range;
 import com.facebook.presto.spi.RecordSet;
 import com.facebook.presto.spi.SchemaTableName;
 import com.facebook.presto.spi.SchemaTablePrefix;
@@ -38,6 +42,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 import com.google.common.collect.Ordering;
 import com.google.inject.Inject;
 import io.airlift.log.Logger;
@@ -73,6 +78,8 @@ import static com.facebook.presto.hive.UnpartitionedPartition.UNPARTITIONED_PART
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
+import static com.google.common.base.Predicates.in;
+import static com.google.common.base.Predicates.not;
 import static com.google.common.collect.Iterables.concat;
 import static com.google.common.collect.Iterables.transform;
 import static java.lang.Boolean.parseBoolean;
@@ -329,10 +336,10 @@ public class HiveClient
     }
 
     @Override
-    public List<Partition> getPartitions(TableHandle tableHandle, Map<ColumnHandle, Object> bindings)
+    public PartitionResult getPartitions(TableHandle tableHandle, Map<ColumnHandle, Domain<?>> domainMap)
     {
         checkNotNull(tableHandle, "tableHandle is null");
-        checkNotNull(bindings, "bindings is null");
+        checkNotNull(domainMap, "domainMap is null");
         SchemaTableName tableName = getTableName(tableHandle);
 
         List<FieldSchema> partitionKeys;
@@ -347,27 +354,32 @@ public class HiveClient
             }
 
             partitionKeys = table.getPartitionKeys();
-            bucket = getBucketNumber(table, bindings);
+            bucket = getBucketNumber(table, ImmutableMap.<ColumnHandle, Object>copyOf(Domains.extractSingleValues(domainMap)));
         }
         catch (NoSuchObjectException e) {
             throw new TableNotFoundException(tableName);
         }
 
-        ImmutableMap.Builder<String, ColumnHandle> partitionKeysByName = ImmutableMap.builder();
+        ImmutableMap.Builder<String, ColumnHandle> partitionKeysByNameBuilder = ImmutableMap.builder();
         List<String> filterPrefix = new ArrayList<>();
         for (int i = 0; i < partitionKeys.size(); i++) {
             FieldSchema field = partitionKeys.get(i);
 
             HiveColumnHandle columnHandle = new HiveColumnHandle(connectorId, field.getName(), i, getSupportedHiveType(field.getType()), -1, true);
-            partitionKeysByName.put(field.getName(), columnHandle);
+            partitionKeysByNameBuilder.put(field.getName(), columnHandle);
 
             // only add to prefix if all previous keys have a value
             if (filterPrefix.size() == i) {
-                Object value = bindings.get(columnHandle);
-                if (value != null) {
-                    checkArgument(value instanceof Boolean || value instanceof String || value instanceof Double || value instanceof Long,
-                            "Only Boolean, String, Double and Long partition keys are supported");
-                    filterPrefix.add(value.toString());
+                Domain<?> domain = domainMap.get(columnHandle);
+                if (domain != null && domain.getRanges().size() == 1) {
+                    // We intentionally ignore whether NULL is in the domain since partition keys can never be NULL
+                    Range<? extends Comparable<?>> range = domain.getRanges().iterator().next();
+                    if (range.isSingleValue()) {
+                        Comparable<?> value = range.getLow().getValue();
+                        checkArgument(value instanceof Boolean || value instanceof String || value instanceof Double || value instanceof Long,
+                                "Only Boolean, String, Double and Long partition keys are supported");
+                        filterPrefix.add(value.toString());
+                    }
                 }
             }
         }
@@ -390,8 +402,14 @@ public class HiveClient
         }
 
         // do a final pass to filter based on fields that could not be used to build the prefix
-        Iterable<Partition> partitions = transform(partitionNames, toPartition(tableName, partitionKeysByName.build(), bucket));
-        return ImmutableList.copyOf(Iterables.filter(partitions, partitionMatches(bindings)));
+        ImmutableMap<String, ColumnHandle> partitionKeysByName = partitionKeysByNameBuilder.build();
+        Iterable<HivePartition> hivePartitions = transform(partitionNames, toPartition(tableName, partitionKeysByName, bucket));
+        ImmutableList<Partition> partitions = ImmutableList.<Partition>copyOf(Iterables.filter(hivePartitions, partitionMatches(domainMap)));
+
+        // All partition key domains will be fully evaluated, so we don't need to include those
+        Map<ColumnHandle, Domain<?>> remainingDomain = Maps.filterKeys(domainMap, not(in(partitionKeysByName.values())));
+
+        return new PartitionResult(partitions, remainingDomain);
     }
 
     @Override
@@ -539,15 +557,15 @@ public class HiveClient
                 .toString();
     }
 
-    private static Function<String, Partition> toPartition(
+    private static Function<String, HivePartition> toPartition(
             final SchemaTableName tableName,
             final Map<String, ColumnHandle> columnsByName,
             final Optional<Integer> bucket)
     {
-        return new Function<String, Partition>()
+        return new Function<String, HivePartition>()
         {
             @Override
-            public Partition apply(String partitionId)
+            public HivePartition apply(String partitionId)
             {
                 try {
                     if (partitionId.equals(UNPARTITIONED_ID)) {
@@ -555,7 +573,7 @@ public class HiveClient
                     }
 
                     LinkedHashMap<String, String> keys = Warehouse.makeSpecFromName(partitionId);
-                    ImmutableMap.Builder<ColumnHandle, Object> builder = ImmutableMap.builder();
+                    ImmutableMap.Builder<ColumnHandle, Comparable<?>> builder = ImmutableMap.builder();
                     for (Entry<String, String> entry : keys.entrySet()) {
                         ColumnHandle columnHandle = columnsByName.get(entry.getKey());
                         checkArgument(columnHandle != null, "Invalid partition key %s in partition %s", entry.getKey(), partitionId);
@@ -585,7 +603,7 @@ public class HiveClient
                                 break;
                             case DOUBLE:
                                 if (value.isEmpty()) {
-                                    builder.put(columnHandle, 0L);
+                                    builder.put(columnHandle, 0.0);
                                 }
                                 else {
                                     builder.put(columnHandle, parseDouble(value));
@@ -607,16 +625,16 @@ public class HiveClient
         };
     }
 
-    public static Predicate<Partition> partitionMatches(final Map<ColumnHandle, Object> filters)
+    public static Predicate<HivePartition> partitionMatches(final Map<ColumnHandle, Domain<?>> allowedDomainMap)
     {
-        return new Predicate<Partition>()
+        return new Predicate<HivePartition>()
         {
             @Override
-            public boolean apply(Partition partition)
+            public boolean apply(HivePartition partition)
             {
-                for (Map.Entry<ColumnHandle, Object> entry : partition.getKeys().entrySet()) {
-                    Object filterValue = filters.get(entry.getKey());
-                    if (filterValue != null && !entry.getValue().equals(filterValue)) {
+                for (Entry<ColumnHandle, Comparable<?>> entry : partition.getKeys().entrySet()) {
+                    Domain<?> allowedDomain = allowedDomainMap.get(entry.getKey());
+                    if (allowedDomain != null && !Domains.uncheckedIncludesValue(allowedDomain, entry.getValue())) {
                         return false;
                     }
                 }

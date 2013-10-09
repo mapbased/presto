@@ -17,6 +17,7 @@ import com.facebook.presto.connector.dual.DualColumnHandle;
 import com.facebook.presto.connector.dual.DualTableHandle;
 import com.facebook.presto.metadata.FunctionHandle;
 import com.facebook.presto.spi.ColumnHandle;
+import com.facebook.presto.spi.Partition;
 import com.facebook.presto.sql.planner.plan.AggregationNode;
 import com.facebook.presto.sql.planner.plan.FilterNode;
 import com.facebook.presto.sql.planner.plan.JoinNode;
@@ -40,12 +41,14 @@ import com.facebook.presto.sql.tree.LongLiteral;
 import com.facebook.presto.sql.tree.QualifiedName;
 import com.facebook.presto.sql.tree.QualifiedNameReference;
 import com.facebook.presto.sql.tree.SortItem;
+import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Predicates;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableListMultimap;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
+import com.google.common.collect.Maps;
 import org.testng.Assert;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
@@ -95,13 +98,13 @@ public class TestEffectivePredicateExtractor
                 .put(F, new DualColumnHandle("f"))
                 .build();
 
+        Map<Symbol, ColumnHandle> assignments = Maps.filterKeys(scanAssignments, Predicates.in(ImmutableList.of(A, B, C, D, E, F)));
         baseTableScan = new TableScanNode(
                 newId(),
                 new DualTableHandle("default"),
-                ImmutableList.of(A, B, C, D, E, F),
-                scanAssignments,
-                BooleanLiteral.TRUE_LITERAL,
-                BooleanLiteral.TRUE_LITERAL
+                ImmutableList.copyOf(assignments.keySet()),
+                assignments,
+                Optional.<List<Partition>>absent()
         );
 
         expressionNormalizer = new ExpressionIdentityNormalizer();
@@ -270,13 +273,13 @@ public class TestEffectivePredicateExtractor
     public void testTableScan()
             throws Exception
     {
+        Map<Symbol, ColumnHandle> assignments = Maps.filterKeys(scanAssignments, Predicates.in(ImmutableList.of(A, B, C)));
         PlanNode node = new TableScanNode(
                 newId(),
                 new DualTableHandle("default"),
-                ImmutableList.of(A, B, C),
-                scanAssignments,
-                and(greaterThan(BE, number(0)), equals(AE, DE), lessThan(DE, number(10)), lessThan(EE, number(3))),
-                BooleanLiteral.TRUE_LITERAL);
+                ImmutableList.copyOf(assignments.keySet()),
+                assignments,
+                Optional.<List<Partition>>absent());
 
         Expression effectivePredicate = EffectivePredicateExtractor.extract(node);
 
@@ -316,22 +319,22 @@ public class TestEffectivePredicateExtractor
         criteriaBuilder.add(new JoinNode.EquiJoinClause(B, E));
         List<JoinNode.EquiJoinClause> criteria = criteriaBuilder.build();
 
+        Map<Symbol, ColumnHandle> leftAssignments = Maps.filterKeys(scanAssignments, Predicates.in(ImmutableList.of(A, B, C)));
         TableScanNode leftScan = new TableScanNode(
                 newId(),
                 new DualTableHandle("default"),
-                ImmutableList.of(A, B, C),
-                scanAssignments,
-                BooleanLiteral.TRUE_LITERAL,
-                BooleanLiteral.TRUE_LITERAL
+                ImmutableList.copyOf(leftAssignments.keySet()),
+                leftAssignments,
+                Optional.<List<Partition>>absent()
         );
 
+        Map<Symbol, ColumnHandle> rightAssignments = Maps.filterKeys(scanAssignments, Predicates.in(ImmutableList.of(D, E, F)));
         TableScanNode rightScan = new TableScanNode(
                 newId(),
                 new DualTableHandle("default"),
-                ImmutableList.of(D, E, F),
-                scanAssignments,
-                BooleanLiteral.TRUE_LITERAL,
-                BooleanLiteral.TRUE_LITERAL
+                ImmutableList.copyOf(rightAssignments.keySet()),
+                rightAssignments,
+                Optional.<List<Partition>>absent()
         );
 
         PlanNode node = new JoinNode(newId(),
@@ -367,22 +370,22 @@ public class TestEffectivePredicateExtractor
         criteriaBuilder.add(new JoinNode.EquiJoinClause(B, E));
         List<JoinNode.EquiJoinClause> criteria = criteriaBuilder.build();
 
+        Map<Symbol, ColumnHandle> leftAssignments = Maps.filterKeys(scanAssignments, Predicates.in(ImmutableList.of(A, B, C)));
         TableScanNode leftScan = new TableScanNode(
                 newId(),
                 new DualTableHandle("default"),
-                ImmutableList.of(A, B, C),
-                scanAssignments,
-                BooleanLiteral.TRUE_LITERAL,
-                BooleanLiteral.TRUE_LITERAL
+                ImmutableList.copyOf(leftAssignments.keySet()),
+                leftAssignments,
+                Optional.<List<Partition>>absent()
         );
 
+        Map<Symbol, ColumnHandle> rightAssignments = Maps.filterKeys(scanAssignments, Predicates.in(ImmutableList.of(D, E, F)));
         TableScanNode rightScan = new TableScanNode(
                 newId(),
                 new DualTableHandle("default"),
-                ImmutableList.of(D, E, F),
-                scanAssignments,
-                BooleanLiteral.TRUE_LITERAL,
-                BooleanLiteral.TRUE_LITERAL
+                ImmutableList.copyOf(rightAssignments.keySet()),
+                rightAssignments,
+                Optional.<List<Partition>>absent()
         );
 
         PlanNode node = new JoinNode(newId(),
@@ -418,22 +421,22 @@ public class TestEffectivePredicateExtractor
         criteriaBuilder.add(new JoinNode.EquiJoinClause(B, E));
         List<JoinNode.EquiJoinClause> criteria = criteriaBuilder.build();
 
+        Map<Symbol, ColumnHandle> leftAssignments = Maps.filterKeys(scanAssignments, Predicates.in(ImmutableList.of(A, B, C)));
         TableScanNode leftScan = new TableScanNode(
                 newId(),
                 new DualTableHandle("default"),
-                ImmutableList.of(A, B, C),
-                scanAssignments,
-                BooleanLiteral.TRUE_LITERAL,
-                BooleanLiteral.TRUE_LITERAL
+                ImmutableList.copyOf(leftAssignments.keySet()),
+                leftAssignments,
+                Optional.<List<Partition>>absent()
         );
 
+        Map<Symbol, ColumnHandle> rightAssignments = Maps.filterKeys(scanAssignments, Predicates.in(ImmutableList.of(D, E, F)));
         TableScanNode rightScan = new TableScanNode(
                 newId(),
                 new DualTableHandle("default"),
-                ImmutableList.of(D, E, F),
-                scanAssignments,
-                BooleanLiteral.TRUE_LITERAL,
-                BooleanLiteral.TRUE_LITERAL
+                ImmutableList.copyOf(rightAssignments.keySet()),
+                rightAssignments,
+                Optional.<List<Partition>>absent()
         );
 
         PlanNode node = new JoinNode(newId(),

@@ -14,6 +14,8 @@
 package com.facebook.presto.sql.planner;
 
 import com.facebook.presto.spi.ColumnHandle;
+import com.facebook.presto.spi.Domain;
+import com.facebook.presto.spi.Domains;
 import com.facebook.presto.sql.analyzer.Type;
 import com.facebook.presto.sql.planner.plan.AggregationNode;
 import com.facebook.presto.sql.planner.plan.ExchangeNode;
@@ -42,6 +44,7 @@ import com.google.common.base.Function;
 import com.google.common.base.Functions;
 import com.google.common.base.Joiner;
 import com.google.common.base.Optional;
+import com.google.common.base.Predicates;
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
@@ -53,6 +56,8 @@ import java.util.List;
 import java.util.Map;
 
 import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.Predicates.in;
+import static com.google.common.base.Predicates.or;
 import static java.lang.String.format;
 
 public class PlanPrinter
@@ -212,8 +217,9 @@ public class PlanPrinter
         @Override
         public Void visitTableScan(TableScanNode node, Integer indent)
         {
-            print(indent, "- TableScan[%s, partition predicate=%s, upstream predicate=%s] => [%s]", node.getTable(), node.getPartitionPredicate(), node.getUpstreamPredicateHint(), formatOutputs(node.getOutputSymbols()));
-            for (Map.Entry<Symbol, ColumnHandle> entry : node.getAssignments().entrySet()) {
+            Map<Symbol,Domain<?>> domainMap = DomainUtils.columnHandleToSymbol(node.getPartitionsDomainSummary(), node.getAssignments());
+            print(indent, "- TableScan[%s, domain=%s] => [%s]", node.getTable(), domainMap, formatOutputs(node.getOutputSymbols()));
+            for (Map.Entry<Symbol, ColumnHandle> entry : Maps.filterKeys(node.getAssignments(), or(in(node.getOutputSymbols()), in(domainMap.keySet()))).entrySet()) {
                 print(indent + 2, "%s := %s", entry.getKey(), entry.getValue());
             }
 

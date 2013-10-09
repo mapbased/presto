@@ -21,9 +21,11 @@ import com.facebook.presto.metadata.ShardManager;
 import com.facebook.presto.metadata.TablePartition;
 import com.facebook.presto.spi.ColumnHandle;
 import com.facebook.presto.spi.ConnectorSplitManager;
+import com.facebook.presto.spi.Domain;
 import com.facebook.presto.spi.HostAddress;
 import com.facebook.presto.spi.Partition;
 import com.facebook.presto.spi.PartitionKey;
+import com.facebook.presto.spi.PartitionResult;
 import com.facebook.presto.spi.Split;
 import com.facebook.presto.spi.TableHandle;
 import com.facebook.presto.spi.TableMetadata;
@@ -31,6 +33,7 @@ import com.google.common.base.Objects;
 import com.google.common.base.Stopwatch;
 import com.google.common.collect.Collections2;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableMultimap;
 import com.google.common.collect.Multimap;
 import io.airlift.log.Logger;
@@ -84,7 +87,7 @@ public class NativeSplitManager
     }
 
     @Override
-    public List<Partition> getPartitions(TableHandle tableHandle, Map<ColumnHandle, Object> bindings)
+    public PartitionResult getPartitions(TableHandle tableHandle, Map<ColumnHandle, Domain<?>> domainMap)
     {
         Stopwatch partitionTimer = new Stopwatch();
         partitionTimer.start();
@@ -108,7 +111,7 @@ public class NativeSplitManager
 
         log.debug("Partition generation, native table %s (%d partitions): %dms", tableHandle, partitions.size(), partitionTimer.elapsed(TimeUnit.MILLISECONDS));
 
-        return partitions;
+        return new PartitionResult(partitions, domainMap);
     }
 
     @Override
@@ -164,12 +167,12 @@ public class NativeSplitManager
             implements Partition
     {
         private final long partitionId;
-        private Map<ColumnHandle, Object> keys;
+        private Map<ColumnHandle, Domain<?>> keys;
 
-        public NativePartition(long partitionId, Map<ColumnHandle, Object> keys)
+        public NativePartition(long partitionId, Map<ColumnHandle, Domain<?>> keys)
         {
             this.partitionId = partitionId;
-            this.keys = keys;
+            this.keys = ImmutableMap.copyOf(checkNotNull(keys, "keys is null"));
         }
 
         @Override
@@ -184,7 +187,7 @@ public class NativeSplitManager
         }
 
         @Override
-        public Map<ColumnHandle, Object> getKeys()
+        public Map<ColumnHandle, Domain<?>> getDomainMap()
         {
             return keys;
         }

@@ -15,7 +15,10 @@ package com.facebook.presto.sql.planner;
 
 import com.facebook.presto.execution.DataSource;
 import com.facebook.presto.metadata.ShardManager;
+import com.facebook.presto.spi.ColumnHandle;
+import com.facebook.presto.spi.Domain;
 import com.facebook.presto.spi.Partition;
+import com.facebook.presto.spi.PartitionResult;
 import com.facebook.presto.spi.Split;
 import com.facebook.presto.split.SplitManager;
 import com.facebook.presto.sql.analyzer.Session;
@@ -48,6 +51,7 @@ import javax.annotation.Nullable;
 import javax.inject.Inject;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -108,15 +112,25 @@ public class DistributedExecutionPlanner
         @Override
         public NodeSplits visitTableScan(TableScanNode node, Predicate<Partition> tableWriterPartitionPredicate)
         {
+            List<Partition> partitions = getPartitionsForScan(node);
+            List<Partition> tableWriterFilteredPartitions = ImmutableList.copyOf(Iterables.filter(partitions, tableWriterPartitionPredicate));
+
             // get dataSource for table
-            DataSource dataSource = splitManager.getSplits(session,
-                    node.getTable(),
-                    node.getPartitionPredicate(),
-                    node.getUpstreamPredicateHint(),
-                    tableWriterPartitionPredicate,
-                    node.getAssignments());
+            DataSource dataSource = splitManager.getPartitionSplits(node.getTable(), tableWriterFilteredPartitions);
 
             return new NodeSplits(node.getId(), dataSource);
+        }
+
+        private List<Partition> getPartitionsForScan(TableScanNode node)
+        {
+            Optional<List<Partition>> partitions = node.getPartitions();
+            if (partitions.isPresent()) {
+                return partitions.get();
+            }
+
+            // Otherwise return all partitions
+            PartitionResult matchingPartitions = splitManager.getPartitions(node.getTable(), Optional.<Map<ColumnHandle, Domain<?>>>absent());
+            return matchingPartitions.getPartitions();
         }
 
         @Override

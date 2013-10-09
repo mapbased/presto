@@ -17,7 +17,9 @@ import com.facebook.presto.metadata.Node;
 import com.facebook.presto.metadata.NodeManager;
 import com.facebook.presto.spi.ColumnHandle;
 import com.facebook.presto.spi.ConnectorSplitManager;
+import com.facebook.presto.spi.Domain;
 import com.facebook.presto.spi.Partition;
+import com.facebook.presto.spi.PartitionResult;
 import com.facebook.presto.spi.Split;
 import com.facebook.presto.spi.TableHandle;
 import com.google.common.base.Objects;
@@ -59,15 +61,16 @@ public class JmxSplitManager
     }
 
     @Override
-    public List<Partition> getPartitions(TableHandle table, Map<ColumnHandle, Object> bindings)
+    public PartitionResult getPartitions(TableHandle table, Map<ColumnHandle, Domain<?>> domainMap)
     {
         checkNotNull(table, "table is null");
-        checkNotNull(bindings, "bindings is null");
+        checkNotNull(domainMap, "domainMap is null");
 
         checkArgument(table instanceof JmxTableHandle, "TableHandle must be an JmxTableHandle");
         JmxTableHandle jmxTableHandle = (JmxTableHandle) table;
 
-        return ImmutableList.<Partition>of(new JmxPartition(jmxTableHandle));
+        ImmutableList<Partition> partitions = ImmutableList.<Partition>of(new JmxPartition(jmxTableHandle));
+        return new PartitionResult(partitions, domainMap);
     }
 
     @Override
@@ -111,7 +114,7 @@ public class JmxSplitManager
         }
 
         @Override
-        public Map<ColumnHandle, Object> getKeys()
+        public Map<ColumnHandle, Domain<?>> getDomainMap()
         {
             return ImmutableMap.of();
         }

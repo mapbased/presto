@@ -17,7 +17,9 @@ import com.facebook.presto.metadata.Node;
 import com.facebook.presto.metadata.NodeManager;
 import com.facebook.presto.spi.ColumnHandle;
 import com.facebook.presto.spi.ConnectorSplitManager;
+import com.facebook.presto.spi.Domain;
 import com.facebook.presto.spi.Partition;
+import com.facebook.presto.spi.PartitionResult;
 import com.facebook.presto.spi.Split;
 import com.facebook.presto.spi.TableHandle;
 import com.google.common.base.Objects;
@@ -60,9 +62,10 @@ public class TpchSplitManager
     }
 
     @Override
-    public List<Partition> getPartitions(TableHandle table, Map<ColumnHandle, Object> bindings)
+    public PartitionResult getPartitions(TableHandle table, Map<ColumnHandle, Domain<?>> domainMap)
     {
-        return ImmutableList.<Partition>of(new TpchPartition((TpchTableHandle) table));
+        ImmutableList<Partition> partitions = ImmutableList.<Partition>of(new TpchPartition((TpchTableHandle) table));
+        return new PartitionResult(partitions, domainMap);
     }
 
     @Override
@@ -98,7 +101,7 @@ public class TpchSplitManager
 
         public TpchPartition(TpchTableHandle table)
         {
-            this.table = table;
+            this.table = checkNotNull(table, "table is null");
         }
 
         public TpchTableHandle getTable()
@@ -113,7 +116,7 @@ public class TpchSplitManager
         }
 
         @Override
-        public Map<ColumnHandle, Object> getKeys()
+        public Map<ColumnHandle, Domain<?>> getDomainMap()
         {
             return ImmutableMap.of();
         }

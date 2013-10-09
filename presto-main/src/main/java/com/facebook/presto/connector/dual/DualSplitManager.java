@@ -16,7 +16,9 @@ package com.facebook.presto.connector.dual;
 import com.facebook.presto.metadata.NodeManager;
 import com.facebook.presto.spi.ColumnHandle;
 import com.facebook.presto.spi.ConnectorSplitManager;
+import com.facebook.presto.spi.Domain;
 import com.facebook.presto.spi.Partition;
+import com.facebook.presto.spi.PartitionResult;
 import com.facebook.presto.spi.Split;
 import com.facebook.presto.spi.TableHandle;
 import com.google.common.base.Objects;
@@ -57,14 +59,15 @@ public class DualSplitManager
     }
 
     @Override
-    public List<Partition> getPartitions(TableHandle table, Map<ColumnHandle, Object> bindings)
+    public PartitionResult getPartitions(TableHandle table, Map<ColumnHandle, Domain<?>> domainMap)
     {
         checkNotNull(table, "table is null");
-        checkNotNull(bindings, "bindings is null");
+        checkNotNull(domainMap, "domainMap is null");
 
         checkArgument(table instanceof DualTableHandle, "TableHandle must be a DualTableHandle");
 
-        return ImmutableList.<Partition>of(new DualPartition());
+        ImmutableList<Partition> partitions = ImmutableList.<Partition>of(new DualPartition());
+        return new PartitionResult(partitions, domainMap);
     }
 
     @Override
@@ -93,7 +96,7 @@ public class DualSplitManager
         }
 
         @Override
-        public Map<ColumnHandle, Object> getKeys()
+        public Map<ColumnHandle, Domain<?>> getDomainMap()
         {
             return ImmutableMap.of();
         }

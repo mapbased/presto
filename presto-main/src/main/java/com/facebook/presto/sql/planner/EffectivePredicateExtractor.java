@@ -48,7 +48,6 @@ import static com.facebook.presto.sql.ExpressionUtils.expressionOrNullSymbols;
 import static com.facebook.presto.sql.ExpressionUtils.extractConjuncts;
 import static com.facebook.presto.sql.ExpressionUtils.stripNonDeterministicConjuncts;
 import static com.facebook.presto.sql.planner.EqualityInference.createEqualityInference;
-import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.base.Predicates.in;
 import static com.google.common.base.Predicates.not;
 import static com.google.common.collect.Iterables.filter;
@@ -148,11 +147,7 @@ public class EffectivePredicateExtractor
     @Override
     public Expression visitTableScan(TableScanNode node, Void context)
     {
-        // TODO: we can provide even better predicates if the metadata system is able to provide us with accurate bounds on the data sets
-        Expression partitionPredicate = node.getPartitionPredicate();
-        checkState(DeterminismEvaluator.isDeterministic(partitionPredicate));
-
-        return pullExpressionThroughSymbols(partitionPredicate, node.getOutputSymbols());
+        return pullExpressionThroughSymbols(node.getPartitionsPredicateSummary(), node.getOutputSymbols());
     }
 
     @Override

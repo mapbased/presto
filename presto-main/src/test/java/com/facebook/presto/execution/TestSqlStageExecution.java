@@ -27,6 +27,7 @@ import com.facebook.presto.metadata.QualifiedTableName;
 import com.facebook.presto.operator.TaskContext;
 import com.facebook.presto.spi.ColumnHandle;
 import com.facebook.presto.spi.HostAddress;
+import com.facebook.presto.spi.Partition;
 import com.facebook.presto.spi.Split;
 import com.facebook.presto.spi.TableHandle;
 import com.facebook.presto.sql.analyzer.Session;
@@ -189,11 +190,7 @@ public class TestSqlStageExecution
         PlanFragment testFragment = new PlanFragment(new PlanFragmentId(planId),
                 tableScanNodeId,
                 ImmutableMap.<Symbol, Type>of(symbol, Type.VARCHAR),
-                new TableScanNode(tableScanNodeId,
-                        tableHandle, ImmutableList.of(symbol),
-                        ImmutableMap.of(symbol, columnHandle),
-                        BooleanLiteral.TRUE_LITERAL,
-                        BooleanLiteral.TRUE_LITERAL));
+                new TableScanNode(tableScanNodeId, tableHandle, ImmutableList.of(symbol), ImmutableMap.of(symbol, columnHandle), Optional.<List<Partition>>absent()));
         DataSource dataSource = new DataSource(null, ImmutableList.copyOf(Collections.nCopies(splitCount, split)));
 
         return new StageExecutionPlan(testFragment,
