@@ -837,18 +837,18 @@ public class SqlStageExecution
 
         try (SetThreadName setThreadName = new SetThreadName("Stage-%s", stageId)) {
             // before canceling the task wait to see if it finishes normally
-            if (!force) {
-                Duration waitTime = new Duration(100, MILLISECONDS);
-                for (RemoteTask remoteTask : tasks.values()) {
-                    try {
-                        waitTime = remoteTask.waitForTaskToFinish(waitTime);
-                    }
-                    catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        throw Throwables.propagate(e);
-                    }
-                }
-            }
+//            if (!force) {
+//                Duration waitTime = new Duration(100, MILLISECONDS);
+//                for (RemoteTask remoteTask : tasks.values()) {
+//                    try {
+//                        waitTime = remoteTask.waitForTaskToFinish(waitTime);
+//                    }
+//                    catch (InterruptedException e) {
+//                        Thread.currentThread().interrupt();
+//                        throw Throwables.propagate(e);
+//                    }
+//                }
+//            }
             // check if the task completed naturally
             doUpdateState();
 
