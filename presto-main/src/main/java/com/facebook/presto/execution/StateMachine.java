@@ -42,7 +42,7 @@ public class StateMachine<T>
 
     @Nullable
     @GuardedBy("this")
-    private T state;
+    private volatile T state;
 
     @GuardedBy("this")
     private final List<StateChangeListener<T>> stateChangeListeners = new ArrayList<>();
@@ -59,10 +59,11 @@ public class StateMachine<T>
         this.name = checkNotNull(name, "name is null");
         this.executor = checkNotNull(executor, "executor is null");
         this.state = initialState;
+        log.info("%s created", name);
     }
 
     @Nullable
-    public synchronized T get()
+    public T get()
     {
         return state;
     }
@@ -153,6 +154,7 @@ public class StateMachine<T>
 
     private void fireStateChanged(final T newState, final ImmutableList<StateChangeListener<T>> stateChangeListeners)
     {
+        log.info("%s changed to %s", name, newState);
         executor.execute(new Runnable()
         {
             @Override

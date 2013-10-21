@@ -13,6 +13,7 @@
  */
 package com.facebook.presto.execution;
 
+import com.facebook.presto.util.CpuTimer;
 import com.facebook.presto.util.SetThreadName;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Objects;
@@ -67,10 +68,10 @@ public class TaskExecutor
     private static final Logger log = Logger.get(TaskExecutor.class);
 
     // each task is guaranteed a minimum number of tasks
-    private static final int GUARANTEED_SPLITS_PER_TASK = 3;
+    private static final int GUARANTEED_SPLITS_PER_TASK = 1000;
 
     // each time we run a split, run it for this length before returning to the pool
-    private static final Duration SPLIT_RUN_QUANTA = new Duration(1, TimeUnit.SECONDS);
+    private static final Duration SPLIT_RUN_QUANTA = new Duration(100, TimeUnit.SECONDS);
 
     private static final AtomicLong NEXT_RUNNER_ID = new AtomicLong();
     private static final AtomicLong NEXT_WORKER_ID = new AtomicLong();
@@ -188,6 +189,7 @@ public class TaskExecutor
         taskHandle.addSplit(prioritizedSplitRunner);
 
         scheduleTaskIfNecessary(taskHandle);
+        addNewEntrants();
 
         addNewEntrants();
 
@@ -284,6 +286,8 @@ public class TaskExecutor
         private final List<PrioritizedSplitRunner> runningSplits = new ArrayList<>(10);
         private final AtomicLong taskThreadUsageNanos = new AtomicLong();
 
+        private final AtomicInteger nextSplitId = new AtomicInteger();
+
         private TaskHandle(TaskId taskId)
         {
             this.taskId = taskId;
@@ -342,6 +346,11 @@ public class TaskExecutor
             split.destroy();
         }
 
+        private int getNextSplitId()
+        {
+            return nextSplitId.getAndIncrement();
+        }
+
         @Override
         public String toString()
         {
@@ -357,6 +366,7 @@ public class TaskExecutor
         private final long createdNanos = System.nanoTime();
 
         private final TaskHandle taskHandle;
+        private final int splitId;
         private final long workerId;
         private final SplitRunner split;
 
@@ -370,13 +380,18 @@ public class TaskExecutor
         private final AtomicInteger priorityLevel = new AtomicInteger();
         private final AtomicLong threadUsageNanos = new AtomicLong();
         private final AtomicLong lastRun = new AtomicLong();
+        private final AtomicLong start = new AtomicLong();
+
+        private final AtomicLong cpuTime = new AtomicLong();
 
         private PrioritizedSplitRunner(TaskHandle taskHandle, SplitRunner split, Ticker ticker)
         {
             this.taskHandle = taskHandle;
+            splitId = taskHandle.getNextSplitId();
             this.split = split;
             this.ticker = ticker;
             this.workerId = NEXT_WORKER_ID.getAndIncrement();
+            log.debug("%s created", toString());
         }
 
         private TaskHandle getTaskHandle()
@@ -392,6 +407,8 @@ public class TaskExecutor
         public void initializeIfNecessary()
         {
             if (initialized.compareAndSet(false, true)) {
+                start.set(System.currentTimeMillis());
+                log.debug("%s is starting", toString());
                 split.initialize();
             }
         }
@@ -405,6 +422,7 @@ public class TaskExecutor
                 log.error(e, "Error closing split for task %s", taskHandle.getTaskId());
             }
             destroyed.set(true);
+            log.debug("%s is finished", toString());
         }
 
         public boolean isFinished()
@@ -420,19 +438,21 @@ public class TaskExecutor
                 throws Exception
         {
             try {
-                long start = ticker.read();
+                CpuTimer timer = new CpuTimer();
                 ListenableFuture<?> blocked = split.processFor(SPLIT_RUN_QUANTA);
-                long endTime = ticker.read();
+
+                CpuTimer.CpuDuration elapsed = timer.elapsedTime();
 
                 // update priority level base on total thread usage of task
-                long durationNanos = endTime - start;
+                long durationNanos = elapsed.getWall().roundTo(TimeUnit.NANOSECONDS);
                 long threadUsageNanos = taskHandle.addThreadUsageNanos(durationNanos);
                 this.threadUsageNanos.set(threadUsageNanos);
                 priorityLevel.set(calculatePriorityLevel(threadUsageNanos));
 
                 // record last run for prioritization within a level
-                lastRun.set(endTime);
+                lastRun.set(ticker.read());
 
+                cpuTime.addAndGet(elapsed.getCpu().roundTo(TimeUnit.NANOSECONDS));
                 return blocked;
             }
             catch (Throwable e) {
@@ -479,10 +499,17 @@ public class TaskExecutor
         @Override
         public String toString()
         {
-            return String.format("Split %-15s %s %s",
+            return String.format("Split %-15s-%d (start = %s, wall = %s ms, cpu = %s ms)",
                     taskHandle.getTaskId(),
-                    priorityLevel,
-                    new Duration(threadUsageNanos.get(), TimeUnit.NANOSECONDS).convertToMostSuccinctTimeUnit());
+                    splitId,
+                    start.get(),
+                    System.currentTimeMillis() - start.get(),
+                    (int) (cpuTime.get() / 1e6));
+        }
+
+        public int getSplitId()
+        {
+            return splitId;
         }
     }
 
@@ -534,7 +561,7 @@ public class TaskExecutor
                         return;
                     }
 
-                    try (SetThreadName splitName = new SetThreadName(split.toString())) {
+                    try (SetThreadName splitName = new SetThreadName(split.getTaskHandle().getTaskId() + "-" + split.getSplitId())) {
                         runningSplits.add(split);
 
                         boolean finished;
@@ -549,7 +576,6 @@ public class TaskExecutor
                         }
 
                         if (finished) {
-                            log.debug("%s is finished", split);
                             splitFinished(split);
                         }
                         else {
