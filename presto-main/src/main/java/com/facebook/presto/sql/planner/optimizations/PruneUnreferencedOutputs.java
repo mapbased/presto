@@ -201,7 +201,7 @@ public class PruneUnreferencedOutputs
 
             ImmutableList<Symbol> newOutputSymbols = ImmutableList.copyOf(Iterables.filter(node.getOutputSymbols(), in(requiredTableScanOutputs)));
 
-            return new TableScanNode(node.getId(), node.getTable(), newOutputSymbols, node.getAssignments(), node.getPartitions());
+            return new TableScanNode(node.getId(), node.getTable(), newOutputSymbols, node.getAssignments(), node.getGeneratedPartitions());
         }
 
         @Override

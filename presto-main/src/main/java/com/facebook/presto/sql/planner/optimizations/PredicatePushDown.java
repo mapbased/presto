@@ -92,6 +92,7 @@ import static com.facebook.presto.sql.ExpressionUtils.symbolToQualifiedNameRefer
 import static com.facebook.presto.sql.planner.DeterminismEvaluator.deterministic;
 import static com.facebook.presto.sql.planner.DeterminismEvaluator.isDeterministic;
 import static com.facebook.presto.sql.planner.EqualityInference.createEqualityInference;
+import static com.facebook.presto.sql.planner.plan.TableScanNode.GeneratedPartitions;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
@@ -747,19 +748,22 @@ public class PredicatePushDown
         @Override
         public PlanNode rewriteTableScan(TableScanNode node, Expression inheritedPredicate, PlanRewriter<Expression> planRewriter)
         {
-            // TODO: what happens if there are tons of partitions? should we put a cap on the size of disjuncts? disallow running multiple times?
             List<Expression> postScanFilters = new ArrayList<>();
 
-            // Construct the total predicate that will be used to re-generate the partitions and simplify before we generate new partitions
-            Expression tableScanPredicate = simplifyExpressions().apply(combineConjuncts(node.getPartitionsPredicateSummary(), inheritedPredicate));
-
-            DomainTranslator.ExtractionResult extractionResult = DomainTranslator.fromPredicate(tableScanPredicate, symbolAllocator.getTypes());
+            DomainTranslator.ExtractionResult extractionResult = DomainTranslator.fromPredicate(inheritedPredicate, symbolAllocator.getTypes());
             postScanFilters.add(extractionResult.getRemainingExpression());
 
             // Filter out extraneous symbols from the domainMap and convert it to be in terms of ColumnHandles
             Map<ColumnHandle, Domain<?>> domainMap = DomainUtils.symbolToColumnHandle(
                     Maps.filterKeys(extractionResult.getDomainMap(), in(node.getAssignments().keySet())),
                     node.getAssignments());
+
+            if (node.getGeneratedPartitions().isPresent()) {
+                // Add back in the domain that was used to generate the previous set of Partitions if present
+                // And just for kicks, throw in the domain summary too (as that can only help prune down the ranges)
+                // The domains should never widen between each pass.
+                domainMap = Domains.intersectDomainMaps(domainMap, node.getGeneratedPartitions().get().getDomainMapInput(), node.getPartitionsDomainSummary());
+            }
 
             Stopwatch partitionTimer = new Stopwatch();
             partitionTimer.start();
@@ -775,10 +779,11 @@ public class PredicatePushDown
 
             // Do some early partition pruning
             partitions = ImmutableList.copyOf(filter(partitions, eagerPartitionFilter(postScanPredicate, node.getAssignments())));
+            GeneratedPartitions generatedPartitions = new GeneratedPartitions(domainMap, partitions);
 
             PlanNode output = node;
-            if (!node.getPartitions().equals(Optional.of(partitions))) {
-                output = new TableScanNode(node.getId(), node.getTable(), node.getOutputSymbols(), node.getAssignments(), Optional.of(partitions));
+            if (!node.getGeneratedPartitions().equals(Optional.of(generatedPartitions))) {
+                output = new TableScanNode(node.getId(), node.getTable(), node.getOutputSymbols(), node.getAssignments(), Optional.of(generatedPartitions));
             }
             if (!postScanPredicate.equals(BooleanLiteral.TRUE_LITERAL)) {
                 output = new FilterNode(idAllocator.getNextId(), output, postScanPredicate);

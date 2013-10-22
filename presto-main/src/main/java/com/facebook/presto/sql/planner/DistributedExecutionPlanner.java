@@ -55,6 +55,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
 
+import static com.facebook.presto.sql.planner.plan.TableScanNode.GeneratedPartitions;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 
@@ -123,9 +124,8 @@ public class DistributedExecutionPlanner
 
         private List<Partition> getPartitionsForScan(TableScanNode node)
         {
-            Optional<List<Partition>> partitions = node.getPartitions();
-            if (partitions.isPresent()) {
-                return partitions.get();
+            if (node.getGeneratedPartitions().isPresent()) {
+                return node.getGeneratedPartitions().get().getPartitions();
             }
 
             // Otherwise return all partitions

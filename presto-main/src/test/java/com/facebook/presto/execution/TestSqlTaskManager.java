@@ -27,7 +27,6 @@ import com.facebook.presto.metadata.Node;
 import com.facebook.presto.operator.ExchangeClient;
 import com.facebook.presto.spi.ColumnHandle;
 import com.facebook.presto.spi.Domain;
-import com.facebook.presto.spi.Partition;
 import com.facebook.presto.spi.PartitionResult;
 import com.facebook.presto.spi.SchemaTableName;
 import com.facebook.presto.spi.Split;
@@ -60,11 +59,10 @@ import org.testng.annotations.Test;
 
 import java.io.File;
 import java.net.URI;
-import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.concurrent.TimeUnit;
 
-import static com.facebook.presto.sql.tree.BooleanLiteral.TRUE_LITERAL;
+import static com.facebook.presto.sql.planner.plan.TableScanNode.GeneratedPartitions;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertNotNull;
 import static org.testng.Assert.assertNull;
@@ -125,7 +123,7 @@ public class TestSqlTaskManager
         testFragment = new PlanFragment(new PlanFragmentId("fragment"),
                 tableScanNodeId,
                 ImmutableMap.<Symbol, Type>of(symbol, Type.VARCHAR),
-                new TableScanNode(tableScanNodeId, tableHandle, ImmutableList.of(symbol), ImmutableMap.of(symbol, columnHandle), Optional.<List<Partition>>absent()));
+                new TableScanNode(tableScanNodeId, tableHandle, ImmutableList.of(symbol), ImmutableMap.of(symbol, columnHandle), Optional.<GeneratedPartitions>absent()));
 
         taskId = new TaskId("query", "stage", "task");
         session = new Session("user", "test", "default", "default", "test", "test");

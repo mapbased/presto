@@ -280,9 +280,8 @@ public class LocalQueryRunner
 
     private List<Partition> getPartitionsForScan(TableScanNode node)
     {
-        Optional<List<Partition>> partitions = node.getPartitions();
-        if (partitions.isPresent()) {
-            return partitions.get();
+        if (node.getGeneratedPartitions().isPresent()) {
+            return node.getGeneratedPartitions().get().getPartitions();
         }
 
         // Otherwise return all partitions

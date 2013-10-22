@@ -18,12 +18,8 @@ import com.facebook.presto.spi.Domain;
 import com.facebook.presto.spi.Domains;
 import com.facebook.presto.spi.Partition;
 import com.facebook.presto.spi.TableHandle;
-import com.facebook.presto.sql.ExpressionUtils;
-import com.facebook.presto.sql.planner.DomainTranslator;
 import com.facebook.presto.sql.planner.DomainUtils;
 import com.facebook.presto.sql.planner.Symbol;
-import com.facebook.presto.sql.tree.BooleanLiteral;
-import com.facebook.presto.sql.tree.Expression;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.base.Objects;
@@ -38,6 +34,7 @@ import java.util.Map;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.Preconditions.checkState;
 
 @Immutable
 public class TableScanNode
@@ -46,12 +43,12 @@ public class TableScanNode
     private final TableHandle table;
     private final List<Symbol> outputSymbols;
     private final Map<Symbol, ColumnHandle> assignments; // symbol -> column
-    private final Optional<List<Partition>> partitions;
+    private final Optional<GeneratedPartitions> generatedPartitions;
     private final boolean partitionsDroppedBySerialization;
 
-    public TableScanNode(PlanNodeId id,  TableHandle table, List<Symbol> outputSymbols, Map<Symbol, ColumnHandle> assignments, Optional<List<Partition>> partitions)
+    public TableScanNode(PlanNodeId id,  TableHandle table, List<Symbol> outputSymbols, Map<Symbol, ColumnHandle> assignments, Optional<GeneratedPartitions> generatedPartitions)
     {
-        this(id, table, outputSymbols, assignments, partitions, false);
+        this(id, table, outputSymbols, assignments, generatedPartitions, false);
     }
 
     @JsonCreator
@@ -60,10 +57,10 @@ public class TableScanNode
             @JsonProperty("outputSymbols") List<Symbol> outputSymbols,
             @JsonProperty("assignments") Map<Symbol, ColumnHandle> assignments)
     {
-        this(id, table, outputSymbols, assignments, Optional.<List<Partition>>absent(), true);
+        this(id, table, outputSymbols, assignments, Optional.<GeneratedPartitions>absent(), true);
     }
 
-    private TableScanNode(PlanNodeId id, TableHandle table, List<Symbol> outputSymbols, Map<Symbol, ColumnHandle> assignments, Optional<List<Partition>> partitions, boolean partitionsDroppedBySerialization)
+    private TableScanNode(PlanNodeId id, TableHandle table, List<Symbol> outputSymbols, Map<Symbol, ColumnHandle> assignments, Optional<GeneratedPartitions> generatedPartitions, boolean partitionsDroppedBySerialization)
     {
         super(id);
 
@@ -72,15 +69,14 @@ public class TableScanNode
         checkNotNull(assignments, "assignments is null");
         checkArgument(assignments.keySet().containsAll(outputSymbols), "assignments does not cover all of outputSymbols");
         checkArgument(!assignments.isEmpty(), "assignments is empty");
-        checkNotNull(partitions, "partitions is null");
+        checkNotNull(generatedPartitions, "generatedPartitions is null");
 
         this.table = table;
         this.outputSymbols = ImmutableList.copyOf(outputSymbols);
         this.assignments = ImmutableMap.copyOf(assignments);
-        this.partitions = partitions.isPresent() ? Optional.<List<Partition>>of(ImmutableList.copyOf(partitions.get())) : partitions;
+        this.generatedPartitions = generatedPartitions;
         this.partitionsDroppedBySerialization = partitionsDroppedBySerialization;
 
-        // TODO: can we make this assumption?
         checkArgument(assignments.values().containsAll(getPartitionsDomainSummary().keySet()), "assignments do not include all of the ColumnHandles specified by the Partitions");
     }
 
@@ -102,46 +98,25 @@ public class TableScanNode
         return assignments;
     }
 
-    public Optional<List<Partition>> getPartitions()
+    public Optional<GeneratedPartitions> getGeneratedPartitions()
     {
-        if (partitionsDroppedBySerialization) {
-            // If this exception throws, then we might want to consider making Partitions serializable by Jackson
-            throw new IllegalStateException("Can't access partitions after passing through serialization");
-        }
-        return partitions;
+        // If this exception throws, then we might want to consider making Partitions serializable by Jackson
+        checkState(!partitionsDroppedBySerialization, "Can't access partitions after passing through serialization");
+        return generatedPartitions;
     }
 
     public Map<ColumnHandle, Domain<?>> getPartitionsDomainSummary()
     {
-        if (!partitions.isPresent()) {
+        if (!generatedPartitions.isPresent()) {
             return ImmutableMap.of();
         }
 
         Map<ColumnHandle, Domain<?>> domainMap = null;
-        for (Partition partition : partitions.get()) {
+        for (Partition partition : generatedPartitions.get().getPartitions()) {
             domainMap = (domainMap == null) ? partition.getDomainMap() : Domains.unionDomainMaps(domainMap, partition.getDomainMap());
         }
 
         return Objects.firstNonNull(domainMap, ImmutableMap.<ColumnHandle, Domain<?>>of());
-    }
-
-    public Expression getPartitionsPredicateSummary()
-    {
-        if (!partitions.isPresent()) {
-            return BooleanLiteral.TRUE_LITERAL;
-        }
-
-        if (partitions.get().isEmpty()) {
-            return BooleanLiteral.FALSE_LITERAL;
-        }
-
-        // Generate the predicate representing the domain of all partitions
-        ImmutableList.Builder<Expression> disjuncts = ImmutableList.builder();
-        for (Partition partition : partitions.get()) {
-            Expression predicate = DomainTranslator.toPredicate(DomainUtils.columnHandleToSymbol(partition.getDomainMap(), assignments));
-            disjuncts.add(predicate);
-        }
-        return ExpressionUtils.combineDisjunctsWithDefault(disjuncts.build(), BooleanLiteral.TRUE_LITERAL);
     }
 
     @JsonProperty("partitionDomainSummary")
@@ -160,5 +135,46 @@ public class TableScanNode
     public <C, R> R accept(PlanVisitor<C, R> visitor, C context)
     {
         return visitor.visitTableScan(this, context);
+    }
+
+    public static class GeneratedPartitions
+    {
+        private final Map<ColumnHandle, Domain<?>> domainMapInput; // The domainMap used to generate the current list of Partitions
+        private final List<Partition> partitions;
+
+        public GeneratedPartitions(Map<ColumnHandle, Domain<?>> domainMapInput, List<Partition> partitions)
+        {
+            this.domainMapInput = ImmutableMap.copyOf(checkNotNull(domainMapInput, "domainMapInput is null"));
+            this.partitions = ImmutableList.copyOf(checkNotNull(partitions, "partitions is null"));
+        }
+
+        public Map<ColumnHandle, Domain<?>> getDomainMapInput()
+        {
+            return domainMapInput;
+        }
+
+        public List<Partition> getPartitions()
+        {
+            return partitions;
+        }
+
+        @Override
+        public int hashCode()
+        {
+            return Objects.hashCode(domainMapInput, partitions);
+        }
+
+        @Override
+        public boolean equals(Object obj)
+        {
+            if (this == obj) {
+                return true;
+            }
+            if (obj == null || getClass() != obj.getClass()) {
+                return false;
+            }
+            final GeneratedPartitions other = (GeneratedPartitions) obj;
+            return Objects.equal(this.domainMapInput, other.domainMapInput) && Objects.equal(this.partitions, other.partitions);
+        }
     }
 }

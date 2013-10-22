@@ -13,6 +13,9 @@
  */
 package com.facebook.presto.sql.planner;
 
+import com.facebook.presto.spi.ColumnHandle;
+import com.facebook.presto.spi.Domain;
+import com.facebook.presto.spi.Domains;
 import com.facebook.presto.sql.planner.plan.AggregationNode;
 import com.facebook.presto.sql.planner.plan.FilterNode;
 import com.facebook.presto.sql.planner.plan.JoinNode;
@@ -147,7 +150,17 @@ public class EffectivePredicateExtractor
     @Override
     public Expression visitTableScan(TableScanNode node, Void context)
     {
-        return pullExpressionThroughSymbols(node.getPartitionsPredicateSummary(), node.getOutputSymbols());
+        if (!node.getGeneratedPartitions().isPresent()) {
+            return BooleanLiteral.TRUE_LITERAL;
+        }
+
+        // The effective predicate is the intersection of the partition domain summary and the domains used to generate those partitions.
+        // Note: the domainMapInput may contain additional predicates not reflected in the partitions, but those additional predicates are guaranteed to be
+        // reaffirmed by a predicate directly above this table scan (so it's ok to include) and provides an upper
+        // bound in case the connector's partitions don't provide additional clarification.
+        Map<ColumnHandle,Domain<?>> effectiveDomain = Domains.intersectDomainMaps(node.getPartitionsDomainSummary(), node.getGeneratedPartitions().get().getDomainMapInput());
+        Expression partitionPredicate = DomainTranslator.toPredicate(DomainUtils.columnHandleToSymbol(effectiveDomain, node.getAssignments()));
+        return pullExpressionThroughSymbols(partitionPredicate, node.getOutputSymbols());
     }
 
     @Override

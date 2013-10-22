@@ -16,7 +16,6 @@ package com.facebook.presto.sql.planner;
 import com.facebook.presto.metadata.FunctionHandle;
 import com.facebook.presto.metadata.Metadata;
 import com.facebook.presto.spi.ColumnHandle;
-import com.facebook.presto.spi.Partition;
 import com.facebook.presto.spi.TableHandle;
 import com.facebook.presto.sql.analyzer.Analysis;
 import com.facebook.presto.sql.analyzer.EquiJoinClause;
@@ -61,7 +60,7 @@ import java.util.Set;
 
 import static com.facebook.presto.sql.analyzer.EquiJoinClause.leftGetter;
 import static com.facebook.presto.sql.analyzer.EquiJoinClause.rightGetter;
-import static com.facebook.presto.sql.tree.BooleanLiteral.TRUE_LITERAL;
+import static com.facebook.presto.sql.planner.plan.TableScanNode.GeneratedPartitions;
 import static com.google.common.base.Preconditions.checkArgument;
 
 class RelationPlanner
@@ -113,7 +112,7 @@ class RelationPlanner
         }
 
         ImmutableList<Symbol> outputSymbols = outputSymbolsBuilder.build();
-        return new RelationPlan(new TableScanNode(idAllocator.getNextId(), handle, outputSymbols, columns.build(), Optional.<List<Partition>>absent()), descriptor, outputSymbols);
+        return new RelationPlan(new TableScanNode(idAllocator.getNextId(), handle, outputSymbols, columns.build(), Optional.<GeneratedPartitions>absent()), descriptor, outputSymbols);
     }
 
     @Override
