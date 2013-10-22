@@ -15,6 +15,7 @@ package com.facebook.presto.execution;
 
 import com.facebook.presto.OutputBuffers;
 import com.facebook.presto.PagePartitionFunction;
+import com.facebook.presto.execution.StateMachine.StateChangeListener;
 import com.facebook.presto.operator.Page;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Objects;
@@ -28,6 +29,7 @@ import com.google.common.primitives.Ints;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
+import io.airlift.log.Logger;
 import io.airlift.units.DataSize;
 import io.airlift.units.Duration;
 
@@ -44,6 +46,7 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.SortedSet;
 import java.util.TreeSet;
+import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -55,6 +58,8 @@ import static java.util.concurrent.TimeUnit.NANOSECONDS;
 @ThreadSafe
 public class SharedBuffer
 {
+    private static final Logger log = Logger.get(SharedBuffer.class);
+
     public static enum QueueState
     {
         /**
@@ -89,7 +94,7 @@ public class SharedBuffer
     @GuardedBy("this")
     private final SortedSet<NamedQueue> openQueuesBySequenceId = new TreeSet<>();
     @GuardedBy("this")
-    private QueueState state = QueueState.OPEN;
+    private StateMachine<QueueState> state;
 
     private final AtomicLong pagesAdded = new AtomicLong();
 
@@ -98,8 +103,12 @@ public class SharedBuffer
      */
     private final AtomicBoolean closed = new AtomicBoolean();
 
-    public SharedBuffer(DataSize maxBufferSize, OutputBuffers outputBuffers)
+    public SharedBuffer(TaskId taskId, Executor executor, DataSize maxBufferSize, OutputBuffers outputBuffers)
     {
+        checkNotNull(taskId, "taskId is null");
+        checkNotNull(executor, "executor is null");
+        state = new StateMachine(taskId + "-buffer", executor, QueueState.OPEN);
+
         checkNotNull(maxBufferSize, "maxBufferSize is null");
         checkArgument(maxBufferSize.toBytes() > 0, "maxBufferSize must be at least 1");
         this.maxBufferedBytes = maxBufferSize.toBytes();
@@ -108,9 +117,14 @@ public class SharedBuffer
         updateOutputBuffers();
     }
 
-    public synchronized boolean isFinished()
+    public void addStateChangeListener(StateChangeListener<QueueState> stateChangeListener)
     {
-        return state == QueueState.FINISHED;
+        state.addStateChangeListener(stateChangeListener);
+    }
+
+    public boolean isFinished()
+    {
+        return state.get() == QueueState.FINISHED;
     }
 
     public synchronized SharedBufferInfo getInfo()
@@ -119,7 +133,7 @@ public class SharedBuffer
         for (NamedQueue namedQueue : namedQueues.values()) {
             infos.add(new BufferInfo(namedQueue.getQueueId(), namedQueue.isFinished(), namedQueue.size(), namedQueue.pagesRemoved()));
         }
-        return new SharedBufferInfo(state, masterSequenceId, pagesAdded.get(), infos.build());
+        return new SharedBufferInfo(state.get(), masterSequenceId, pagesAdded.get(), infos.build());
     }
 
     public synchronized void setOutputBuffers(OutputBuffers newOutputBuffers)
@@ -127,7 +141,7 @@ public class SharedBuffer
         checkNotNull(newOutputBuffers, "newOutputBuffers is null");
         // ignore buffers added after query finishes, which can happen when a query is canceled
         // also ignore old versions, which is normal
-        if (state == QueueState.FINISHED || outputBuffers.getVersion() >= newOutputBuffers.getVersion()) {
+        if (state.get() == QueueState.FINISHED || outputBuffers.getVersion() >= newOutputBuffers.getVersion()) {
             return;
         }
 
@@ -144,7 +158,7 @@ public class SharedBuffer
         for (Entry<String, PagePartitionFunction> entry : outputBuffers.getBuffers().entrySet()) {
             String bufferId = entry.getKey();
             if (!namedQueues.containsKey(bufferId)) {
-                Preconditions.checkState(state == QueueState.OPEN, "%s is not OPEN", SharedBuffer.class.getSimpleName());
+                Preconditions.checkState(state.get() == QueueState.OPEN, "%s is not OPEN", SharedBuffer.class.getSimpleName());
                 NamedQueue namedQueue = new NamedQueue(bufferId, entry.getValue());
                 namedQueues.put(bufferId, namedQueue);
                 openQueuesBySequenceId.add(namedQueue);
@@ -153,13 +167,9 @@ public class SharedBuffer
 
         if (outputBuffers.isNoMoreBufferIds()) {
             namedQueues = ImmutableMap.copyOf(namedQueues);
-            if (state != QueueState.OPEN) {
-                return;
+            if (state.compareAndSet(QueueState.OPEN, QueueState.NO_MORE_QUEUES)) {
+                updateState();
             }
-
-            state = QueueState.NO_MORE_QUEUES;
-
-            updateState();
         }
     }
 
@@ -204,7 +214,7 @@ public class SharedBuffer
             throw new NoSuchBufferException(outputId, namedQueues.keySet());
         }
 
-        if (state == QueueState.FINISHED) {
+        if (state.get() == QueueState.FINISHED) {
             return;
         }
 
@@ -239,7 +249,7 @@ public class SharedBuffer
             throw new NoSuchBufferException(outputId, namedQueues.keySet());
         }
 
-        if (state == QueueState.FINISHED) {
+        if (state.get() == QueueState.FINISHED) {
             return emptyResults(namedQueue.getSequenceId(), true);
         }
 
@@ -306,7 +316,7 @@ public class SharedBuffer
             queuedPages.clear();
         }
 
-        if (state == QueueState.NO_MORE_QUEUES && !openQueuesBySequenceId.isEmpty()) {
+        if (state.get() == QueueState.NO_MORE_QUEUES && !openQueuesBySequenceId.isEmpty()) {
             // advance master sequence id
             long oldMasterSequenceId = masterSequenceId;
             masterSequenceId = openQueuesBySequenceId.iterator().next().getSequenceId();
@@ -331,7 +341,8 @@ public class SharedBuffer
             }
         }
 
-        if (state == QueueState.NO_MORE_QUEUES && closed.get() && openQueuesBySequenceId.isEmpty()) {
+        if (state.get() == QueueState.NO_MORE_QUEUES && closed.get() && openQueuesBySequenceId.isEmpty()) {
+            log.info("Closing shared buffer: all pages delivered");
             destroy();
         }
 
@@ -355,7 +366,7 @@ public class SharedBuffer
     public synchronized void destroy()
     {
         closed.set(true);
-        state = QueueState.FINISHED;
+        state.set(QueueState.FINISHED);
 
         // drop all of the queues
         for (NamedQueue namedQueue : openQueuesBySequenceId) {

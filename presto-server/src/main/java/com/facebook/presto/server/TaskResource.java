@@ -24,6 +24,7 @@ import com.facebook.presto.execution.TaskState;
 import com.facebook.presto.operator.Page;
 import com.facebook.presto.tuple.TupleInfo;
 import com.google.common.reflect.TypeToken;
+import io.airlift.log.Logger;
 import io.airlift.units.DataSize;
 import io.airlift.units.DataSize.Unit;
 import io.airlift.units.Duration;
@@ -62,6 +63,8 @@ import static java.util.concurrent.TimeUnit.SECONDS;
 @Path("/v1/task")
 public class TaskResource
 {
+    private static final Logger log = Logger.get(TaskResource.class);
+
     private static final DataSize DEFAULT_MAX_SIZE = new DataSize(10, Unit.MEGABYTE);
     private static final Duration DEFAULT_MAX_WAIT_TIME = new Duration(1, SECONDS);
 
@@ -114,6 +117,9 @@ public class TaskResource
 
         try {
             TaskInfo taskInfo = taskManager.getTaskInfo(taskId, isFullTaskInfoRequested(uriInfo));
+            if (taskInfo.getState().isDone()) {
+                log.info("Sending DONE state for task %s", taskId);
+            }
             return Response.ok(taskInfo).build();
         }
         catch (NoSuchElementException e) {

@@ -202,23 +202,23 @@ public class Driver
                 // if current operator is finished...
                 if (current.isFinished()) {
                     // let next operator know there will be no more data
-                    next.getOperatorContext().startIntervalTimer();
+//                    next.getOperatorContext().startIntervalTimer();
                     next.finish();
-                    next.getOperatorContext().recordFinish();
+//                    next.getOperatorContext().recordFinish();
                 }
                 else {
                     // if next operator needs input...
                     if (next.needsInput()) {
                         // get an output page from current operator
-                        current.getOperatorContext().startIntervalTimer();
+//                        current.getOperatorContext().startIntervalTimer();
                         Page page = current.getOutput();
-                        current.getOperatorContext().recordGetOutput(page);
+//                        current.getOperatorContext().recordGetOutput(page);
 
                         // if we got an output page, add it to the next operator
                         if (page != null) {
-                            next.getOperatorContext().startIntervalTimer();
+//                            next.getOperatorContext().startIntervalTimer();
                             next.addInput(page);
-                            next.getOperatorContext().recordAddInput(page);
+//                            next.getOperatorContext().recordAddInput(page);
                         }
                     }
                 }

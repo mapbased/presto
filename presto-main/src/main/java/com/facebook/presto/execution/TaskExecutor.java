@@ -381,6 +381,7 @@ public class TaskExecutor
         private final AtomicLong start = new AtomicLong();
 
         private final AtomicLong cpuTime = new AtomicLong();
+        private final AtomicLong processCalls = new AtomicLong();
 
         private PrioritizedSplitRunner(TaskHandle taskHandle, SplitRunner split, Ticker ticker)
         {
@@ -389,7 +390,7 @@ public class TaskExecutor
             this.split = split;
             this.ticker = ticker;
             this.workerId = NEXT_WORKER_ID.getAndIncrement();
-            log.debug("%s created", toString());
+            log.debug("%s created", getInfo());
         }
 
         private TaskHandle getTaskHandle()
@@ -406,7 +407,7 @@ public class TaskExecutor
         {
             if (initialized.compareAndSet(false, true)) {
                 start.set(System.currentTimeMillis());
-                log.debug("%s is starting", toString());
+                log.debug("%s is starting", getInfo());
                 split.initialize();
             }
         }
@@ -420,7 +421,7 @@ public class TaskExecutor
                 log.error(e, "Error closing split for task %s", taskHandle.getTaskId());
             }
             destroyed.set(true);
-            log.debug("%s is finished", toString());
+            log.debug("%s is finished", getInfo());
         }
 
         public boolean isFinished()
@@ -436,6 +437,7 @@ public class TaskExecutor
                 throws Exception
         {
             try {
+                processCalls.incrementAndGet();
                 CpuTimer timer = new CpuTimer();
                 ListenableFuture<?> blocked = split.processFor(SPLIT_RUN_QUANTA);
 
@@ -494,15 +496,21 @@ public class TaskExecutor
             return Longs.compare(workerId, o.workerId);
         }
 
-        @Override
-        public String toString()
+        public String getInfo()
         {
-            return String.format("Split %-15s-%d (start = %s, wall = %s ms, cpu = %s ms)",
+            return String.format("Split %-15s-%d (start = %s, wall = %s ms, cpu = %s ms, calls = %s)",
                     taskHandle.getTaskId(),
                     splitId,
                     start.get(),
                     System.currentTimeMillis() - start.get(),
-                    (int) (cpuTime.get() / 1e6));
+                    (int) (cpuTime.get() / 1e6),
+                    processCalls.get());
+        }
+
+        @Override
+        public String toString()
+        {
+            return String.format("Split %-15s-%d", taskHandle.getTaskId(), splitId);
         }
 
         public int getSplitId()

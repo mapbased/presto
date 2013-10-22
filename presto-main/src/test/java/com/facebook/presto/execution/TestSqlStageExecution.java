@@ -263,7 +263,7 @@ public class TestSqlStageExecution
 
                 this.location = URI.create("fake://task/" + taskId);
 
-                this.sharedBuffer = new SharedBuffer(checkNotNull(new DataSize(1, Unit.BYTE), "maxBufferSize is null"), new OutputBuffers(0, false));
+                this.sharedBuffer = new SharedBuffer(taskId, executor, checkNotNull(new DataSize(1, Unit.BYTE), "maxBufferSize is null"), new OutputBuffers(0, false));
                 this.fragment = checkNotNull(fragment, "fragment is null");
             }
 
