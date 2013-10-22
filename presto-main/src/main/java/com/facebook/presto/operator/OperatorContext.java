@@ -13,6 +13,7 @@
  */
 package com.facebook.presto.operator;
 
+import com.facebook.presto.execution.TaskId;
 import com.facebook.presto.sql.analyzer.Session;
 import com.facebook.presto.sql.planner.plan.PlanNodeId;
 import com.google.common.base.Function;
@@ -90,6 +91,11 @@ public class OperatorContext
         return operatorId;
     }
 
+    public TaskId getTaskId()
+    {
+        return driverContext.getTaskId();
+    }
+
     public String getOperatorType()
     {
         return operatorType;
@@ -107,7 +113,7 @@ public class OperatorContext
 
     public void startIntervalTimer()
     {
-        intervalWallStart.set(System.nanoTime());
+        intervalWallStart.set(currentThreadWallTime());
         intervalCpuStart.set(currentThreadCpuTime());
         intervalUserStart.set(currentThreadUserTime());
     }
@@ -115,7 +121,7 @@ public class OperatorContext
     public void recordAddInput(Page page)
     {
         addInputCalls.incrementAndGet();
-        addInputWallNanos.getAndAdd(nanosBetween(intervalWallStart.get(), System.nanoTime()));
+        addInputWallNanos.getAndAdd(nanosBetween(intervalWallStart.get(), currentThreadWallTime()));
         addInputCpuNanos.getAndAdd(nanosBetween(intervalCpuStart.get(), currentThreadCpuTime()));
         addInputUserNanos.getAndAdd(nanosBetween(intervalUserStart.get(), currentThreadUserTime()));
 
@@ -134,7 +140,7 @@ public class OperatorContext
     public void recordGetOutput(Page page)
     {
         getOutputCalls.incrementAndGet();
-        getOutputWallNanos.getAndAdd(nanosBetween(intervalWallStart.get(), System.nanoTime()));
+        getOutputWallNanos.getAndAdd(nanosBetween(intervalWallStart.get(), currentThreadWallTime()));
         getOutputCpuNanos.getAndAdd(nanosBetween(intervalCpuStart.get(), currentThreadCpuTime()));
         getOutputUserNanos.getAndAdd(nanosBetween(intervalUserStart.get(), currentThreadUserTime()));
 
@@ -155,12 +161,12 @@ public class OperatorContext
         checkNotNull(blocked, "blocked is null");
         blocked.addListener(new Runnable()
         {
-            private final long start = System.nanoTime();
+            private final long start = currentThreadWallTime();
 
             @Override
             public void run()
             {
-                blockedWallNanos.getAndAdd(nanosBetween(start, System.nanoTime()));
+                blockedWallNanos.getAndAdd(nanosBetween(start, currentThreadWallTime()));
             }
         }, executor);
     }
@@ -168,7 +174,7 @@ public class OperatorContext
     public void recordFinish()
     {
         finishCalls.incrementAndGet();
-        finishWallNanos.getAndAdd(nanosBetween(intervalWallStart.get(), System.nanoTime()));
+        finishWallNanos.getAndAdd(nanosBetween(intervalWallStart.get(), currentThreadWallTime()));
         finishCpuNanos.getAndAdd(nanosBetween(intervalCpuStart.get(), currentThreadCpuTime()));
         finishUserNanos.getAndAdd(nanosBetween(intervalUserStart.get(), currentThreadUserTime()));
     }
@@ -275,20 +281,26 @@ public class OperatorContext
                 info);
     }
 
+    private long currentThreadWallTime()
+    {
+//        return System.nanoTime();
+        return 0;
+    }
+
     private long currentThreadUserTime()
     {
-        if (!driverContext.isCpuTimerEnabled()) {
+//        if (!driverContext.isCpuTimerEnabled()) {
             return 0;
-        }
-        return THREAD_MX_BEAN.getCurrentThreadUserTime();
+//        }
+//        return THREAD_MX_BEAN.getCurrentThreadUserTime();
     }
 
     private long currentThreadCpuTime()
     {
-        if (!driverContext.isCpuTimerEnabled()) {
+//        if (!driverContext.isCpuTimerEnabled()) {
             return 0;
-        }
-        return THREAD_MX_BEAN.getCurrentThreadCpuTime();
+//        }
+//        return THREAD_MX_BEAN.getCurrentThreadCpuTime();
     }
 
     private static long nanosBetween(long start, long end)

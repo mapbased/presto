@@ -203,6 +203,7 @@ public class HttpPageBufferClient
                         future = null;
                         lastUpdate = DateTime.now();
                     }
+                    log.info("Buffer client finished: %s", location);
                     clientCallback.clientFinished(HttpPageBufferClient.this);
                 }
                 else {

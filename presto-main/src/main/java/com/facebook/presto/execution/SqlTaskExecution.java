@@ -18,6 +18,7 @@ import com.facebook.presto.ScheduledSplit;
 import com.facebook.presto.TaskSource;
 import com.facebook.presto.client.FailureInfo;
 import com.facebook.presto.event.query.QueryMonitor;
+import com.facebook.presto.execution.SharedBuffer.QueueState;
 import com.facebook.presto.execution.StateMachine.StateChangeListener;
 import com.facebook.presto.execution.TaskExecutor.TaskHandle;
 import com.facebook.presto.operator.Driver;
@@ -42,6 +43,7 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import io.airlift.log.Logger;
 import io.airlift.units.DataSize;
 import io.airlift.units.Duration;
 import org.joda.time.DateTime;
@@ -74,6 +76,8 @@ import static java.lang.Math.max;
 public class SqlTaskExecution
         implements TaskExecution
 {
+    private static final Logger log = Logger.get(SqlTaskExecution.class);
+
     private final TaskId taskId;
     private final URI location;
     private final TaskExecutor taskExecutor;
@@ -188,8 +192,20 @@ public class SqlTaskExecution
                     cpuTimerEnabled);
 
             this.sharedBuffer = new SharedBuffer(
+                    taskId,
+                    notificationExecutor,
                     checkNotNull(maxBufferSize, "maxBufferSize is null"),
                     outputBuffers);
+            sharedBuffer.addStateChangeListener(new StateChangeListener<QueueState>()
+            {
+                @Override
+                public void stateChanged(QueueState taskState)
+                {
+                    if (taskState == QueueState.FINISHED) {
+                        checkTaskCompletion();
+                    }
+                }
+            });
 
             this.queryMonitor = checkNotNull(queryMonitor, "queryMonitor is null");
 
@@ -418,6 +434,7 @@ public class SqlTaskExecution
                         checkNoMorePartitionedSplits();
                     }
 
+                    log.info("Task %s: driver finished", taskId);
                     checkTaskCompletion();
 
                     queryMonitor.splitCompletionEvent(taskId, splitRunner.getDriverContext().getDriverStats());
@@ -448,6 +465,7 @@ public class SqlTaskExecution
         // todo this is not exactly correct, we should be closing when all drivers have been created, but
         // we check against running count which means we are waiting until all drivers are finished
         if (partitionedDriverFactory != null && noMorePartitionedSplits.get() && remainingDriverCount.get() <= 0) {
+            log.info("Task %s: all drivers finished", taskId);
             partitionedDriverFactory.close();
         }
     }
@@ -491,6 +509,10 @@ public class SqlTaskExecution
 
     private synchronized void checkTaskCompletion()
     {
+        if (taskStateMachine.getState().isDone()) {
+            return;
+        }
+
         // are there more partition splits expected?
         if (partitionedSourceId != null && !noMorePartitionedSplits.get()) {
             return;
@@ -505,6 +527,7 @@ public class SqlTaskExecution
 
         // are there still pages in the output buffer
         if (!sharedBuffer.isFinished()) {
+            log.info("Task %s: waiting for pages to be flushed", taskId);
             return;
         }
 

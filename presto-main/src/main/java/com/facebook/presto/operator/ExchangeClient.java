@@ -21,6 +21,7 @@ import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
 import io.airlift.http.client.AsyncHttpClient;
+import io.airlift.log.Logger;
 import io.airlift.units.DataSize;
 import io.airlift.units.Duration;
 
@@ -51,6 +52,8 @@ import static com.google.common.base.Preconditions.checkState;
 public class ExchangeClient
         implements Closeable
 {
+    private static final Logger log = Logger.get(ExchangeClient.class);
+
     private static final Page NO_MORE_PAGES = new Page(0);
 
     private final long maxBufferedBytes;
@@ -301,6 +304,9 @@ public class ExchangeClient
         blockedCallers.clear();
         for (SettableFuture<?> blockedCaller : callers) {
             blockedCaller.set(null);
+        }
+        if (closed.get()) {
+            log.info("Unblocked exchange due to closure");
         }
     }
 
