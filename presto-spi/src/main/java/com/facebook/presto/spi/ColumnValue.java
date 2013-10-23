@@ -13,26 +13,22 @@
  */
 package com.facebook.presto.spi;
 
-import java.util.Objects;
-
-public enum ColumnType
+/**
+ * ColumnValue is used to get around some Java generic weirdness in the SPI.
+ * All SPI methods that take a type T as an argument should also have a method
+ * that takes a ColumnValue<T> that does the exact same thing.
+ */
+public class ColumnValue<T extends Comparable<? super T>>
 {
-    BOOLEAN(Boolean.class),
-    LONG(Long.class),
-    DOUBLE(Double.class),
-    STRING(String.class);
+    private final T value;
 
-    private final Class<?> nativeType;
-
-    private <T extends Comparable<? super T>> ColumnType(Class<T> nativeType)
+    public ColumnValue(T value)
     {
-        this.nativeType = Objects.requireNonNull(nativeType, "nativeType is null");
+        this.value = value;
     }
 
-    @SuppressWarnings("unchecked")
-    public <T extends Comparable<? super T>> Class<T> getNativeType()
+    public T get()
     {
-        // Since we control the constructor, this cast must be correct
-        return (Class<T>) nativeType;
+        return value;
     }
 }

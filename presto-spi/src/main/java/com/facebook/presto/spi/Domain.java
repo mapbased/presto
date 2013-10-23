@@ -15,6 +15,8 @@ package com.facebook.presto.spi;
 
 import java.util.Objects;
 
+import static com.facebook.presto.spi.Domains.valueAsType;
+
 /**
  * Defines the possible values of a variable in terms of valid ranges and nullability.
  * An empty list of Ranges denotes that the variable does not belong to any range
@@ -36,20 +38,39 @@ public class Domain<T extends Comparable<? super T>>
         return new Domain<>(ranges, nullAllowed);
     }
 
-    public static <T extends Comparable<? super T>> Domain<T> none()
+    public static <T extends Comparable<? super T>> Domain<T> none(Class<T> type)
     {
-        return new Domain<>(SortedRangeSet.<T>of(), false);
+        return new Domain<>(SortedRangeSet.none(type), false);
     }
 
-    public static <T extends Comparable<? super T>> Domain<T> nullOnly()
+    public static <T extends Comparable<? super T>> Domain<T> all(Class<T> type)
     {
-        return new Domain<>(SortedRangeSet.<T>of(), true);
+        return new Domain<>(SortedRangeSet.of(Range.all(type)), true);
     }
 
-    public static <T extends Comparable<? super T>> Domain<T> singleValue(T value)
+    public static <T extends Comparable<? super T>> Domain<T> onlyNull(Class<T> type)
     {
-        Objects.requireNonNull(value, "value is null");
+        return new Domain<>(SortedRangeSet.none(type), true);
+    }
+
+    public static <T extends Comparable<? super T>> Domain<T> notNull(Class<T> type)
+    {
+        return new Domain<>(SortedRangeSet.all(type), false);
+    }
+
+    public static <T extends Comparable<? super T>> Domain<T> valueSingle(ColumnValue<T> value)
+    {
+        return single(value.get());
+    }
+
+    public static <T extends Comparable<? super T>> Domain<T> single(T value)
+    {
         return new Domain<>(SortedRangeSet.of(Range.equal(value)), false);
+    }
+
+    public Class<T> getType()
+    {
+        return ranges.getType();
     }
 
     public SortedRangeSet<T> getRanges()
@@ -62,22 +83,23 @@ public class Domain<T extends Comparable<? super T>>
         return nullAllowed;
     }
 
-    public boolean includesValue(T value)
+    public boolean includesValue(Comparable<?> value)
     {
         Objects.requireNonNull(value, "value is null");
-        return ranges.includesMarker(Marker.exactly(value));
+        return ranges.includesMarker(Marker.exactly(valueAsType(getType(), value)));
     }
 
-    public Domain<T> intersect(Domain<T> other)
+    public Domain<T> intersect(Domain<?> other)
     {
-        SortedRangeSet<T> intersectedRanges = this.getRanges().intersect(other.getRanges());
+        Domain<T> typedDomain = other.asType(getType());
+        SortedRangeSet<T> intersectedRanges = this.getRanges().intersect(typedDomain.getRanges());
         boolean nullAllowed = this.isNullAllowed() && other.isNullAllowed();
         return new Domain<>(intersectedRanges, nullAllowed);
     }
 
-    public Domain<T> union(Domain<T> other)
+    public Domain<T> union(Domain<?> other)
     {
-        SortedRangeSet<T> unionRanges = new SortedRangeSet.Builder<T>()
+        SortedRangeSet<T> unionRanges = new SortedRangeSet.Builder<>(getType())
                 .addAll(this.getRanges())
                 .addAll(other.getRanges())
                 .build();
@@ -91,8 +113,18 @@ public class Domain<T extends Comparable<? super T>>
         return new Domain<>(ranges.complement(), !nullAllowed);
     }
 
+    @SuppressWarnings("unchecked")
+    public <X extends Comparable<? super X>> Domain<X> asType(Class<X> type)
+    {
+        if (!type.equals(getType())) {
+            throw new IllegalArgumentException(String.format("Can not cast type %s into type %s for Domain", getType(), type));
+        }
+        return (Domain<X>) this;
+    }
+
     @Override
-    public int hashCode() {
+    public int hashCode()
+    {
         return Objects.hash(ranges, nullAllowed);
     }
 

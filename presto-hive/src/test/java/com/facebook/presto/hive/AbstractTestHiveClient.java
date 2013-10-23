@@ -174,7 +174,7 @@ public abstract class AbstractTestHiveClient
             throws Exception
     {
         TableHandle tableHandle = getTableHandle(table);
-        PartitionResult partitionResult = splitManager.getPartitions(tableHandle, ImmutableMap.<ColumnHandle, Domain<?>>of(intColumn, Domain.singleValue(5L)));
+        PartitionResult partitionResult = splitManager.getPartitions(tableHandle, ImmutableMap.<ColumnHandle, Domain<?>>of(intColumn, Domain.single(5L)));
         assertExpectedPartitions(partitionResult.getPartitions());
     }
 
@@ -364,9 +364,9 @@ public abstract class AbstractTestHiveClient
         ColumnHandle dsColumn = metadata.getColumnHandle(tableHandle, "ds");
         assertNotNull(dsColumn);
 
-        PartitionResult partitionResult = splitManager.getPartitions(tableHandle, ImmutableMap.<ColumnHandle, Domain<?>>of(dsColumn, Domain.singleValue("2012-12-30")));
+        PartitionResult partitionResult = splitManager.getPartitions(tableHandle, ImmutableMap.<ColumnHandle, Domain<?>>of(dsColumn, Domain.single("2012-12-30")));
         for (Partition partition : partitionResult.getPartitions()) {
-            if (Domain.singleValue("2012-12-30").equals(partition.getDomainMap().get(dsColumn))) {
+            if (Domain.single("2012-12-30").equals(partition.getDomainMap().get(dsColumn))) {
                 try {
                     Iterables.size(splitManager.getPartitionSplits(tableHandle, ImmutableList.of(partition)));
                     fail("Expected PartitionOfflineException");

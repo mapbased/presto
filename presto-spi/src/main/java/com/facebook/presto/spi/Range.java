@@ -17,6 +17,11 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.Objects;
 
+import static com.facebook.presto.spi.Domains.extractType;
+
+/**
+ * A Range of values across the continuous space defined by the Comparable T.
+ */
 public class Range<T extends Comparable<? super T>>
 {
     private final Marker<T> low;
@@ -26,6 +31,9 @@ public class Range<T extends Comparable<? super T>>
     {
         Objects.requireNonNull(low, "value is null");
         Objects.requireNonNull(high, "value is null");
+        if (!low.getType().equals(high.getType())) {
+            throw new IllegalArgumentException(String.format("Marker types do not match: %s vs %s", low.getType(), high.getType()));
+        }
         if (low.isUpperUnbounded()) {
             throw new IllegalArgumentException("low cannot be upper unbounded");
         }
@@ -39,29 +47,59 @@ public class Range<T extends Comparable<? super T>>
         this.high = high;
     }
 
-    public static <T extends Comparable<? super T>> Range<T> all()
+    public static <T extends Comparable<? super T>> Range<T> all(Class<T> type)
     {
-        return new Range<>(Marker.<T>lowerUnbounded(), Marker.<T>upperUnbounded());
+        return new Range<>(Marker.lowerUnbounded(type), Marker.upperUnbounded(type));
+    }
+
+    public static <T extends Comparable<? super T>> Range<T> valueGreaterThan(ColumnValue<T> low)
+    {
+        return greaterThan(low.get());
+    }
+
+    public static <T extends Comparable<? super T>> Range<T> valueGreaterThanOrEqual(ColumnValue<T> low)
+    {
+        return greaterThanOrEqual(low.get());
+    }
+
+    public static <T extends Comparable<? super T>> Range<T> valueLessThan(ColumnValue<T> high)
+    {
+        return lessThan(high.get());
+    }
+
+    public static <T extends Comparable<? super T>> Range<T> valueLessThanOrEqual(ColumnValue<T> high)
+    {
+        return lessThanOrEqual(high.get());
+    }
+
+    public static <T extends Comparable<? super T>> Range<T> valueEqual(ColumnValue<T> value)
+    {
+        return equal(value.get());
+    }
+
+    public static <T extends Comparable<? super T>> Range<T> valueRange(ColumnValue<T> low, boolean lowInclusive, ColumnValue<T> high, boolean highInclusive)
+    {
+        return range(low.get(), lowInclusive, high.get(), highInclusive);
     }
 
     public static <T extends Comparable<? super T>> Range<T> greaterThan(T low)
     {
-        return new Range<>(Marker.above(low), Marker.<T>upperUnbounded());
+        return new Range<>(Marker.above(low), Marker.upperUnbounded(extractType(low)));
     }
 
     public static <T extends Comparable<? super T>> Range<T> greaterThanOrEqual(T low)
     {
-        return new Range<>(Marker.exactly(low), Marker.<T>upperUnbounded());
+        return new Range<>(Marker.exactly(low), Marker.upperUnbounded(extractType(low)));
     }
 
     public static <T extends Comparable<? super T>> Range<T> lessThan(T high)
     {
-        return new Range<>(Marker.<T>lowerUnbounded(), Marker.below(high));
+        return new Range<>(Marker.lowerUnbounded(extractType(high)), Marker.below(high));
     }
 
     public static <T extends Comparable<? super T>> Range<T> lessThanOrEqual(T high)
     {
-        return new Range<>(Marker.<T>lowerUnbounded(), Marker.exactly(high));
+        return new Range<>(Marker.lowerUnbounded(extractType(high)), Marker.exactly(high));
     }
 
     public static <T extends Comparable<? super T>> Range<T> equal(T value)
@@ -108,6 +146,20 @@ public class Range<T extends Comparable<? super T>>
         }
     }
 
+    @SuppressWarnings("unchecked")
+    public <X extends Comparable<? super X>> Range<X> asType(Class<X> type)
+    {
+        if (!type.equals(getType())) {
+            throw new IllegalArgumentException(String.format("Can not cast type %s into type %s for Range", getType(), type));
+        }
+        return (Range<X>) this;
+    }
+
+    public Class<T> getType()
+    {
+        return low.getType();
+    }
+
     public Marker<T> getLow()
     {
         return low;
@@ -135,6 +187,9 @@ public class Range<T extends Comparable<? super T>>
     public boolean contains(Marker<T> marker)
     {
         Objects.requireNonNull(marker, "marker is null");
+        if (!getType().equals(marker.getType())) {
+            throw new IllegalArgumentException(String.format("Mismatched types: %s and %s", getType(), marker.getType()));
+        }
         return low.compareTo(marker) <= 0 && high.compareTo(marker) >= 0;
     }
 
@@ -167,9 +222,9 @@ public class Range<T extends Comparable<? super T>>
         }
         else {
             sb.append((low.getBound() == Marker.Bound.EXACTLY) ? '[' : '(');
-            sb.append(low.isLowerUnbounded() ? "-inf" : low.getValue());
+            sb.append(low.isLowerUnbounded() ? "min" : low.getValue());
             sb.append(", ");
-            sb.append(high.isUpperUnbounded() ? "inf" : high.getValue());
+            sb.append(high.isUpperUnbounded() ? "max" : high.getValue());
             sb.append((high.getBound() == Marker.Bound.EXACTLY) ? ']' : ')');
         }
         return sb.toString();

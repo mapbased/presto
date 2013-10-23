@@ -14,6 +14,7 @@
 package com.facebook.presto.sql.planner;
 
 import com.facebook.presto.spi.ColumnType;
+import com.facebook.presto.spi.ColumnValue;
 import com.facebook.presto.spi.Domain;
 import com.facebook.presto.spi.Domains;
 import com.facebook.presto.spi.Range;
@@ -48,6 +49,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+import static com.facebook.presto.spi.Domains.valueToColumnValue;
 import static com.facebook.presto.sql.ExpressionUtils.combineConjuncts;
 import static com.facebook.presto.sql.ExpressionUtils.combineDisjunctsWithDefault;
 import static com.facebook.presto.sql.planner.LiteralInterpreter.toExpression;
@@ -182,7 +184,7 @@ public final class DomainTranslator
                 @Override
                 public Domain<?> apply(Type type)
                 {
-                    return (Domain<?>) Domain.none();
+                    return Domain.none(type.getColumnType().getNativeType());
                 }
             }));
         }
@@ -276,14 +278,13 @@ public final class DomainTranslator
             if (value instanceof Slice) {
                 value = ((Slice) value).toStringUtf8();
             }
-            checkState(valueMatchesType(value, columnType), "Object value '%s' does not match type '%'", value, columnType);
-            checkState(value == null || value instanceof Comparable, "Expected value to be null or of comparable type: " + value);
-
-            return createComparisonExtractionResult(node.getType(), symbol, castToComparable(value));
+            return createComparisonExtractionResult(node.getType(), symbol, valueToColumnValue(columnType.getNativeType(), value));
         }
 
-        private <T extends Comparable<T>> ExtractionResult createComparisonExtractionResult(ComparisonExpression.Type type, Symbol symbol, T value)
+        private <T extends Comparable<? super T>> ExtractionResult createComparisonExtractionResult(ComparisonExpression.Type type, Symbol symbol, ColumnValue<T> columnValue)
         {
+            T value = columnValue.get();
+            ColumnType columnType = checkedTypeLookup(symbol);
             if (value == null) {
                 switch (type) {
                     case EQUAL:
@@ -295,7 +296,7 @@ public final class DomainTranslator
                         return new ExtractionResult(noneDomainMap(), TRUE_LITERAL);
 
                     case IS_DISTINCT_FROM:
-                        return new ExtractionResult(ImmutableMap.<Symbol, Domain<?>>of(symbol, Domain.create(SortedRangeSet.of(Range.all()), false)), TRUE_LITERAL);
+                        return new ExtractionResult(ImmutableMap.<Symbol, Domain<?>>of(symbol, Domain.create(SortedRangeSet.of(Range.all(columnType.getNativeType())), false)), TRUE_LITERAL);
 
                     default:
                         throw new AssertionError("Unhandled type: " + type);
@@ -338,7 +339,7 @@ public final class DomainTranslator
                 Symbol symbol = Symbol.fromQualifiedName(((QualifiedNameReference) node.getValue()).getName());
                 ColumnType columnType = checkedTypeLookup(symbol);
 
-                SortedRangeSet.Builder builder = SortedRangeSet.builder();
+                SortedRangeSet.Builder<?> builder = SortedRangeSet.builder(columnType.getNativeType());
                 InListExpression valueList = (InListExpression) node.getValueList();
                 for (Expression listValue : valueList.getValues()) {
                     if (!(listValue instanceof Literal)) {
@@ -363,10 +364,8 @@ public final class DomainTranslator
                         else if (rawValue instanceof Slice) {
                             rawValue = ((Slice) rawValue).toStringUtf8();
                         }
-                        checkState(valueMatchesType(rawValue, columnType), "Object value '%s' does not match type '%'", rawValue, columnType);
-                        checkState(rawValue instanceof Comparable, "Expected value to be null or of comparable type: " + rawValue);
 
-                        builder.add(Range.equal(castToComparable(rawValue)));
+                        builder.add(Range.valueEqual(valueToColumnValue(columnType.getNativeType(), rawValue)));
                     }
                 }
                 return new ExtractionResult(ImmutableMap.<Symbol, Domain<?>>of(symbol, Domain.create(builder.build(), false)), TRUE_LITERAL);
@@ -388,7 +387,8 @@ public final class DomainTranslator
         {
             if (node.getValue() instanceof QualifiedNameReference) {
                 Symbol symbol = Symbol.fromQualifiedName(((QualifiedNameReference) node.getValue()).getName());
-                return new ExtractionResult(ImmutableMap.<Symbol, Domain<?>>of(symbol, Domain.nullOnly()), TRUE_LITERAL);
+                ColumnType columnType = checkedTypeLookup(symbol);
+                return new ExtractionResult(ImmutableMap.<Symbol, Domain<?>>of(symbol, Domain.onlyNull(columnType.getNativeType())), TRUE_LITERAL);
             }
             return super.visitIsNullPredicate(node, context);
         }
@@ -398,8 +398,9 @@ public final class DomainTranslator
         {
             if (node.getValue() instanceof QualifiedNameReference) {
                 Symbol symbol = Symbol.fromQualifiedName(((QualifiedNameReference) node.getValue()).getName());
+                ColumnType columnType = checkedTypeLookup(symbol);
                 return new ExtractionResult(ImmutableMap.<Symbol, Domain<?>>of(symbol,
-                        Domain.create(SortedRangeSet.of(Range.all()), false)),
+                        Domain.create(SortedRangeSet.of(Range.all(columnType.getNativeType())), false)),
                         TRUE_LITERAL);
             }
             return super.visitIsNotNullPredicate(node, context);
@@ -417,31 +418,6 @@ public final class DomainTranslator
         {
             // TODO: test these with AND and OR
             return new ExtractionResult(noneDomainMap(), TRUE_LITERAL);
-        }
-    }
-
-    @SuppressWarnings("rawtypes")
-    private static <X> Comparable castToComparable(X value)
-    {
-        return (Comparable) value;
-    }
-
-    public static boolean valueMatchesType(Object value, ColumnType type)
-    {
-        if (value == null) {
-            return true;
-        }
-        switch (type) {
-            case BOOLEAN:
-                return value instanceof Boolean;
-            case DOUBLE:
-                return value instanceof Double;
-            case LONG:
-                return value instanceof Long;
-            case STRING:
-                return value instanceof String;
-            default:
-                throw new AssertionError("Unhandled type: " + type);
         }
     }
 
@@ -467,7 +443,7 @@ public final class DomainTranslator
         }
     }
 
-    public static ComparisonExpression.Type flipComparisonDirection(ComparisonExpression.Type type)
+    private static ComparisonExpression.Type flipComparisonDirection(ComparisonExpression.Type type)
     {
         switch (type) {
             case LESS_THAN_OR_EQUAL:
@@ -484,7 +460,7 @@ public final class DomainTranslator
         }
     }
 
-    public static Expression coerceDoubleToLongComparison(ComparisonExpression comparison)
+    private static Expression coerceDoubleToLongComparison(ComparisonExpression comparison)
     {
         comparison = normalizeSimpleComparison(comparison);
 

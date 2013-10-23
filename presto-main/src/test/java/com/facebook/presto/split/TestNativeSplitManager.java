@@ -127,11 +127,11 @@ public class TestNativeSplitManager
     public void testPruneNoMatch()
     {
         PartitionResult partitionResult = splitManager.getPartitions(tableHandle, Optional.<Map<ColumnHandle, Domain<?>>>of(ImmutableMap.<ColumnHandle, Domain<?>>of(dsColumnHandle,
-                Domain.singleValue("foo"))));
+                Domain.single("foo"))));
         assertEquals(partitionResult.getPartitions().size(), 2);
 
         // ds=3. No partition will match this.
-        List<Partition> partitions = splitManager.getPartitions(tableHandle, Optional.<Map<ColumnHandle, Domain<?>>>of(ImmutableMap.<ColumnHandle, Domain<?>>of(dsColumnHandle, Domain.singleValue("3")))).getPartitions();
+        List<Partition> partitions = splitManager.getPartitions(tableHandle, Optional.<Map<ColumnHandle, Domain<?>>>of(ImmutableMap.<ColumnHandle, Domain<?>>of(dsColumnHandle, Domain.single("3")))).getPartitions();
         DataSource dataSource = splitManager.getPartitionSplits(tableHandle, partitions);
         List<Split> splits = ImmutableList.copyOf(dataSource.getSplits());
         // no splits found
@@ -141,11 +141,11 @@ public class TestNativeSplitManager
     @Test
     public void testPruneMatch()
     {
-        PartitionResult partitionResult = splitManager.getPartitions(tableHandle, Optional.<Map<ColumnHandle, Domain<?>>>of(ImmutableMap.<ColumnHandle, Domain<?>>of(dsColumnHandle, Domain.singleValue("1"))));
+        PartitionResult partitionResult = splitManager.getPartitions(tableHandle, Optional.<Map<ColumnHandle, Domain<?>>>of(ImmutableMap.<ColumnHandle, Domain<?>>of(dsColumnHandle, Domain.single("1"))));
         assertEquals(partitionResult.getPartitions().size(), 2);
 
         // ds=1. One partition with three splits will match this.
-        List<Partition> partitions = splitManager.getPartitions(tableHandle, Optional.<Map<ColumnHandle, Domain<?>>>of(ImmutableMap.<ColumnHandle, Domain<?>>of(dsColumnHandle, Domain.singleValue("1")))).getPartitions();
+        List<Partition> partitions = splitManager.getPartitions(tableHandle, Optional.<Map<ColumnHandle, Domain<?>>>of(ImmutableMap.<ColumnHandle, Domain<?>>of(dsColumnHandle, Domain.single("1")))).getPartitions();
         DataSource dataSource = splitManager.getPartitionSplits(tableHandle, partitions);
         List<Split> splits = ImmutableList.copyOf(dataSource.getSplits());
         // three splits found
@@ -155,11 +155,11 @@ public class TestNativeSplitManager
     @Test
     public void testNoPruneUnknown()
     {
-        PartitionResult partitionResult = splitManager.getPartitions(tableHandle, Optional.<Map<ColumnHandle, Domain<?>>>of(ImmutableMap.<ColumnHandle, Domain<?>>of(dsColumnHandle, Domain.singleValue("foo"))));
+        PartitionResult partitionResult = splitManager.getPartitions(tableHandle, Optional.<Map<ColumnHandle, Domain<?>>>of(ImmutableMap.<ColumnHandle, Domain<?>>of(dsColumnHandle, Domain.single("foo"))));
         assertEquals(partitionResult.getPartitions().size(), 2);
 
         // foo=bar. Not a prunable column
-        List<Partition> partitions = splitManager.getPartitions(tableHandle, Optional.<Map<ColumnHandle, Domain<?>>>of(ImmutableMap.<ColumnHandle, Domain<?>>of(fooColumnHandle, Domain.singleValue("bar")))).getPartitions();
+        List<Partition> partitions = splitManager.getPartitions(tableHandle, Optional.<Map<ColumnHandle, Domain<?>>>of(ImmutableMap.<ColumnHandle, Domain<?>>of(fooColumnHandle, Domain.single("bar")))).getPartitions();
         DataSource dataSource = splitManager.getPartitionSplits(tableHandle, partitions);
         List<Split> splits = ImmutableList.copyOf(dataSource.getSplits());
         // all splits found

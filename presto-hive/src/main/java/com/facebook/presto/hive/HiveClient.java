@@ -634,7 +634,7 @@ public class HiveClient
             {
                 for (Entry<ColumnHandle, Comparable<?>> entry : partition.getKeys().entrySet()) {
                     Domain<?> allowedDomain = allowedDomainMap.get(entry.getKey());
-                    if (allowedDomain != null && !Domains.uncheckedIncludesValue(allowedDomain, entry.getValue())) {
+                    if (allowedDomain != null && !allowedDomain.includesValue(entry.getValue())) {
                         return false;
                     }
                 }

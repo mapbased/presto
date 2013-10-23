@@ -15,6 +15,12 @@ package com.facebook.presto.spi;
 
 import java.util.Objects;
 
+import static com.facebook.presto.spi.Domains.extractType;
+
+/**
+ * A point on the continuous space defined by the Comparable T.
+ * Each point may be just below, exact, or just above than the specified value according to the Bound.
+ */
 public class Marker<T extends Comparable<? super T>>
         implements Comparable<Marker<T>>
 {
@@ -25,48 +31,75 @@ public class Marker<T extends Comparable<? super T>>
         ABOVE
     }
 
+    private final Class<T> type;
     private final T value;
     private final Bound bound;
 
     /**
-     * UPPER UNBOUNDED is specified with a null value and a BELOW bound
      * LOWER UNBOUNDED is specified with a null value and a ABOVE bound
+     * UPPER UNBOUNDED is specified with a null value and a BELOW bound
      */
-    private Marker(T value, Bound bound)
+    private Marker(Class<T> type, T value, Bound bound)
     {
+        Objects.requireNonNull(type, "type is null");
+        Objects.requireNonNull(bound, "bound is null");
         if (value == null && bound == Bound.EXACTLY) {
             throw new IllegalArgumentException("Can not be equal to unbounded");
         }
+        if (value != null && !type.isInstance(value)) {
+            throw new IllegalArgumentException(String.format("value (%s) must be of specified type (%s)", value, type));
+        }
+        this.type = type;
         this.value = value;
-        this.bound = Objects.requireNonNull(bound, "bound is null");
+        this.bound = bound;
     }
 
-    public static <T extends Comparable<? super T>> Marker<T> upperUnbounded()
+    public static <T extends Comparable<? super T>> Marker<T> upperUnbounded(Class<T> type)
     {
-        return new Marker<>(null, Bound.BELOW);
+        return new Marker<>(type, null, Bound.BELOW);
     }
 
-    public static <T extends Comparable<? super T>>  Marker<T> lowerUnbounded()
+    public static <T extends Comparable<? super T>>  Marker<T> lowerUnbounded(Class<T> type)
     {
-        return new Marker<>(null, Bound.ABOVE);
+        return new Marker<>(type, null, Bound.ABOVE);
+    }
+
+    public static <T extends Comparable<? super T>> Marker<T> valueAbove(ColumnValue<T> value)
+    {
+        return above(value.get());
+    }
+
+    public static <T extends Comparable<? super T>> Marker<T> valueExactly(ColumnValue<T> value)
+    {
+        return exactly(value.get());
+    }
+
+    public static <T extends Comparable<? super T>> Marker<T> valueBelow(ColumnValue<T> value)
+    {
+        return below(value.get());
     }
 
     public static <T extends Comparable<? super T>> Marker<T> above(T value)
     {
         Objects.requireNonNull(value, "value is null");
-        return new Marker<>(value, Bound.ABOVE);
+        return new Marker<>(extractType(value), value, Bound.ABOVE);
     }
 
     public static <T extends Comparable<? super T>> Marker<T> exactly(T value)
     {
         Objects.requireNonNull(value, "value is null");
-        return new Marker<>(value, Bound.EXACTLY);
+        return new Marker<>(extractType(value), value, Bound.EXACTLY);
     }
 
     public static <T extends Comparable<? super T>> Marker<T> below(T value)
     {
         Objects.requireNonNull(value, "value is null");
-        return new Marker<>(value, Bound.BELOW);
+        return new Marker<>(extractType(value), value, Bound.BELOW);
+    }
+
+    public Class<T> getType()
+    {
+        return type;
     }
 
     public T getValue()
@@ -92,8 +125,16 @@ public class Marker<T extends Comparable<? super T>>
         return value == null && bound == Bound.ABOVE;
     }
 
+    private void checkTypeCompatibility(Marker<?> marker)
+    {
+        if (!type.equals(marker.getType())) {
+            throw new IllegalArgumentException(String.format("Mismatched Marker types: %s and %s", type, marker.getType()));
+        }
+    }
+
     public boolean isAdjacent(Marker<T> other)
     {
+        checkTypeCompatibility(other);
         if (isUpperUnbounded() || isLowerUnbounded() || other.isUpperUnbounded() || other.isLowerUnbounded()) {
             return false;
         }
@@ -109,13 +150,13 @@ public class Marker<T extends Comparable<? super T>>
     public Marker<T> greaterAdjacent()
     {
         if (value == null) {
-            throw new IllegalStateException("No marker adjacent to infinity");
+            throw new IllegalStateException("No marker adjacent to unbounded");
         }
         switch (bound) {
             case BELOW:
-                return new Marker<>(value, Bound.EXACTLY);
+                return new Marker<>(type, value, Bound.EXACTLY);
             case EXACTLY:
-                return new Marker<>(value, Bound.ABOVE);
+                return new Marker<>(type, value, Bound.ABOVE);
             case ABOVE:
                 throw new IllegalStateException("No greater marker adjacent to an ABOVE bound");
             default:
@@ -126,23 +167,24 @@ public class Marker<T extends Comparable<? super T>>
     public Marker<T> lesserAdjacent()
     {
         if (value == null) {
-            throw new IllegalStateException("No marker adjacent to infinity");
+            throw new IllegalStateException("No marker adjacent to unbounded");
         }
         switch (bound) {
             case BELOW:
                 throw new IllegalStateException("No lesser marker adjacent to a BELOW bound");
             case EXACTLY:
-                return new Marker<>(value, Bound.BELOW);
+                return new Marker<>(type, value, Bound.BELOW);
             case ABOVE:
-                return new Marker<>(value, Bound.EXACTLY);
+                return new Marker<>(type, value, Bound.EXACTLY);
             default:
                 throw new AssertionError("Unsupported type: " + bound);
         }
     }
 
     @Override
-    public int compareTo(Marker <T> o)
+    public int compareTo(Marker<T> o)
     {
+        checkTypeCompatibility(o);
         if (isUpperUnbounded()) {
             return o.isUpperUnbounded() ? 0 : 1;
         }
@@ -177,7 +219,7 @@ public class Marker<T extends Comparable<? super T>>
     @Override
     public int hashCode()
     {
-        return Objects.hash(value, bound);
+        return Objects.hash(type, value, bound);
     }
 
     @Override
@@ -189,16 +231,16 @@ public class Marker<T extends Comparable<? super T>>
         if (obj == null || getClass() != obj.getClass()) {
             return false;
         }
-        final Marker<?> other = (Marker<?>) obj;
-        return Objects.equals(this.value, other.value) &&
-                Objects.equals(this.bound, other.bound);
+        final Marker other = (Marker) obj;
+        return Objects.equals(this.type, other.type) && Objects.equals(this.value, other.value) && Objects.equals(this.bound, other.bound);
     }
 
     @Override
     public String toString()
     {
         final StringBuilder sb = new StringBuilder("Marker{");
-        sb.append("value=").append(value);
+        sb.append("type=").append(type);
+        sb.append(", value=").append(value);
         sb.append(", bound=").append(bound);
         sb.append('}');
         return sb.toString();
