@@ -46,6 +46,10 @@ public class Driver
     private final List<Operator> operators;
     private final Map<PlanNodeId, SourceOperator> sourceOperators;
 
+    private final Object lock = new DriverLock();
+
+    private static class DriverLock{}
+
     public Driver(DriverContext driverContext, Operator firstOperator, Operator... otherOperators)
     {
         this(checkNotNull(driverContext, "driverContext is null"),
@@ -71,28 +75,30 @@ public class Driver
         this.sourceOperators = sourceOperators.build();
     }
 
-    public synchronized void close()
+    public void close()
     {
-        try {
-            for (Operator operator : operators) {
-                operator.finish();
-            }
-        }
-        finally {
-            for (Operator operator : operators) {
-                if (operator instanceof AutoCloseable) {
-                    try {
-                        ((AutoCloseable) operator).close();
-                    }
-                    catch (Exception e) {
-                        if (e instanceof InterruptedException) {
-                            Thread.currentThread().interrupt();
-                        }
-                        log.error(e, "Error closing operator %s for task %s", operator.getOperatorContext().getOperatorId(), driverContext.getTaskId());
-                    }
+        synchronized (lock) {
+            try {
+                for (Operator operator : operators) {
+                    operator.finish();
                 }
             }
-            driverContext.finished();
+            finally {
+                for (Operator operator : operators) {
+                    if (operator instanceof AutoCloseable) {
+                        try {
+                            ((AutoCloseable) operator).close();
+                        }
+                        catch (Exception e) {
+                            if (e instanceof InterruptedException) {
+                                Thread.currentThread().interrupt();
+                            }
+                            log.error(e, "Error closing operator %s for task %s", operator.getOperatorContext().getOperatorId(), driverContext.getTaskId());
+                        }
+                    }
+                }
+                driverContext.finished();
+            }
         }
     }
 
@@ -109,46 +115,48 @@ public class Driver
 
     private final ConcurrentMap<PlanNodeId, TaskSource> sources = new ConcurrentHashMap<>();
 
-    public synchronized void updateSource(TaskSource source)
+    public void updateSource(TaskSource source)
     {
-        // does this driver have an operator for the specified source?
-        PlanNodeId sourceId = source.getPlanNodeId();
-        if (!sourceOperators.containsKey(sourceId)) {
-            return;
-        }
-
-        // create new source
-        Set<ScheduledSplit> newSplits;
-        TaskSource currentSource = sources.get(sourceId);
-        if (currentSource == null) {
-            newSplits = source.getSplits();
-        }
-        else {
-            // merge the current source and the specified source
-            TaskSource newSource = currentSource.update(source);
-
-            // if this is not a new source, just return
-            if (newSource == currentSource) {
+        synchronized (lock) {
+            // does this driver have an operator for the specified source?
+            PlanNodeId sourceId = source.getPlanNodeId();
+            if (!sourceOperators.containsKey(sourceId)) {
                 return;
             }
 
-            // find the new splits to add
-            newSplits = Sets.difference(newSource.getSplits(), currentSource.getSplits());
-            sources.put(sourceId, newSource);
-        }
+            // create new source
+            Set<ScheduledSplit> newSplits;
+            TaskSource currentSource = sources.get(sourceId);
+            if (currentSource == null) {
+                newSplits = source.getSplits();
+            }
+            else {
+                // merge the current source and the specified source
+                TaskSource newSource = currentSource.update(source);
 
-        // add new splits
-        for (ScheduledSplit newSplit : newSplits) {
-            addSplit(sourceId, newSplit.getSplit());
-        }
+                // if this is not a new source, just return
+                if (newSource == currentSource) {
+                    return;
+                }
 
-        // set no more splits
-        if (source.isNoMoreSplits()) {
-            sourceOperators.get(sourceId).noMoreSplits();
+                // find the new splits to add
+                newSplits = Sets.difference(newSource.getSplits(), currentSource.getSplits());
+                sources.put(sourceId, newSource);
+            }
+
+            // add new splits
+            for (ScheduledSplit newSplit : newSplits) {
+                addSplit(sourceId, newSplit.getSplit());
+            }
+
+            // set no more splits
+            if (source.isNoMoreSplits()) {
+                sourceOperators.get(sourceId).noMoreSplits();
+            }
         }
     }
 
-    private synchronized void addSplit(PlanNodeId sourceId, Split split)
+    private void addSplit(PlanNodeId sourceId, Split split)
     {
         checkNotNull(sourceId, "sourceId is null");
         checkNotNull(split, "split is null");
@@ -168,66 +176,69 @@ public class Driver
         }
     }
 
-    public synchronized boolean isFinished()
+    public boolean isFinished()
     {
-        boolean finished = driverContext.isDone() || operators.get(operators.size() - 1).isFinished();
-        if (finished) {
-            close();
+        synchronized (lock) {
+            boolean finished = driverContext.isDone() || operators.get(operators.size() - 1).isFinished();
+            if (finished) {
+                close();
+            }
+            return finished;
         }
-        return finished;
     }
 
-    public synchronized ListenableFuture<?> process()
+    public ListenableFuture<?> process()
     {
-        driverContext.start();
+        synchronized (lock) {
+            driverContext.start();
+            try {
+                for (int i = 0; i < operators.size() - 1 && !driverContext.isDone(); i++) {
+                    // check if current operator is blocked
+                    Operator current = operators.get(i);
+                    ListenableFuture<?> blocked = current.isBlocked();
+                    if (!blocked.isDone()) {
+                        current.getOperatorContext().recordBlocked(blocked);
+                        return blocked;
+                    }
 
-        try {
-            for (int i = 0; i < operators.size() - 1 && !driverContext.isDone(); i++) {
-                // check if current operator is blocked
-                Operator current = operators.get(i);
-                ListenableFuture<?> blocked = current.isBlocked();
-                if (!blocked.isDone()) {
-                    current.getOperatorContext().recordBlocked(blocked);
-                    return blocked;
-                }
+                    // check if next operator is blocked
+                    Operator next = operators.get(i + 1);
+                    blocked = next.isBlocked();
+                    if (!blocked.isDone()) {
+                        next.getOperatorContext().recordBlocked(blocked);
+                        return blocked;
+                    }
 
-                // check if next operator is blocked
-                Operator next = operators.get(i + 1);
-                blocked = next.isBlocked();
-                if (!blocked.isDone()) {
-                    next.getOperatorContext().recordBlocked(blocked);
-                    return blocked;
-                }
+                    // if current operator is finished...
+                    if (current.isFinished()) {
+                        // let next operator know there will be no more data
+//                        next.getOperatorContext().startIntervalTimer();
+                        next.finish();
+//                        next.getOperatorContext().recordFinish();
+                    }
+                    else {
+                        // if next operator needs input...
+                        if (next.needsInput()) {
+                            // get an output page from current operator
+//                            current.getOperatorContext().startIntervalTimer();
+                            Page page = current.getOutput();
+//                            current.getOperatorContext().recordGetOutput(page);
 
-                // if current operator is finished...
-                if (current.isFinished()) {
-                    // let next operator know there will be no more data
-//                    next.getOperatorContext().startIntervalTimer();
-                    next.finish();
-//                    next.getOperatorContext().recordFinish();
-                }
-                else {
-                    // if next operator needs input...
-                    if (next.needsInput()) {
-                        // get an output page from current operator
-//                        current.getOperatorContext().startIntervalTimer();
-                        Page page = current.getOutput();
-//                        current.getOperatorContext().recordGetOutput(page);
-
-                        // if we got an output page, add it to the next operator
-                        if (page != null) {
-//                            next.getOperatorContext().startIntervalTimer();
-                            next.addInput(page);
-//                            next.getOperatorContext().recordAddInput(page);
+                            // if we got an output page, add it to the next operator
+                            if (page != null) {
+//                                next.getOperatorContext().startIntervalTimer();
+                                next.addInput(page);
+//                                next.getOperatorContext().recordAddInput(page);
+                            }
                         }
                     }
                 }
+                return NOT_BLOCKED;
             }
-            return NOT_BLOCKED;
-        }
-        catch (Throwable t) {
-            driverContext.failed(t);
-            throw t;
+            catch (Throwable t) {
+                driverContext.failed(t);
+                throw t;
+            }
         }
     }
 

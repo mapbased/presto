@@ -89,7 +89,7 @@ public class TaskExecutor
 
     private final Set<PrioritizedSplitRunner> allSplits = new HashSet<>();
     private final PriorityBlockingQueue<PrioritizedSplitRunner> pendingSplits;
-    private final Set<PrioritizedSplitRunner> runningSplits = Sets.newSetFromMap(new ConcurrentHashMap<PrioritizedSplitRunner, Boolean>());
+//    private final Set<PrioritizedSplitRunner> runningSplits = Sets.newSetFromMap(new ConcurrentHashMap<PrioritizedSplitRunner, Boolean>());
     private final Set<PrioritizedSplitRunner> blockedSplits = Sets.newSetFromMap(new ConcurrentHashMap<PrioritizedSplitRunner, Boolean>());
 
     private final AtomicLongArray completedTasksPerLevel = new AtomicLongArray(5);
@@ -132,7 +132,7 @@ public class TaskExecutor
     public synchronized void start()
     {
         checkState(!closed, "TaskExecutor is closed");
-        for (int i = 0; i < runnerThreads; i++) {
+        for (int i = 0; i < 130; i++) {
             addRunnerThread();
         }
     }
@@ -151,7 +151,7 @@ public class TaskExecutor
                 .add("runnerThreads", runnerThreads)
                 .add("allSplits", allSplits.size())
                 .add("pendingSplits", pendingSplits.size())
-                .add("runningSplits", runningSplits.size())
+//                .add("runningSplits", runningSplits.size())
                 .add("blockedSplits", blockedSplits.size())
                 .toString();
     }
@@ -196,6 +196,15 @@ public class TaskExecutor
         return prioritizedSplitRunner.getFinishedFuture();
     }
 
+    public synchronized List<ListenableFuture<?>> forceRunSplit(TaskHandle taskHandle, List<? extends SplitRunner> taskSplits)
+    {
+        List<ListenableFuture<?>> finishedFutures = new ArrayList<>(taskSplits.size());
+        for (SplitRunner taskSplit : taskSplits) {
+            finishedFutures.add(enqueueSplit(taskHandle, taskSplit));
+        }
+        return finishedFutures;
+    }
+
     public synchronized ListenableFuture<?> forceRunSplit(TaskHandle taskHandle, SplitRunner taskSplit)
     {
         PrioritizedSplitRunner prioritizedSplitRunner = new PrioritizedSplitRunner(taskHandle, taskSplit, ticker);
@@ -207,19 +216,22 @@ public class TaskExecutor
         return prioritizedSplitRunner.getFinishedFuture();
     }
 
-    private synchronized void splitFinished(PrioritizedSplitRunner split)
+    private void splitFinished(PrioritizedSplitRunner split)
     {
-        allSplits.remove(split);
-        pendingSplits.remove(split);
+        synchronized (this) {
+            allSplits.remove(split);
 
-        TaskHandle taskHandle = split.getTaskHandle();
-        taskHandle.splitComplete(split);
+            TaskHandle taskHandle = split.getTaskHandle();
+            taskHandle.splitComplete(split);
 
-        wallTime.add(System.nanoTime() - split.createdNanos);
+            wallTime.add(System.nanoTime() - split.createdNanos);
 
-        scheduleTaskIfNecessary(taskHandle);
+            scheduleTaskIfNecessary(taskHandle);
 
-        addNewEntrants();
+            addNewEntrants();
+        }
+        // call destroy outside of synchronized block as it is expensive and doesn't need a lock on the task executor
+        split.destroy();
     }
 
     private synchronized void scheduleTaskIfNecessary(TaskHandle taskHandle)
@@ -283,7 +295,7 @@ public class TaskExecutor
     {
         private final TaskId taskId;
         private final Queue<PrioritizedSplitRunner> queuedSplits = new ArrayDeque<>(10);
-        private final List<PrioritizedSplitRunner> runningSplits = new ArrayList<>(10);
+        private final Set<PrioritizedSplitRunner> runningSplits = new HashSet<>(10);
         private final AtomicLong taskThreadUsageNanos = new AtomicLong();
 
         private final AtomicInteger nextSplitId = new AtomicInteger();
@@ -343,7 +355,6 @@ public class TaskExecutor
         private void splitComplete(PrioritizedSplitRunner split)
         {
             runningSplits.remove(split);
-            split.destroy();
         }
 
         private int getNextSplitId()
@@ -392,7 +403,6 @@ public class TaskExecutor
             this.split = split;
             this.ticker = ticker;
             this.workerId = NEXT_WORKER_ID.getAndIncrement();
-            log.debug("%s created", getInfo());
         }
 
         private TaskHandle getTaskHandle()
@@ -409,8 +419,6 @@ public class TaskExecutor
         {
             if (initialized.compareAndSet(false, true)) {
                 start.set(System.currentTimeMillis());
-                log.debug("%s is starting", getInfo());
-                split.initialize();
             }
         }
 
@@ -423,7 +431,6 @@ public class TaskExecutor
                 log.error(e, "Error closing split for task %s", taskHandle.getTaskId());
             }
             destroyed.set(true);
-            log.debug("%s is finished", getInfo());
         }
 
         public boolean isFinished()
@@ -558,11 +565,12 @@ public class TaskExecutor
                     final PrioritizedSplitRunner split;
                     try {
                         split = pendingSplits.take();
-                        if (split.updatePriorityLevel()) {
-                            // priority level changed, return split to queue for re-prioritization
-                            pendingSplits.put(split);
-                            continue;
-                        }
+                        split.initializeIfNecessary();
+//                        if (split.updatePriorityLevel()) {
+//                            // priority level changed, return split to queue for re-prioritization
+//                            pendingSplits.put(split);
+//                            continue;
+//                        }
                     }
                     catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
@@ -570,18 +578,19 @@ public class TaskExecutor
                     }
 
                     try (SetThreadName splitName = new SetThreadName(split.getTaskHandle().getTaskId() + "-" + split.getSplitId())) {
-                        runningSplits.add(split);
+//                        if (!runningSplits.add(split)) {
+//                            throw new IllegalStateException("Split is already running!");
+//                        }
 
                         boolean finished;
                         ListenableFuture<?> blocked;
-                        try {
-                            split.initializeIfNecessary();
+//                        try {
                             blocked = split.process();
                             finished = split.isFinished();
-                        }
-                        finally {
-                            runningSplits.remove(split);
-                        }
+//                        }
+//                        finally {
+//                            runningSplits.remove(split);
+//                        }
 
                         if (finished) {
                             splitFinished(split);
@@ -606,7 +615,6 @@ public class TaskExecutor
                         }
                     }
                     catch (Throwable t) {
-                        log.error(t, "Error processing %s", split);
                         splitFinished(split);
                     }
                 }
@@ -657,7 +665,8 @@ public class TaskExecutor
     @Managed
     public int getRunningSplits()
     {
-        return runningSplits.size();
+//        return runningSplits.size();
+        return 0;
     }
 
     @Managed

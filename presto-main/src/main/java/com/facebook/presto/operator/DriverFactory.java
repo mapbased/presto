@@ -15,11 +15,14 @@ package com.facebook.presto.operator;
 
 import com.facebook.presto.sql.planner.plan.PlanNodeId;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableList.Builder;
 import com.google.common.collect.ImmutableSet;
 
 import java.io.Closeable;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
@@ -32,6 +35,8 @@ public class DriverFactory
     private final boolean outputDriver;
     private final List<OperatorFactory> operatorFactories;
     private final Set<PlanNodeId> sourceIds;
+
+    private final ReadWriteLock lock = new ReentrantReadWriteLock();
     private boolean closed;
 
     public DriverFactory(boolean inputDriver, boolean outputDriver, OperatorFactory firstOperatorFactory, OperatorFactory... otherOperatorFactories)
@@ -77,24 +82,37 @@ public class DriverFactory
         return sourceIds;
     }
 
-    public synchronized Driver createDriver(DriverContext driverContext)
+    public Driver createDriver(DriverContext driverContext)
     {
-        checkState(!closed, "DriverFactory is already closed");
-        checkNotNull(driverContext, "driverContext is null");
-        ImmutableList.Builder<Operator> operators = ImmutableList.builder();
-        for (OperatorFactory operatorFactory : operatorFactories) {
-            Operator operator = operatorFactory.createOperator(driverContext);
-            operators.add(operator);
+        lock.readLock().lock();
+        try {
+            checkState(!closed, "DriverFactory is already closed");
+            checkNotNull(driverContext, "driverContext is null");
+            Builder<Operator> operators = ImmutableList.builder();
+            for (OperatorFactory operatorFactory : operatorFactories) {
+                Operator operator = operatorFactory.createOperator(driverContext);
+                operators.add(operator);
+            }
+            return new Driver(driverContext, operators.build());
         }
-        return new Driver(driverContext, operators.build());
+        finally {
+            lock.readLock().unlock();
+        }
+
     }
 
     @Override
-    public synchronized void close()
+    public void close()
     {
-        closed = true;
-        for (OperatorFactory operatorFactory : operatorFactories) {
-            operatorFactory.close();
+        lock.writeLock().lock();
+        try {
+            closed = true;
+            for (OperatorFactory operatorFactory : operatorFactories) {
+                operatorFactory.close();
+            }
+        }
+        finally {
+            lock.writeLock().unlock();
         }
     }
 }

@@ -133,8 +133,8 @@ public class PipelineContext
         // remove the memory reservation
         memoryReservation.getAndAdd(-driverStats.getMemoryReservation().toBytes());
 
-        queuedTime.add(driverStats.getQueuedTime().roundTo(NANOSECONDS));
-        elapsedTime.add(driverStats.getElapsedTime().roundTo(NANOSECONDS));
+//        queuedTime.add(driverStats.getQueuedTime().roundTo(NANOSECONDS));
+//        elapsedTime.add(driverStats.getElapsedTime().roundTo(NANOSECONDS));
 
         totalScheduledTime.getAndAdd(driverStats.getTotalScheduledTime().roundTo(NANOSECONDS));
         totalCpuTime.getAndAdd(driverStats.getTotalCpuTime().roundTo(NANOSECONDS));
