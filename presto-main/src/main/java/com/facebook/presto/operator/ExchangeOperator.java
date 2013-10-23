@@ -19,7 +19,6 @@ import com.facebook.presto.sql.planner.plan.PlanNodeId;
 import com.facebook.presto.tuple.TupleInfo;
 import com.google.common.base.Supplier;
 import com.google.common.util.concurrent.ListenableFuture;
-import io.airlift.log.Logger;
 
 import java.net.URI;
 import java.util.List;
@@ -31,7 +30,7 @@ import static com.google.common.base.Preconditions.checkState;
 public class ExchangeOperator
         implements SourceOperator
 {
-    private static final Logger log = Logger.get(ExchangeOperator.class);
+//    private static final Logger log = Logger.get(ExchangeOperator.class);
 
     public static class ExchangeOperatorFactory
             implements SourceOperatorFactory
@@ -152,9 +151,9 @@ public class ExchangeOperator
     public boolean isFinished()
     {
         boolean closed = exchangeClient.isClosed();
-        if (closed) {
-            log.info("Exchange closed %s", operatorContext.getTaskId());
-        }
+//        if (closed) {
+//            log.info("Exchange closed %s", operatorContext.getTaskId());
+//        }
         return closed;
     }
 

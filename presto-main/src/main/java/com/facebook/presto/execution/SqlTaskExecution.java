@@ -43,7 +43,6 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
-import io.airlift.log.Logger;
 import io.airlift.units.DataSize;
 import io.airlift.units.Duration;
 import org.joda.time.DateTime;
@@ -76,8 +75,6 @@ import static java.lang.Math.max;
 public class SqlTaskExecution
         implements TaskExecution
 {
-    private static final Logger log = Logger.get(SqlTaskExecution.class);
-
     private final TaskId taskId;
     private final URI location;
     private final TaskExecutor taskExecutor;
@@ -99,6 +96,7 @@ public class SqlTaskExecution
     // guarded for update only
     @GuardedBy("this")
     private final ConcurrentMap<PlanNodeId, TaskSource> unpartitionedSources = new ConcurrentHashMap<>();
+    private final Executor notificationExecutor;
     @GuardedBy("this")
     private long maxAcknowledgedSplit = Long.MIN_VALUE;
 
@@ -165,6 +163,7 @@ public class SqlTaskExecution
             Executor notificationExecutor,
             boolean cpuTimerEnabled)
     {
+        this.notificationExecutor = notificationExecutor;
         try (SetThreadName setThreadName = new SetThreadName("Task-%s", taskId)) {
             this.taskId = checkNotNull(taskId, "taskId is null");
             this.location = checkNotNull(location, "location is null");
@@ -249,10 +248,12 @@ public class SqlTaskExecution
     private void start()
     {
         // start unpartitioned drivers
+        List<DriverSplitRunner> runners = new ArrayList<>();
         for (Driver driver : unpartitionedDrivers) {
             drivers.add(new WeakReference<>(driver));
-            enqueueDriver(true, new DriverSplitRunner(driver));
+            runners.add(new DriverSplitRunner(driver));
         }
+        enqueueDriver(true, runners);
     }
 
     @Override
@@ -345,11 +346,12 @@ public class SqlTaskExecution
             PlanNodeId sourceId = source.getPlanNodeId();
             if (sourceId.equals(partitionedSourceId)) {
                 // partitioned split
+                List<DriverSplitRunner> runners = new ArrayList<>();
                 for (final ScheduledSplit scheduledSplit : source.getSplits()) {
                     // only add a split if we have not already scheduled it
                     if (scheduledSplit.getSequenceId() > maxAcknowledgedSplit) {
                         // create a new driver for the split
-                        enqueueDriver(false, new DriverSplitRunner(partitionedPipelineContext.addDriverContext(), new Function<DriverContext, Driver>()
+                        runners.add(new DriverSplitRunner(partitionedPipelineContext.addDriverContext(), new Function<DriverContext, Driver>()
                         {
                             @Override
                             public Driver apply(DriverContext driverContext)
@@ -362,6 +364,7 @@ public class SqlTaskExecution
                     }
                 }
 
+                enqueueDriver(false, runners);
                 if (source.isNoMoreSplits()) {
                     noMorePartitionedSplits.set(true);
                     checkNoMorePartitionedSplits();
@@ -407,57 +410,61 @@ public class SqlTaskExecution
         }
     }
 
-    private synchronized void enqueueDriver(boolean forceRunSplit, final DriverSplitRunner splitRunner)
+    private synchronized void enqueueDriver(boolean forceRunSplit, List<DriverSplitRunner> runners)
     {
         // schedule driver to be executed
-        ListenableFuture<?> finishedFuture;
+        List<ListenableFuture<?>> finishedFutures;
         if (forceRunSplit) {
-            finishedFuture = taskExecutor.forceRunSplit(taskHandle, splitRunner);
+            finishedFutures = taskExecutor.forceRunSplit(taskHandle, runners);
         }
         else {
-            finishedFuture = taskExecutor.enqueueSplit(taskHandle, splitRunner);
+            finishedFutures = taskExecutor.forceRunSplit(taskHandle, runners);
         }
+        checkState(finishedFutures.size() == runners.size(), "Expected %s futures but got %s", runners.size(), finishedFutures.size());
 
-        // record new driver
-        remainingDriverCount.incrementAndGet();
+        // record new drivers
+        remainingDriverCount.addAndGet(finishedFutures.size());
 
         // when driver completes, update state and fire events
-        Futures.addCallback(finishedFuture, new FutureCallback<Object>()
-        {
-            @Override
-            public void onSuccess(Object result)
+        for (int i = 0; i < finishedFutures.size(); i++) {
+            ListenableFuture<?> finishedFuture = finishedFutures.get(i);
+            final DriverSplitRunner splitRunner = runners.get(i);
+            Futures.addCallback(finishedFuture, new FutureCallback<Object>()
             {
-                try (SetThreadName setThreadName = new SetThreadName("Task-%s", taskId)) {
-                    // if all drivers have been created, close the factory so it can perform cleanup
-                    int runningCount = remainingDriverCount.decrementAndGet();
-                    if (runningCount <= 0) {
-                        checkNoMorePartitionedSplits();
+                @Override
+                public void onSuccess(Object result)
+                {
+                    try (SetThreadName setThreadName = new SetThreadName("Task-%s", taskId)) {
+                        // if all drivers have been created, close the factory so it can perform cleanup
+                        int runningCount = remainingDriverCount.decrementAndGet();
+                        if (runningCount <= 0) {
+                            checkNoMorePartitionedSplits();
+                        }
+
+                        checkTaskCompletion();
+
+//                        queryMonitor.splitCompletionEvent(taskId, splitRunner.getDriverContext().getDriverStats());
                     }
-
-                    log.info("Task %s: driver finished", taskId);
-                    checkTaskCompletion();
-
-                    queryMonitor.splitCompletionEvent(taskId, splitRunner.getDriverContext().getDriverStats());
                 }
-            }
 
-            @Override
-            public void onFailure(Throwable cause)
-            {
-                try (SetThreadName setThreadName = new SetThreadName("Task-%s", taskId)) {
-                    taskStateMachine.failed(cause);
+                @Override
+                public void onFailure(Throwable cause)
+                {
+                    try (SetThreadName setThreadName = new SetThreadName("Task-%s", taskId)) {
+                        taskStateMachine.failed(cause);
 
-                    // record driver is finished
-                    remainingDriverCount.decrementAndGet();
+                        // record driver is finished
+                        remainingDriverCount.decrementAndGet();
 
-                    // check if partitioned driver
-                    checkNoMorePartitionedSplits();
+                        // check if partitioned driver
+                        checkNoMorePartitionedSplits();
 
-                    // todo add failure info to split completion event
-                    queryMonitor.splitFailedEvent(taskId, splitRunner.getDriverContext().getDriverStats(), cause);
+                        // todo add failure info to split completion event
+//                        queryMonitor.splitFailedEvent(taskId, splitRunner.getDriverContext().getDriverStats(), cause);
+                    }
                 }
-            }
-        });
+            }, notificationExecutor);
+        }
     }
 
     private void checkNoMorePartitionedSplits()
@@ -465,7 +472,6 @@ public class SqlTaskExecution
         // todo this is not exactly correct, we should be closing when all drivers have been created, but
         // we check against running count which means we are waiting until all drivers are finished
         if (partitionedDriverFactory != null && noMorePartitionedSplits.get() && remainingDriverCount.get() <= 0) {
-            log.info("Task %s: all drivers finished", taskId);
             partitionedDriverFactory.close();
         }
     }
@@ -527,7 +533,6 @@ public class SqlTaskExecution
 
         // are there still pages in the output buffer
         if (!sharedBuffer.isFinished()) {
-            log.info("Task %s: waiting for pages to be flushed", taskId);
             return;
         }
 
@@ -594,6 +599,7 @@ public class SqlTaskExecution
         private final DriverContext driverContext;
         private final Function<? super DriverContext, Driver> driverSupplier;
         private Driver driver;
+        private boolean initCalled;
 
         public DriverSplitRunner(Driver driver)
         {
@@ -614,7 +620,6 @@ public class SqlTaskExecution
         @Override
         public synchronized void initialize()
         {
-            driver = driverSupplier.apply(driverContext);
         }
 
         @Override
@@ -626,12 +631,28 @@ public class SqlTaskExecution
         @Override
         public ListenableFuture<?> processFor(Duration duration)
         {
+            Driver driver;
+            synchronized (this) {
+                if (this.driver == null) {
+                    initCalled = true;
+                    this.driver = driverSupplier.apply(driverContext);
+                    checkNotNull(this.driver, "driver is null");
+                }
+                driver = this.driver;
+            }
+
+            checkNotNull(driver, "driver is null");
+            checkNotNull(duration, "duration is null");
             return driver.processFor(duration);
         }
 
         @Override
         public void close()
         {
+            Driver driver;
+            synchronized (this) {
+                driver = this.driver;
+            }
             if (driver != null) {
                 driver.close();
             }

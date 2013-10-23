@@ -24,7 +24,7 @@ import java.util.concurrent.TimeUnit;
 
 public class QueryManagerConfig
 {
-    private int maxPendingSplitsPerNode = 100;
+    private int maxPendingSplitsPerNode = 1000;
 
     private int initialHashPartitions = 8;
     private Duration maxQueryAge = new Duration(15, TimeUnit.MINUTES);
