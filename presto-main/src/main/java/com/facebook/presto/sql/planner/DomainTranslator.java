@@ -19,7 +19,6 @@ import com.facebook.presto.spi.Domain;
 import com.facebook.presto.spi.Domains;
 import com.facebook.presto.spi.Range;
 import com.facebook.presto.spi.SortedRangeSet;
-import com.facebook.presto.sql.ExpressionUtils;
 import com.facebook.presto.sql.analyzer.Type;
 import com.facebook.presto.sql.tree.AstVisitor;
 import com.facebook.presto.sql.tree.BetweenPredicate;
@@ -33,13 +32,13 @@ import com.facebook.presto.sql.tree.IsNotNullPredicate;
 import com.facebook.presto.sql.tree.IsNullPredicate;
 import com.facebook.presto.sql.tree.Literal;
 import com.facebook.presto.sql.tree.LogicalBinaryExpression;
+import com.facebook.presto.sql.tree.LongLiteral;
 import com.facebook.presto.sql.tree.NotExpression;
 import com.facebook.presto.sql.tree.NullLiteral;
 import com.facebook.presto.sql.tree.QualifiedNameReference;
 import com.google.common.base.Function;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.Iterables;
 import com.google.common.collect.Maps;
 import com.google.common.math.DoubleMath;
 import io.airlift.slice.Slice;
@@ -50,10 +49,15 @@ import java.util.List;
 import java.util.Map;
 
 import static com.facebook.presto.spi.Domains.valueToColumnValue;
+import static com.facebook.presto.sql.ExpressionUtils.and;
 import static com.facebook.presto.sql.ExpressionUtils.combineConjuncts;
 import static com.facebook.presto.sql.ExpressionUtils.combineDisjunctsWithDefault;
+import static com.facebook.presto.sql.ExpressionUtils.or;
 import static com.facebook.presto.sql.planner.LiteralInterpreter.toExpression;
+import static com.facebook.presto.sql.tree.BooleanLiteral.FALSE_LITERAL;
 import static com.facebook.presto.sql.tree.BooleanLiteral.TRUE_LITERAL;
+import static com.facebook.presto.sql.tree.ComparisonExpression.Type.EQUAL;
+import static com.facebook.presto.sql.tree.ComparisonExpression.Type.NOT_EQUAL;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
@@ -81,7 +85,7 @@ public final class DomainTranslator
     private static Expression domainToPredicate(QualifiedNameReference reference, Domain<?> domain)
     {
         if (domain.getRanges().isEmpty()) {
-            return domain.isNullAllowed() ? new IsNullPredicate(reference) : BooleanLiteral.FALSE_LITERAL;
+            return domain.isNullAllowed() ? new IsNullPredicate(reference) : FALSE_LITERAL;
         }
 
         Range<? extends Comparable<?>> firstRange = domain.getRanges().iterator().next();
@@ -135,7 +139,7 @@ public final class DomainTranslator
 
         // Add back all of the possible single values either as an equality or an IN predicate
         if (singleValues.size() == 1) {
-            disjuncts.add(new ComparisonExpression(ComparisonExpression.Type.EQUAL, reference, getOnlyElement(singleValues)));
+            disjuncts.add(new ComparisonExpression(EQUAL, reference, getOnlyElement(singleValues)));
         }
         else if (singleValues.size() > 1) {
             disjuncts.add(new InPredicate(reference, new InListExpression(singleValues)));
@@ -157,11 +161,11 @@ public final class DomainTranslator
      */
     public static ExtractionResult fromPredicate(Expression predicate, Map<Symbol, Type> types)
     {
-        return new Visitor(types).process(predicate, null);
+        return new Visitor(types).process(predicate, false);
     }
 
     private static class Visitor
-            extends AstVisitor<ExtractionResult, Void>
+            extends AstVisitor<ExtractionResult, Boolean>
     {
         private final Map<Symbol, Type> types;
 
@@ -189,19 +193,36 @@ public final class DomainTranslator
             }));
         }
 
-        @Override
-        protected ExtractionResult visitExpression(Expression node, Void context)
+        private static <T extends Comparable<? super T>> SortedRangeSet<T> complementIfNecessary(SortedRangeSet<T> range, boolean complement)
         {
-            return new ExtractionResult(ImmutableMap.<Symbol, Domain<?>>of(), node);
+            return complement ? range.complement() : range;
+        }
+
+        private static <T extends Comparable<? super T>> Domain<T> complementIfNecessary(Domain<T> domain, boolean complement)
+        {
+            return complement ? domain.complement() : domain;
+        }
+
+        private static Expression complementIfNecessary(Expression expression, boolean complement)
+        {
+            return complement ? new NotExpression(expression) : expression;
         }
 
         @Override
-        protected ExtractionResult visitLogicalBinaryExpression(LogicalBinaryExpression node, Void context)
+        protected ExtractionResult visitExpression(Expression node, Boolean complement)
         {
-            ExtractionResult leftResult = process(node.getLeft(), context);
-            ExtractionResult rightResult = process(node.getRight(), context);
+            // Default response if we don't know how to process this node
+            return new ExtractionResult(ImmutableMap.<Symbol, Domain<?>>of(), complementIfNecessary(node, complement));
+        }
 
-            switch (node.getType()) {
+        @Override
+        protected ExtractionResult visitLogicalBinaryExpression(LogicalBinaryExpression node, Boolean complement)
+        {
+            ExtractionResult leftResult = process(node.getLeft(), complement);
+            ExtractionResult rightResult = process(node.getRight(), complement);
+
+            LogicalBinaryExpression.Type type = complement ? flipLogicalBinaryType(node.getType()) : node.getType();
+            switch (type) {
                 case AND:
                     return new ExtractionResult(
                             Domains.intersectDomainMaps(leftResult.getDomainMap(), rightResult.getDomainMap()),
@@ -213,7 +234,7 @@ public final class DomainTranslator
                     // In most cases, the unionedDomainMap is not able to completely reflect all of the constraints of the current Expression node,
                     // and so we can return the current node as the remainingExpression so that all bounds will be double checked again at run time.
                     // However, there are a few cases that we can optimize where we can simplify the remainingExpression.
-                    Expression remainingExpression = node;
+                    Expression remainingExpression = complementIfNecessary(node, complement);
                     // Since we generally aren't able to process the remaining expressions at this point, we can only make inferences if the remaining expressions
                     // on both side are equal and deterministic
                     if (leftResult.getRemainingExpression().equals(rightResult.getRemainingExpression()) &&
@@ -237,29 +258,29 @@ public final class DomainTranslator
             }
         }
 
-        @Override
-        protected ExtractionResult visitNotExpression(NotExpression node, Void context)
+        private static LogicalBinaryExpression.Type flipLogicalBinaryType(LogicalBinaryExpression.Type type)
         {
-            ExtractionResult result = process(node.getValue(), context);
-
-            if (result.getDomainMap().isEmpty()) {
-                return new ExtractionResult(ImmutableMap.<Symbol, Domain<?>>of(), new NotExpression(result.getRemainingExpression()));
+            switch (type) {
+                case AND:
+                    return LogicalBinaryExpression.Type.OR;
+                case OR:
+                    return LogicalBinaryExpression.Type.AND;
+                default:
+                    throw new AssertionError("Unknown type: " + type);
             }
-
-            // The only meaningful extraction with a NOT is if there is only one result Symbol in the underlying domain and no remainingExpressions
-            if (result.getDomainMap().size() == 1 && result.getRemainingExpression().equals(TRUE_LITERAL)) {
-                Map.Entry<Symbol, Domain<?>> entry = Iterables.getOnlyElement(result.getDomainMap().entrySet());
-                return new ExtractionResult(ImmutableMap.<Symbol, Domain<?>>of(entry.getKey(), entry.getValue().complement()), TRUE_LITERAL);
-            }
-
-            return new ExtractionResult(ImmutableMap.<Symbol, Domain<?>>of(), node);
         }
 
         @Override
-        protected ExtractionResult visitComparisonExpression(ComparisonExpression node, Void context)
+        protected ExtractionResult visitNotExpression(NotExpression node, Boolean complement)
+        {
+            return process(node.getValue(), !complement);
+        }
+
+        @Override
+        protected ExtractionResult visitComparisonExpression(ComparisonExpression node, Boolean complement)
         {
             if (!isSimpleComparison(node)) {
-                return super.visitComparisonExpression(node, context);
+                return super.visitComparisonExpression(node, complement);
             }
             node = normalizeSimpleComparison(node);
 
@@ -270,7 +291,7 @@ public final class DomainTranslator
             // Handle the cases where implicit coercions can happen in comparisons
             // TODO: how to abstract this out
             if (value instanceof Double && columnType == ColumnType.LONG) {
-                return process(coerceDoubleToLongComparison(node), context);
+                return process(coerceDoubleToLongComparison(node), complement);
             }
             if (value instanceof Long && columnType == ColumnType.DOUBLE) {
                 value = ((Long) value).doubleValue();
@@ -278,10 +299,10 @@ public final class DomainTranslator
             if (value instanceof Slice) {
                 value = ((Slice) value).toStringUtf8();
             }
-            return createComparisonExtractionResult(node.getType(), symbol, valueToColumnValue(columnType.getNativeType(), value));
+            return createComparisonExtractionResult(node.getType(), symbol, valueToColumnValue(columnType.getNativeType(), value), complement);
         }
 
-        private <T extends Comparable<? super T>> ExtractionResult createComparisonExtractionResult(ComparisonExpression.Type type, Symbol symbol, ColumnValue<T> columnValue)
+        private <T extends Comparable<? super T>> ExtractionResult createComparisonExtractionResult(ComparisonExpression.Type type, Symbol symbol, ColumnValue<T> columnValue, boolean complement)
         {
             T value = columnValue.get();
             ColumnType columnType = checkedTypeLookup(symbol);
@@ -296,7 +317,8 @@ public final class DomainTranslator
                         return new ExtractionResult(noneDomainMap(), TRUE_LITERAL);
 
                     case IS_DISTINCT_FROM:
-                        return new ExtractionResult(ImmutableMap.<Symbol, Domain<?>>of(symbol, Domain.create(SortedRangeSet.of(Range.all(columnType.getNativeType())), false)), TRUE_LITERAL);
+                        Domain<?> domain = complementIfNecessary(Domain.notNull(columnType.getNativeType()), complement);
+                        return new ExtractionResult(ImmutableMap.<Symbol, Domain<?>>of(symbol, domain), TRUE_LITERAL);
 
                     default:
                         throw new AssertionError("Unhandled type: " + type);
@@ -306,122 +328,101 @@ public final class DomainTranslator
             Domain<?> domain;
             switch (type) {
                 case EQUAL:
-                    domain = Domain.create(SortedRangeSet.of(Range.equal(value)), false);
+                    domain = Domain.create(complementIfNecessary(SortedRangeSet.of(Range.equal(value)), complement), false);
                     break;
                 case GREATER_THAN:
-                    domain = Domain.create(SortedRangeSet.of(Range.greaterThan(value)), false);
+                    domain = Domain.create(complementIfNecessary(SortedRangeSet.of(Range.greaterThan(value)), complement), false);
                     break;
                 case GREATER_THAN_OR_EQUAL:
-                    domain = Domain.create(SortedRangeSet.of(Range.greaterThanOrEqual(value)), false);
+                    domain = Domain.create(complementIfNecessary(SortedRangeSet.of(Range.greaterThanOrEqual(value)), complement), false);
                     break;
                 case LESS_THAN:
-                    domain = Domain.create(SortedRangeSet.of(Range.lessThan(value)), false);
+                    domain = Domain.create(complementIfNecessary(SortedRangeSet.of(Range.lessThan(value)), complement), false);
                     break;
                 case LESS_THAN_OR_EQUAL:
-                    domain = Domain.create(SortedRangeSet.of(Range.lessThanOrEqual(value)), false);
+                    domain = Domain.create(complementIfNecessary(SortedRangeSet.of(Range.lessThanOrEqual(value)), complement), false);
                     break;
                 case NOT_EQUAL:
-                    domain = Domain.create(SortedRangeSet.of(Range.lessThan(value), Range.greaterThan(value)), false);
+                    domain = Domain.create(complementIfNecessary(SortedRangeSet.of(Range.lessThan(value), Range.greaterThan(value)), complement), false);
                     break;
                 case IS_DISTINCT_FROM:
-                    domain = Domain.create(SortedRangeSet.of(Range.lessThan(value), Range.greaterThan(value)), true);
+                    // Need to potential complement the whole domain for IS_DISTINCT_FROM since it is null-aware
+                    domain = complementIfNecessary(Domain.create(SortedRangeSet.of(Range.lessThan(value), Range.greaterThan(value)), true), complement);
                     break;
                 default:
                     throw new AssertionError("Unhandled type: " + type);
             }
+
             return new ExtractionResult(ImmutableMap.<Symbol, Domain<?>>of(symbol, domain), TRUE_LITERAL);
         }
 
         @Override
-        protected ExtractionResult visitInPredicate(InPredicate node, Void context)
+        protected ExtractionResult visitInPredicate(InPredicate node, Boolean complement)
         {
-            if (node.getValue() instanceof QualifiedNameReference && node.getValueList() instanceof InListExpression) {
-                Symbol symbol = Symbol.fromQualifiedName(((QualifiedNameReference) node.getValue()).getName());
-                ColumnType columnType = checkedTypeLookup(symbol);
-
-                SortedRangeSet.Builder<?> builder = SortedRangeSet.builder(columnType.getNativeType());
-                InListExpression valueList = (InListExpression) node.getValueList();
-                for (Expression listValue : valueList.getValues()) {
-                    if (!(listValue instanceof Literal)) {
-                        // Do not translate if any values are non-literal
-                        // TODO: considering ORing the non-literal values with the constructed domains
-                        return super.visitInPredicate(node, context);
-                    }
-                    Object rawValue = LiteralInterpreter.evaluate(listValue);
-                    // Ignore any NULLs in the value list as those can never produce true results
-                    if (rawValue != null) {
-                        if (rawValue instanceof Double && columnType == ColumnType.LONG) {
-                            Long roundedLong = DoubleMath.roundToLong((Double) rawValue, RoundingMode.FLOOR);
-                            if (roundedLong.doubleValue() != rawValue) {
-                                // Coercion to long changed the double value, and so no match is possible
-                                continue;
-                            }
-                            rawValue = roundedLong;
-                        }
-                        else if (rawValue instanceof Long && columnType == ColumnType.DOUBLE) {
-                            rawValue = ((Long) rawValue).doubleValue();
-                        }
-                        else if (rawValue instanceof Slice) {
-                            rawValue = ((Slice) rawValue).toStringUtf8();
-                        }
-
-                        builder.add(Range.valueEqual(valueToColumnValue(columnType.getNativeType(), rawValue)));
-                    }
-                }
-                return new ExtractionResult(ImmutableMap.<Symbol, Domain<?>>of(symbol, Domain.create(builder.build(), false)), TRUE_LITERAL);
+            if (!(node.getValue() instanceof QualifiedNameReference) || !(node.getValueList() instanceof InListExpression)) {
+                return super.visitInPredicate(node, complement);
             }
-            return super.visitInPredicate(node, context);
+
+            InListExpression valueList = (InListExpression) node.getValueList();
+            checkState(!valueList.getValues().isEmpty(), "InListExpression should never be empty");
+
+            ImmutableList.Builder<Expression> disjuncts = ImmutableList.builder();
+            for (Expression expression : valueList.getValues()) {
+                disjuncts.add(new ComparisonExpression(EQUAL, node.getValue(), expression));
+            }
+            return process(or(disjuncts.build()), complement);
         }
 
         @Override
-        protected ExtractionResult visitBetweenPredicate(BetweenPredicate node, Void context)
+        protected ExtractionResult visitBetweenPredicate(BetweenPredicate node, Boolean complement)
         {
             // Re-write as two comparison expressions
-            return process(ExpressionUtils.and(
+            return process(and(
                     new ComparisonExpression(ComparisonExpression.Type.GREATER_THAN_OR_EQUAL, node.getValue(), node.getMin()),
-                    new ComparisonExpression(ComparisonExpression.Type.LESS_THAN_OR_EQUAL, node.getValue(), node.getMax())), context);
+                    new ComparisonExpression(ComparisonExpression.Type.LESS_THAN_OR_EQUAL, node.getValue(), node.getMax())), complement);
         }
 
         @Override
-        protected ExtractionResult visitIsNullPredicate(IsNullPredicate node, Void context)
+        protected ExtractionResult visitIsNullPredicate(IsNullPredicate node, Boolean complement)
         {
-            if (node.getValue() instanceof QualifiedNameReference) {
-                Symbol symbol = Symbol.fromQualifiedName(((QualifiedNameReference) node.getValue()).getName());
-                ColumnType columnType = checkedTypeLookup(symbol);
-                return new ExtractionResult(ImmutableMap.<Symbol, Domain<?>>of(symbol, Domain.onlyNull(columnType.getNativeType())), TRUE_LITERAL);
+            if (!(node.getValue() instanceof QualifiedNameReference)) {
+                return super.visitIsNullPredicate(node, complement);
             }
-            return super.visitIsNullPredicate(node, context);
+
+            Symbol symbol = Symbol.fromQualifiedName(((QualifiedNameReference) node.getValue()).getName());
+            ColumnType columnType = checkedTypeLookup(symbol);
+            Domain<?> domain = complementIfNecessary(Domain.onlyNull(columnType.getNativeType()), complement);
+            return new ExtractionResult(ImmutableMap.<Symbol, Domain<?>>of(symbol, domain), TRUE_LITERAL);
         }
 
         @Override
-        protected ExtractionResult visitIsNotNullPredicate(IsNotNullPredicate node, Void context)
+        protected ExtractionResult visitIsNotNullPredicate(IsNotNullPredicate node, Boolean complement)
         {
-            if (node.getValue() instanceof QualifiedNameReference) {
-                Symbol symbol = Symbol.fromQualifiedName(((QualifiedNameReference) node.getValue()).getName());
-                ColumnType columnType = checkedTypeLookup(symbol);
-                return new ExtractionResult(ImmutableMap.<Symbol, Domain<?>>of(symbol,
-                        Domain.create(SortedRangeSet.of(Range.all(columnType.getNativeType())), false)),
-                        TRUE_LITERAL);
+            if (!(node.getValue() instanceof QualifiedNameReference)) {
+                return super.visitIsNotNullPredicate(node, complement);
             }
-            return super.visitIsNotNullPredicate(node, context);
+
+            Symbol symbol = Symbol.fromQualifiedName(((QualifiedNameReference) node.getValue()).getName());
+            ColumnType columnType = checkedTypeLookup(symbol);
+            Domain<?> domain = complementIfNecessary(Domain.notNull(columnType.getNativeType()), complement);
+            return new ExtractionResult(ImmutableMap.<Symbol, Domain<?>>of(symbol, domain), TRUE_LITERAL);
         }
 
         @Override
-        protected ExtractionResult visitBooleanLiteral(BooleanLiteral node, Void context)
+        protected ExtractionResult visitBooleanLiteral(BooleanLiteral node, Boolean complement)
         {
-            // TODO: test these with AND and OR
-            return new ExtractionResult(node.getValue() ? ImmutableMap.<Symbol, Domain<?>>of() : noneDomainMap(), TRUE_LITERAL);
+            boolean value = complement ? !node.getValue() : node.getValue();
+            return new ExtractionResult(value ? ImmutableMap.<Symbol, Domain<?>>of() : noneDomainMap(), TRUE_LITERAL);
         }
 
         @Override
-        protected ExtractionResult visitNullLiteral(NullLiteral node, Void context)
+        protected ExtractionResult visitNullLiteral(NullLiteral node, Boolean complement)
         {
-            // TODO: test these with AND and OR
             return new ExtractionResult(noneDomainMap(), TRUE_LITERAL);
         }
     }
 
-    public static boolean isSimpleComparison(ComparisonExpression comparison)
+    private static boolean isSimpleComparison(ComparisonExpression comparison)
     {
         return (comparison.getLeft() instanceof QualifiedNameReference && comparison.getRight() instanceof Literal) ||
                 (comparison.getLeft() instanceof Literal && comparison.getRight() instanceof QualifiedNameReference);
@@ -430,7 +431,7 @@ public final class DomainTranslator
     /**
      * Normalize a simple comparison between a QualifiedNameReference and a Literal such that the QualifiedNameReference will always be on the left and the Literal on the right.
      */
-    public static ComparisonExpression normalizeSimpleComparison(ComparisonExpression comparison)
+    private static ComparisonExpression normalizeSimpleComparison(ComparisonExpression comparison)
     {
         if (comparison.getLeft() instanceof QualifiedNameReference && comparison.getRight() instanceof Literal) {
             return comparison;
@@ -482,14 +483,18 @@ public final class DomainTranslator
             case EQUAL:
                 Long equalValue = DoubleMath.roundToLong(value, RoundingMode.FLOOR);
                 if (equalValue.doubleValue() != value) {
-                    return BooleanLiteral.FALSE_LITERAL;
+                    // Return something that is false for all non-null values
+                    return and(new ComparisonExpression(EQUAL, reference, new LongLiteral("0")),
+                            new ComparisonExpression(NOT_EQUAL, reference, new LongLiteral("0")));
                 }
                 return new ComparisonExpression(comparison.getType(), reference, toExpression(equalValue));
 
             case NOT_EQUAL:
                 Long notEqualValue = DoubleMath.roundToLong(value, RoundingMode.FLOOR);
                 if (notEqualValue.doubleValue() != value) {
-                    return TRUE_LITERAL;
+                    // Return something that is true for all non-null values
+                    return or(new ComparisonExpression(EQUAL, reference, new LongLiteral("0")),
+                            new ComparisonExpression(NOT_EQUAL, reference, new LongLiteral("0")));
                 }
                 return new ComparisonExpression(comparison.getType(), reference, toExpression(notEqualValue));
 
