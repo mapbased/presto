@@ -13,7 +13,6 @@
  */
 package com.facebook.presto.split;
 
-import com.facebook.presto.execution.DataSource;
 import com.facebook.presto.metadata.DatabaseShardManager;
 import com.facebook.presto.metadata.InMemoryNodeManager;
 import com.facebook.presto.metadata.MetadataManager;
@@ -24,18 +23,19 @@ import com.facebook.presto.metadata.NodeVersion;
 import com.facebook.presto.metadata.ShardManager;
 import com.facebook.presto.spi.ColumnHandle;
 import com.facebook.presto.spi.ColumnType;
-import com.facebook.presto.spi.ConnectorSplitManager;
 import com.facebook.presto.spi.Domain;
+import com.facebook.presto.spi.Domains;
 import com.facebook.presto.spi.Partition;
 import com.facebook.presto.spi.PartitionKey;
 import com.facebook.presto.spi.PartitionResult;
+import com.facebook.presto.spi.Range;
+import com.facebook.presto.spi.SortedRangeSet;
 import com.facebook.presto.spi.Split;
 import com.facebook.presto.spi.TableHandle;
 import com.facebook.presto.spi.TableMetadata;
-import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Iterables;
 import com.google.common.io.Files;
 import io.airlift.testing.FileUtils;
 import org.skife.jdbi.v2.DBI;
@@ -54,6 +54,7 @@ import java.util.UUID;
 import static com.facebook.presto.spi.ColumnType.LONG;
 import static com.facebook.presto.spi.ColumnType.STRING;
 import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.assertTrue;
 
 public class TestNativeSplitManager
 {
@@ -66,10 +67,8 @@ public class TestNativeSplitManager
     private Handle dummyHandle;
     private File dataDir;
     private NativeSplitManager nativeSplitManager;
-    private SplitManager splitManager;
     private TableHandle tableHandle;
     private ColumnHandle dsColumnHandle;
-    private ColumnHandle fooColumnHandle;
 
     @BeforeMethod
     public void setup()
@@ -89,7 +88,6 @@ public class TestNativeSplitManager
 
         tableHandle = metadataManager.createTable("local", TEST_TABLE);
         dsColumnHandle = metadataManager.getColumnHandle(tableHandle, "ds").get();
-        fooColumnHandle = metadataManager.getColumnHandle(tableHandle, "foo").get();
 
         long shardId1 = shardManager.allocateShard(tableHandle);
         long shardId2 = shardManager.allocateShard(tableHandle);
@@ -102,7 +100,6 @@ public class TestNativeSplitManager
         shardManager.commitPartition(tableHandle, "ds=2", ImmutableList.<PartitionKey>of(new NativePartitionKey("ds=2", "ds", ColumnType.STRING, "2")), ImmutableMap.of(shardId4, nodeName));
 
         nativeSplitManager = new NativeSplitManager(nodeManager, shardManager, metadataManager);
-        splitManager = new SplitManager(ImmutableSet.<ConnectorSplitManager>of(nativeSplitManager));
     }
 
     @AfterMethod
@@ -113,56 +110,17 @@ public class TestNativeSplitManager
     }
 
     @Test
-    public void testNoPruning()
+    public void testSanity()
     {
-        PartitionResult partitionResult = splitManager.getPartitions(tableHandle, Optional.<Map<ColumnHandle, Domain<?>>>absent());
+        PartitionResult partitionResult = nativeSplitManager.getPartitions(tableHandle, ImmutableMap.<ColumnHandle, Domain<?>>of());
         assertEquals(partitionResult.getPartitions().size(), 2);
+        assertTrue(partitionResult.getUndeterminedDomains().isEmpty());
 
-        DataSource dataSource = splitManager.getPartitionSplits(tableHandle, partitionResult.getPartitions());
-        List<Split> splits = ImmutableList.copyOf(dataSource.getSplits());
-        assertEquals(splits.size(), 4);
-    }
+        List<Partition> partitions = partitionResult.getPartitions();
+        Map<ColumnHandle, Domain<?>> intersectedDomainMap = Domains.unionDomainMaps(partitions.get(0).getDomainMap(), partitions.get(1).getDomainMap());
+        assertEquals(intersectedDomainMap, ImmutableMap.of(dsColumnHandle, Domain.create(SortedRangeSet.of(Range.equal("1"), Range.equal("2")), false)));
 
-    @Test
-    public void testPruneNoMatch()
-    {
-        PartitionResult partitionResult = splitManager.getPartitions(tableHandle, Optional.<Map<ColumnHandle, Domain<?>>>of(ImmutableMap.<ColumnHandle, Domain<?>>of(dsColumnHandle,
-                Domain.single("foo"))));
-        assertEquals(partitionResult.getPartitions().size(), 2);
-
-        // ds=3. No partition will match this.
-        List<Partition> partitions = splitManager.getPartitions(tableHandle, Optional.<Map<ColumnHandle, Domain<?>>>of(ImmutableMap.<ColumnHandle, Domain<?>>of(dsColumnHandle, Domain.single("3")))).getPartitions();
-        DataSource dataSource = splitManager.getPartitionSplits(tableHandle, partitions);
-        List<Split> splits = ImmutableList.copyOf(dataSource.getSplits());
-        // no splits found
-        assertEquals(splits.size(), 0);
-    }
-
-    @Test
-    public void testPruneMatch()
-    {
-        PartitionResult partitionResult = splitManager.getPartitions(tableHandle, Optional.<Map<ColumnHandle, Domain<?>>>of(ImmutableMap.<ColumnHandle, Domain<?>>of(dsColumnHandle, Domain.single("1"))));
-        assertEquals(partitionResult.getPartitions().size(), 2);
-
-        // ds=1. One partition with three splits will match this.
-        List<Partition> partitions = splitManager.getPartitions(tableHandle, Optional.<Map<ColumnHandle, Domain<?>>>of(ImmutableMap.<ColumnHandle, Domain<?>>of(dsColumnHandle, Domain.single("1")))).getPartitions();
-        DataSource dataSource = splitManager.getPartitionSplits(tableHandle, partitions);
-        List<Split> splits = ImmutableList.copyOf(dataSource.getSplits());
-        // three splits found
-        assertEquals(splits.size(), 3);
-    }
-
-    @Test
-    public void testNoPruneUnknown()
-    {
-        PartitionResult partitionResult = splitManager.getPartitions(tableHandle, Optional.<Map<ColumnHandle, Domain<?>>>of(ImmutableMap.<ColumnHandle, Domain<?>>of(dsColumnHandle, Domain.single("foo"))));
-        assertEquals(partitionResult.getPartitions().size(), 2);
-
-        // foo=bar. Not a prunable column
-        List<Partition> partitions = splitManager.getPartitions(tableHandle, Optional.<Map<ColumnHandle, Domain<?>>>of(ImmutableMap.<ColumnHandle, Domain<?>>of(fooColumnHandle, Domain.single("bar")))).getPartitions();
-        DataSource dataSource = splitManager.getPartitionSplits(tableHandle, partitions);
-        List<Split> splits = ImmutableList.copyOf(dataSource.getSplits());
-        // all splits found
-        assertEquals(splits.size(), 4);
+        Iterable<Split> splits = nativeSplitManager.getPartitionSplits(tableHandle, partitions);
+        assertEquals(Iterables.size(splits), 4);
     }
 }
