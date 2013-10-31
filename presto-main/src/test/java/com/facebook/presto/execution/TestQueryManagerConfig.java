@@ -30,7 +30,7 @@ public class TestQueryManagerConfig
                 .setMaxQueryAge(new Duration(15, TimeUnit.MINUTES))
                 .setMaxQueryHistory(100)
                 .setClientTimeout(new Duration(5, TimeUnit.MINUTES))
-                .setMaxPendingSplitsPerNode(100)
+                .setMaxPendingSplitsPerNode(1000)
                 .setInitialHashPartitions(8)
                 .setQueryManagerExecutorPoolSize(5)
                 .setRemoteTaskMaxConsecutiveErrorCount(10)
