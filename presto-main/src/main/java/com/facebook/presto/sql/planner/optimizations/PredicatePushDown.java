@@ -748,10 +748,8 @@ public class PredicatePushDown
         @Override
         public PlanNode rewriteTableScan(TableScanNode node, Expression inheritedPredicate, PlanRewriter<Expression> planRewriter)
         {
-            List<Expression> postScanFilters = new ArrayList<>();
-
             DomainTranslator.ExtractionResult extractionResult = DomainTranslator.fromPredicate(inheritedPredicate, symbolAllocator.getTypes());
-            postScanFilters.add(extractionResult.getRemainingExpression());
+            Expression extractionRemainingExpression = extractionResult.getRemainingExpression();
 
             // Filter out extraneous symbols from the domainMap and convert it to be in terms of ColumnHandles
             Map<ColumnHandle, Domain<?>> domainMap = DomainUtils.symbolToColumnHandle(
@@ -772,10 +770,10 @@ public class PredicatePushDown
             Map<ColumnHandle, Domain<?>> unevaluatedDomains = matchingPartitions.getUndeterminedDomains();
             log.debug("Partition retrieval, table %s (%d partitions): %dms", node.getTable(), partitions.size(), partitionTimer.elapsed(TimeUnit.MILLISECONDS));
 
-            // Add the unevaluatedDomains back as a postScanFilter
-            postScanFilters.add(DomainTranslator.toPredicate(DomainUtils.columnHandleToSymbol(unevaluatedDomains, node.getAssignments())));
+            Expression unevaluatedDomainPredicate = DomainTranslator.toPredicate(DomainUtils.columnHandleToSymbol(unevaluatedDomains, node.getAssignments()));
 
-            Expression postScanPredicate = combineConjuncts(postScanFilters);
+            // Construct the post scan predicate. Add the unevaluated domains back first since those are generally cheaper to evaluate then anything we can't extract
+            Expression postScanPredicate = combineConjuncts(unevaluatedDomainPredicate, extractionRemainingExpression);
 
             // Do some early partition pruning
             partitions = ImmutableList.copyOf(filter(partitions, eagerPartitionFilter(postScanPredicate, node.getAssignments())));
