@@ -40,6 +40,7 @@ import com.google.common.base.Objects;
 import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Throwables;
+import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableMultimap;
@@ -59,6 +60,7 @@ import javax.annotation.concurrent.GuardedBy;
 import javax.annotation.concurrent.ThreadSafe;
 
 import java.net.URI;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -119,6 +121,7 @@ public class SqlStageExecution
     private final LinkedBlockingQueue<Throwable> failureCauses = new LinkedBlockingQueue<>();
 
     private final Set<PlanNodeId> completeSources = new HashSet<>();
+    private final NodeScheduler nodeScheduler;
 
     @GuardedBy("this")
     private OutputBuffers currentOutputBuffers = new OutputBuffers(0, false);
@@ -138,7 +141,7 @@ public class SqlStageExecution
 
     private final NodeSelector nodeSelector;
 
-    private Multimap<PlanNodeId,URI> exchangeLocations = ImmutableMultimap.of();
+    private Multimap<PlanNodeId, URI> exchangeLocations = ImmutableMultimap.of();
 
     public SqlStageExecution(QueryId queryId,
             LocationFactory locationFactory,
@@ -187,6 +190,7 @@ public class SqlStageExecution
             this.maxPendingSplitsPerNode = maxPendingSplitsPerNode;
             this.initialHashPartitions = initialHashPartitions;
             this.executor = executor;
+            this.nodeScheduler = nodeScheduler;
 
             tupleInfos = fragment.getTupleInfos();
 
@@ -495,7 +499,8 @@ public class SqlStageExecution
                 }
                 else if (fragment.getPartitioning() == PlanFragment.Partitioning.SOURCE) {
                     scheduleSourcePartitioned();
-                } else {
+                }
+                else {
                     throw new IllegalStateException("Unsupported partitioning: " + fragment.getPartitioning());
                 }
 
@@ -556,37 +561,23 @@ public class SqlStageExecution
     private void scheduleSourcePartitioned()
     {
         AtomicInteger nextTaskId = new AtomicInteger(0);
-        long getSplitStart = System.nanoTime();
+
+        Multimap<Node, Split> nodeSplits = ArrayListMultimap.create();
         for (Split split : dataSource.get().getSplits()) {
-            getSplitDistribution.add(System.nanoTime() - getSplitStart);
-
-            long scheduleSplitStart = System.nanoTime();
-            Node chosen = chooseNode(nodeSelector, split, nextTaskId);
-
-            // if query has been canceled, exit cleanly; query will never run regardless
-            if (getState().isDone()) {
-                break;
-            }
-
-            RemoteTask task = tasks.get(chosen);
-            if (task == null) {
-                scheduleTask(nextTaskId.getAndIncrement(), chosen, fragment.getPartitionedSource(), split);
-
-                // tell the sub stages to create a buffer for this task
-                addSubStageBufferId(chosen.getNodeIdentifier());
-
-                scheduleTaskDistribution.add(System.nanoTime() - scheduleSplitStart);
-            }
-            else {
-                task.addSplit(fragment.getPartitionedSource(), split);
-                addSplitDistribution.add(System.nanoTime() - scheduleSplitStart);
-            }
-
-            getSplitStart = System.nanoTime();
+            Node node = chooseNode(nodeSelector, split, nextTaskId);
+            nodeSplits.put(node, split);
         }
-        for (RemoteTask task : tasks.values()) {
-            task.noMoreSplits(fragment.getPartitionedSource());
+
+        for (Entry<Node, Collection<Split>> taskSplits : nodeSplits.asMap().entrySet()) {
+            Node node = taskSplits.getKey();
+            RemoteTask task = scheduleTask(nextTaskId.getAndIncrement(), node, fragment.getPartitionedSource(), taskSplits.getValue(), true);
+
+            // tell the sub stages to create a buffer for this task
+            addSubStageBufferId(node.getNodeIdentifier());
         }
+//        for (RemoteTask task : tasks.values()) {
+//            task.noMoreSplits(fragment.getPartitionedSource());
+//        }
         completeSources.add(fragment.getPartitionedSource());
 
         // tell sub stages there will be no more output buffers
@@ -641,19 +632,18 @@ public class SqlStageExecution
 
     private RemoteTask scheduleTask(int id, Node node)
     {
-        return scheduleTask(id, node, null, null);
+        return scheduleTask(id, node, null, ImmutableList.<Split>of(), false);
     }
 
-    private RemoteTask scheduleTask(int id, Node node, PlanNodeId sourceId, Split sourceSplit)
+    private RemoteTask scheduleTask(int id, Node node, PlanNodeId sourceId, Iterable<? extends Split> sourceSplits, boolean noMoreSplits)
     {
         // before scheduling a new task update all existing tasks with new exchanges and output buffers
         addNewExchangesAndBuffers();
 
-        String nodeIdentifier = node.getNodeIdentifier();
         TaskId taskId = new TaskId(stageId, String.valueOf(id));
 
         ImmutableMultimap.Builder<PlanNodeId, Split> initialSplits = ImmutableMultimap.builder();
-        if (sourceId != null) {
+        for (Split sourceSplit : sourceSplits) {
             initialSplits.put(sourceId, sourceSplit);
         }
         for (Entry<PlanNodeId, URI> entry : exchangeLocations.entries()) {
@@ -676,6 +666,11 @@ public class SqlStageExecution
                 doUpdateState();
             }
         });
+
+        // set no more splits
+        if (noMoreSplits) {
+            task.noMoreSplits(fragment.getPartitionedSource());
+        }
 
         // create and update task
         task.start();
@@ -714,7 +709,7 @@ public class SqlStageExecution
         // get new exchanges and update exchange state
         Set<PlanNodeId> completeSources = updateCompleteSources();
         boolean allSourceComplete = completeSources.containsAll(fragment.getSourceIds());
-        Multimap <PlanNodeId, URI> newExchangeLocations = getNewExchangeLocations();
+        Multimap<PlanNodeId, URI> newExchangeLocations = getNewExchangeLocations();
         exchangeLocations = ImmutableMultimap.<PlanNodeId, URI>builder()
                 .putAll(exchangeLocations)
                 .putAll(newExchangeLocations)

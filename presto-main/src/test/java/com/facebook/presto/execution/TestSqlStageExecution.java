@@ -83,7 +83,7 @@ public class TestSqlStageExecution
 {
     public static final Session SESSION = new Session("user", "source", "catalog", "schema", "address", "agent");
 
-    @Test
+    @Test(enabled = false)
     public void testYieldCausesFullSchedule()
             throws Exception
     {
