@@ -52,6 +52,7 @@ import io.airlift.log.Logger;
 import io.airlift.stats.Distribution;
 import io.airlift.units.DataSize;
 import io.airlift.units.Duration;
+import org.joda.time.DateTime;
 
 import javax.annotation.Nullable;
 import javax.annotation.concurrent.GuardedBy;
@@ -70,6 +71,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static com.facebook.presto.execution.StageInfo.stageStateGetter;
 import static com.facebook.presto.execution.TaskInfo.taskStateGetter;
@@ -83,7 +85,6 @@ import static com.google.common.collect.Iterables.any;
 import static com.google.common.collect.Iterables.transform;
 import static io.airlift.http.client.HttpUriBuilder.uriBuilderFrom;
 import static io.airlift.units.DataSize.Unit.BYTE;
-import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.concurrent.TimeUnit.NANOSECONDS;
 
 @ThreadSafe
@@ -126,7 +127,10 @@ public class SqlStageExecution
 
     private OutputBuffers subStageOutputBuffers = new OutputBuffers(0, false);
 
+
     private final ExecutorService executor;
+
+    private final AtomicReference<DateTime> schedulingComplete = new AtomicReference<>();
 
     private final Distribution getSplitDistribution = new Distribution();
     private final Distribution scheduleTaskDistribution = new Distribution();
@@ -324,6 +328,7 @@ public class SqlStageExecution
             }
 
             StageStats stageStats = new StageStats(
+                    schedulingComplete.get(),
                     getSplitDistribution.snapshot(),
                     scheduleTaskDistribution.snapshot(),
                     addSplitDistribution.snapshot(),
@@ -494,6 +499,7 @@ public class SqlStageExecution
                     throw new IllegalStateException("Unsupported partitioning: " + fragment.getPartitioning());
                 }
 
+                schedulingComplete.set(DateTime.now());
                 stageState.set(StageState.SCHEDULED);
 
                 // add the missing exchanges output buffers

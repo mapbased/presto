@@ -71,6 +71,9 @@ public class QueryStateMachine
     @GuardedBy("this")
     private Duration distributedPlanningTime;
 
+    @GuardedBy("this")
+    private Duration totalPlanningTime;
+
     private final StateMachine<QueryState> queryState;
 
     @GuardedBy("this")
@@ -198,6 +201,7 @@ public class QueryStateMachine
                 queuedTime,
                 analysisTime,
                 distributedPlanningTime,
+                totalPlanningTime,
 
                 totalTasks,
                 runningTasks,
@@ -265,7 +269,11 @@ public class QueryStateMachine
     public synchronized boolean starting()
     {
         // transition from queued or planning to starting
-        return queryState.setIf(QueryState.STARTING, Predicates.in(ImmutableSet.of(QueryState.QUEUED, QueryState.PLANNING)));
+        boolean changed = queryState.setIf(QueryState.STARTING, Predicates.in(ImmutableSet.of(QueryState.QUEUED, QueryState.PLANNING)));
+        if (changed) {
+            totalPlanningTime = Duration.nanosSince(createNanos);
+        }
+        return changed;
     }
 
     public synchronized boolean running()

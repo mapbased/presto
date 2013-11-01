@@ -88,6 +88,7 @@ public class DriverFactory
         try {
             checkState(!closed, "DriverFactory is already closed");
             checkNotNull(driverContext, "driverContext is null");
+            driverContext.start();
             Builder<Operator> operators = ImmutableList.builder();
             for (OperatorFactory operatorFactory : operatorFactories) {
                 Operator operator = operatorFactory.createOperator(driverContext);
