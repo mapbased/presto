@@ -132,7 +132,7 @@ public class TaskExecutor
     public synchronized void start()
     {
         checkState(!closed, "TaskExecutor is closed");
-        for (int i = 0; i < 130; i++) {
+        for (int i = 0; i < runnerThreads; i++) {
             addRunnerThread();
         }
     }
