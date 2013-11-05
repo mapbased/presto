@@ -23,6 +23,7 @@ import com.google.common.collect.AbstractIterator;
 import io.airlift.http.client.AsyncHttpClient;
 import io.airlift.http.server.HttpServerInfo;
 import io.airlift.json.JsonCodec;
+import io.airlift.log.Logger;
 
 import javax.inject.Inject;
 import javax.ws.rs.HeaderParam;
@@ -54,6 +55,8 @@ import static javax.ws.rs.core.Response.status;
 @Path("/v1/execute")
 public class ExecuteResource
 {
+    private static final Logger log = Logger.get(ExecuteResource.class);
+
     private final HttpServerInfo serverInfo;
     private final AsyncHttpClient httpClient;
     private final JsonCodec<QueryResults> queryResultsCodec;
@@ -102,18 +105,24 @@ public class ExecuteResource
 
     private static List<Column> getColumns(StatementClient client)
     {
-        while (client.isValid()) {
-            List<Column> columns = client.current().getColumns();
-            if (columns != null) {
-                return columns;
+        try {
+            while (client.isValid()) {
+                List<Column> columns = client.current().getColumns();
+                if (columns != null) {
+                    return columns;
+                }
+                client.advance();
             }
-            client.advance();
-        }
 
-        if (!client.isFailed()) {
-            throw internalServerError("No columns");
+            if (!client.isFailed()) {
+                throw internalServerError("No columns");
+            }
+            throw internalServerError(failureMessage(client.finalResults()));
         }
-        throw internalServerError(failureMessage(client.finalResults()));
+        catch (Throwable e) {
+            log.error(e, "WTF");
+            throw e;
+        }
     }
 
     private static <T> Iterator<T> flatten(Iterator<Iterable<T>> iterator)
@@ -141,19 +150,25 @@ public class ExecuteResource
         @Override
         protected Iterable<List<Object>> computeNext()
         {
-            while (client.isValid()) {
-                Iterable<List<Object>> data = client.current().getData();
-                client.advance();
-                if (data != null) {
-                    return data;
+            try {
+                while (client.isValid()) {
+                    Iterable<List<Object>> data = client.current().getData();
+                    client.advance();
+                    if (data != null) {
+                        return data;
+                    }
                 }
-            }
 
-            if (client.isFailed()) {
-                throw internalServerError(failureMessage(client.finalResults()));
-            }
+                if (client.isFailed()) {
+                    throw internalServerError(failureMessage(client.finalResults()));
+                }
 
-            return endOfData();
+                return endOfData();
+            }
+            catch (Throwable e) {
+                log.error(e, "WTF");
+                throw e;
+            }
         }
     }
 

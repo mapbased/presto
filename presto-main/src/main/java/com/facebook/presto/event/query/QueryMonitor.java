@@ -131,7 +131,11 @@ public class QueryMonitor
             // planning duration -- start to end of planning
             Duration planning = queryStats.getTotalPlanningTime();
 
-            List<StageInfo> stages = StageInfo.getAllStages(queryInfo.getOutputStage());
+            StageInfo outputStage = queryInfo.getOutputStage();
+            if (outputStage == null) {
+                return;
+            }
+            List<StageInfo> stages = StageInfo.getAllStages(outputStage);
             // long lastSchedulingCompletion = 0;
             long firstTaskStartTime = queryEndTime.getMillis();
             long lastTaskStartTime = queryStartTime.getMillis() + planning.toMillis();
