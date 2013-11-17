@@ -1,17 +1,16 @@
 package com.facebook.presto.hive;
 
-import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
-import com.google.common.io.ByteStreams;
-import com.google.common.io.Files;
-import com.google.common.io.InputSupplier;
 import io.airlift.units.Duration;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat;
+import org.apache.hadoop.hive.ql.io.HiveOutputFormat;
+import org.apache.hadoop.hive.ql.io.HiveSequenceFileOutputFormat;
 import org.apache.hadoop.hive.ql.io.RCFileInputFormat;
+import org.apache.hadoop.hive.ql.io.RCFileOutputFormat;
 import org.apache.hadoop.hive.serde2.Deserializer;
-import org.apache.hadoop.hive.serde2.SerDeException;
+import org.apache.hadoop.hive.serde2.SerDe;
 import org.apache.hadoop.hive.serde2.columnar.BytesRefArrayWritable;
 import org.apache.hadoop.hive.serde2.columnar.BytesRefWritable;
 import org.apache.hadoop.hive.serde2.columnar.ColumnarSerDe;
@@ -30,77 +29,107 @@ import org.apache.hadoop.mapred.RecordReader;
 import org.apache.hadoop.mapred.Reporter;
 import org.apache.hadoop.mapred.SequenceFileInputFormat;
 import org.apache.hadoop.mapred.TextInputFormat;
-import org.apache.hadoop.net.SocksSocketFactory;
 import sun.misc.Unsafe;
 
-import javax.net.SocketFactory;
-
 import java.io.File;
-import java.io.IOException;
 import java.lang.reflect.Field;
-import java.util.Collections;
 import java.util.List;
 import java.util.Properties;
 
+import static com.facebook.presto.hive.HiveWriteFile.writeFile;
 import static java.util.concurrent.TimeUnit.NANOSECONDS;
 import static java.util.concurrent.TimeUnit.SECONDS;
 
 @SuppressWarnings("deprecation")
 public class HiveInputFormatBenchmark
 {
+    private static final int LOOPS = 1;
+
     public static void main(String[] args)
             throws Exception
     {
         List<BenchmarkFile> benchmarkFiles = ImmutableList.of(
                 new BenchmarkFile(
                         "text",
-                        "hdfs://prestotest001.prn2.facebook.com:8020/user/hive/warehouse/presto_test/ds=2012-12-29/file_format=textfile/dummy=6/000000_0",
-                        "presto_test.txt",
+                        new File("target/presto_test.txt"),
                         new TextInputFormat(),
+                        new HiveIgnoreKeyTextOutputFormat<>(),
                         new LazySimpleSerDe(),
-                        new LazySimpleSerDe()),
+                        true),
+
+                new BenchmarkFile(
+                        "text no-crc",
+                        new File("target/presto_test.txt"),
+                        new TextInputFormat(),
+                        new HiveIgnoreKeyTextOutputFormat<>(),
+                        new LazySimpleSerDe(),
+                        false),
 
                 new BenchmarkFile(
                         "sequence",
-                        "hdfs://prestotest001.prn2.facebook.com:8020/user/hive/warehouse/presto_test/ds=2012-12-29/file_format=sequencefile/dummy=4/000000_0",
-                        "presto_test.sequence",
+                        new File("target/presto_test.sequence"),
                         new SequenceFileInputFormat<Object, Writable>(),
+                        new HiveSequenceFileOutputFormat<>(),
                         new LazySimpleSerDe(),
-                        new LazySimpleSerDe()),
+                        true),
+
+                new BenchmarkFile(
+                        "sequence no-crc",
+                        new File("target/presto_test.sequence"),
+                        new SequenceFileInputFormat<Object, Writable>(),
+                        new HiveSequenceFileOutputFormat<>(),
+                        new LazySimpleSerDe(),
+                        false),
 
                 new BenchmarkFile(
                         "rc text",
-                        "hdfs://prestotest001.prn2.facebook.com:8020/user/hive/warehouse/presto_test/ds=2012-12-29/file_format=rcfile-text/dummy=0/000000_0",
-                        "presto_test.rc",
+                        new File("target/presto_test.rc"),
                         new RCFileInputFormat<>(),
+                        new RCFileOutputFormat(),
                         new ColumnarSerDe(),
-                        new ColumnarSerDe()),
+                        true),
+
+                new BenchmarkFile(
+                        "rc text no-crc",
+                        new File("target/presto_test.rc"),
+                        new RCFileInputFormat<>(),
+                        new RCFileOutputFormat(),
+                        new ColumnarSerDe(),
+                        false),
 
                 new BenchmarkFile(
                         "rc binary",
-                        "hdfs://prestotest001.prn2.facebook.com:8020/user/hive/warehouse/presto_test/ds=2012-12-29/file_format=rcfile-binary/dummy=2/000000_0",
-                        "presto_test.rc-binary",
+                        new File("target/presto_test.rc-binary"),
                         new RCFileInputFormat<>(),
+                        new RCFileOutputFormat(),
                         new LazyBinaryColumnarSerDe(),
-                        new LazyBinaryColumnarSerDe())
+                        true),
+
+                new BenchmarkFile(
+                        "rc binary no-crc",
+                        new File("target/presto_test.rc-binary"),
+                        new RCFileInputFormat<>(),
+                        new RCFileOutputFormat(),
+                        new LazyBinaryColumnarSerDe(),
+                        false)
         );
 
         JobConf jobConf = new JobConf();
-        while (true) {
-            benchmark(jobConf, benchmarkFiles.get(1), 4);
+//        while (System.currentTimeMillis() > 0) {
+//            benchmark(jobConf, benchmarkFiles.get(3), 4);
+//        }
+
+        System.out.println("============ WARM UP ============");
+        for (BenchmarkFile benchmarkFile : benchmarkFiles) {
+            benchmark(jobConf, benchmarkFile, 7);
         }
 
-//        System.out.println("============ WARM UP ============");
-//        for (BenchmarkFile benchmarkFile : benchmarkFiles) {
-//            benchmark(jobConf, benchmarkFile, 3);
-//        }
-//
-//        System.out.println();
-//        System.out.println();
-//        System.out.println("============ BENCHMARK ============");
-//        for (BenchmarkFile benchmarkFile : benchmarkFiles) {
-//            benchmark(jobConf, benchmarkFile, 4);
-//        }
+        System.out.println();
+        System.out.println();
+        System.out.println("============ BENCHMARK ============");
+        for (BenchmarkFile benchmarkFile : benchmarkFiles) {
+            benchmark(jobConf, benchmarkFile, 4);
+        }
     }
 
     private static void benchmark(JobConf jobConf, BenchmarkFile benchmarkFile, int loopCount)
@@ -129,19 +158,19 @@ public class HiveInputFormatBenchmark
         logDuration("int", start, loopCount, value);
 
         start = System.nanoTime();
-        if (benchmarkFile.getBinaryDeserializer() instanceof LazySimpleSerDe) {
+        if (benchmarkFile.getDeserializer() instanceof LazySimpleSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadIntText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getBinaryDeserializer());
+                value = benchmarkReadIntText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
         }
-        if (benchmarkFile.getBinaryDeserializer() instanceof ColumnarSerDe) {
+        if (benchmarkFile.getDeserializer() instanceof ColumnarSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadIntRcText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getBinaryDeserializer());
+                value = benchmarkReadIntColumnarText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
         }
-        if (benchmarkFile.getBinaryDeserializer() instanceof LazyBinaryColumnarSerDe) {
+        if (benchmarkFile.getDeserializer() instanceof LazyBinaryColumnarSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadIntBinary(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getBinaryDeserializer());
+                value = benchmarkReadIntColumnarBinary(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
         }
         logDuration("b_int", start, loopCount, value);
@@ -227,7 +256,7 @@ public class HiveInputFormatBenchmark
         StructField binaryField = rowInspector.getStructFieldRef("t_binary");
         PrimitiveObjectInspector binaryFieldInspector = (PrimitiveObjectInspector) binaryField.getFieldObjectInspector();
 
-        for (int i = 0; i < 10000; i++) {
+        for (int i = 0; i < LOOPS; i++) {
             RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
             K key = recordReader.createKey();
             V value = recordReader.createValue();
@@ -315,7 +344,7 @@ public class HiveInputFormatBenchmark
         StructField bigintField = rowInspector.getStructFieldRef("t_bigint");
         PrimitiveObjectInspector bigintFieldInspector = (PrimitiveObjectInspector) bigintField.getFieldObjectInspector();
 
-        for (int i = 0; i < 10000; i++) {
+        for (int i = 0; i < LOOPS; i++) {
             RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
             K key = recordReader.createKey();
             V value = recordReader.createValue();
@@ -360,7 +389,7 @@ public class HiveInputFormatBenchmark
         StructField stringField = rowInspector.getStructFieldRef("t_string");
         PrimitiveObjectInspector stringFieldInspector = (PrimitiveObjectInspector) stringField.getFieldObjectInspector();
 
-        for (int i = 0; i < 10000; i++) {
+        for (int i = 0; i < LOOPS; i++) {
             RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
             K key = recordReader.createKey();
             V value = recordReader.createValue();
@@ -390,7 +419,7 @@ public class HiveInputFormatBenchmark
         StructField smallintField = rowInspector.getStructFieldRef("t_smallint");
         PrimitiveObjectInspector smallintFieldInspector = (PrimitiveObjectInspector) smallintField.getFieldObjectInspector();
 
-        for (int i = 0; i < 10000; i++) {
+        for (int i = 0; i < LOOPS; i++) {
             RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
             K key = recordReader.createKey();
             V value = recordReader.createValue();
@@ -420,7 +449,7 @@ public class HiveInputFormatBenchmark
         PrimitiveObjectInspector intFieldInspector = (PrimitiveObjectInspector) intField.getFieldObjectInspector();
 
         long intSum = 0;
-        for (int i = 0; i < 10000; i++) {
+        for (int i = 0; i < LOOPS; i++) {
             intSum = 0;
 
             RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
@@ -455,7 +484,7 @@ public class HiveInputFormatBenchmark
         int[] startPosition = new int[13];
 
         long intSum = 0;
-        for (int i = 0; i < 10000; i++) {
+        for (int i = 0; i < LOOPS; i++) {
             intSum = 0;
             RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
             K key = recordReader.createKey();
@@ -470,7 +499,7 @@ public class HiveInputFormatBenchmark
                 int start = startPosition[fieldIndex];
                 int length = startPosition[fieldIndex + 1] - start - 1;
 
-                if (length != 2 || !(bytes[start] == '\\' && bytes[start] == 'N')) {
+                if (!isNull(bytes, start, length)) {
                     long intValue = NumberParser.parseLong(bytes, start, length);
                     intSum += intValue;
                 }
@@ -480,7 +509,7 @@ public class HiveInputFormatBenchmark
         return intSum;
     }
 
-    private static <K, V extends Writable> long benchmarkReadIntRcText(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
+    private static <K, V extends Writable> long benchmarkReadIntColumnarText(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
@@ -490,7 +519,7 @@ public class HiveInputFormatBenchmark
         int fieldIndex = allStructFieldRefs.indexOf(intField);
 
         long intSum = 0;
-        for (int i = 0; i < 10000; i++) {
+        for (int i = 0; i < LOOPS; i++) {
             intSum = 0;
 
             RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
@@ -505,7 +534,7 @@ public class HiveInputFormatBenchmark
                 int start = bytesRefWritable.getStart();
                 int length = bytesRefWritable.getLength();
 
-                if (length != 2 || !(bytes[start] == '\\' && bytes[start] == 'N')) {
+                if (!isNull(bytes, start, length)) {
                     long intValue = NumberParser.parseLong(bytes, start, length);
                     intSum += intValue;
                 }
@@ -515,7 +544,7 @@ public class HiveInputFormatBenchmark
         return intSum;
     }
 
-    private static <K, V extends Writable> long benchmarkReadIntBinary(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
+    private static <K, V extends Writable> long benchmarkReadIntColumnarBinary(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
@@ -525,7 +554,7 @@ public class HiveInputFormatBenchmark
         int fieldIndex = allStructFieldRefs.indexOf(intField);
 
         long intSum = 0;
-        for (int i = 0; i < 10000; i++) {
+        for (int i = 0; i < LOOPS; i++) {
             intSum = 0;
 
             RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
@@ -540,7 +569,7 @@ public class HiveInputFormatBenchmark
                 int start = bytesRefWritable.getStart();
                 int length = bytesRefWritable.getLength();
 
-                if (length != 2 || !(bytes[start] == '\\' && bytes[start] == 'N')) {
+                if (!isNull(bytes, start, length)) {
                     int intValue = readVInt(bytes, start);
                     intSum += intValue;
                 }
@@ -574,7 +603,7 @@ public class HiveInputFormatBenchmark
         StructField bigintField = rowInspector.getStructFieldRef("t_bigint");
         PrimitiveObjectInspector bigintFieldInspector = (PrimitiveObjectInspector) bigintField.getFieldObjectInspector();
 
-        for (int i = 0; i < 10000; i++) {
+        for (int i = 0; i < LOOPS; i++) {
             RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
             K key = recordReader.createKey();
             V value = recordReader.createValue();
@@ -603,7 +632,7 @@ public class HiveInputFormatBenchmark
         StructField floatField = rowInspector.getStructFieldRef("t_float");
         PrimitiveObjectInspector floatFieldInspector = (PrimitiveObjectInspector) floatField.getFieldObjectInspector();
 
-        for (int i = 0; i < 10000; i++) {
+        for (int i = 0; i < LOOPS; i++) {
             RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
             K key = recordReader.createKey();
             V value = recordReader.createValue();
@@ -632,7 +661,7 @@ public class HiveInputFormatBenchmark
         StructField doubleField = rowInspector.getStructFieldRef("t_double");
         PrimitiveObjectInspector doubleFieldInspector = (PrimitiveObjectInspector) doubleField.getFieldObjectInspector();
 
-        for (int i = 0; i < 10000; i++) {
+        for (int i = 0; i < LOOPS; i++) {
             RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
             K key = recordReader.createKey();
             V value = recordReader.createValue();
@@ -661,7 +690,7 @@ public class HiveInputFormatBenchmark
         StructField booleanField = rowInspector.getStructFieldRef("t_boolean");
         PrimitiveObjectInspector booleanFieldInspector = (PrimitiveObjectInspector) booleanField.getFieldObjectInspector();
 
-        for (int i = 0; i < 10000; i++) {
+        for (int i = 0; i < LOOPS; i++) {
             RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
             K key = recordReader.createKey();
             V value = recordReader.createValue();
@@ -690,7 +719,7 @@ public class HiveInputFormatBenchmark
         StructField binaryField = rowInspector.getStructFieldRef("t_binary");
         PrimitiveObjectInspector binaryFieldInspector = (PrimitiveObjectInspector) binaryField.getFieldObjectInspector();
 
-        for (int i = 0; i < 10000; i++) {
+        for (int i = 0; i < LOOPS; i++) {
             RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
             K key = recordReader.createKey();
             V value = recordReader.createValue();
@@ -793,65 +822,70 @@ public class HiveInputFormatBenchmark
 //        Arrays.fill(fieldInited, false);
 //        parsed = true;
     }
+//
+//    private static Deserializer initializeDeserializer(Deserializer deserializer)
+//            throws SerDeException
+//    {
+//        Properties tableProperties = new Properties();
+//        tableProperties.setProperty(
+//                "columns",
+//                "t_string,t_tinyint,t_smallint,t_int,t_bigint,t_float,t_double,t_map,t_boolean,t_timestamp,t_binary,t_array_string,t_complex");
+//        tableProperties.setProperty(
+//                "columns.types",
+//                "string:tinyint:smallint:int:bigint:float:double:map<string,string>:boolean:timestamp:binary:array<string>:map<int,array<struct<s_string:string,s_double:double>>>");
+//
+//        deserializer.initialize(new Configuration(), tableProperties);
+//
+//        return deserializer;
+//    }
+//
+//    private static Deserializer initializeBinaryDeserializer(Deserializer deserializer)
+//            throws SerDeException
+//    {
+//        Properties tableProperties = new Properties();
+//        tableProperties.setProperty(
+//                "columns",
+//                "t_string,t_tinyint,t_smallint,t_int,t_bigint,t_float,t_double,t_map,t_boolean,t_timestamp,t_binary,t_array_string,t_complex");
+//        tableProperties.setProperty(
+//                "columns.types",
+//                Joiner.on(":").join(Collections.nCopies(13, "string")));
+//
+//        deserializer.initialize(new Configuration(), tableProperties);
+//
+//        return deserializer;
+//    }
+//
+//    private static FileSplit createFileSplit(String remotePath, String localFile)
+//            throws IOException
+//    {
+//        File file = new File(localFile);
+//        if (!file.exists()) {
+//            Configuration config = new Configuration();
+//            config.setClass("hadoop.rpc.socket.factory.class.default", SocksSocketFactory.class, SocketFactory.class);
+//            config.set("hadoop.socks.server", "localhost:1080");
+//
+//            Path path = new Path(remotePath);
+//            ByteStreams.copy(newHdfsInputStreamSupplier(config, path), Files.newOutputStreamSupplier(file));
+//        }
+//        return new FileSplit(new Path(file.toURI()), 0, file.length(), new String[0]);
+//    }
+//
+//    public static InputSupplier<FSDataInputStream> newHdfsInputStreamSupplier(final Configuration configuration, final Path path)
+//    {
+//        return new InputSupplier<FSDataInputStream>()
+//        {
+//            @Override
+//            public FSDataInputStream getInput()
+//                    throws IOException
+//            {
+//                return path.getFileSystem(configuration).open(path);
+//            }
+//        };
+//    }
 
-    private static Deserializer initializeDeserializer(Deserializer deserializer)
-            throws SerDeException
+    private static boolean isNull(byte[] bytes, int start, int length)
     {
-        Properties tableProperties = new Properties();
-        tableProperties.setProperty(
-                "columns",
-                "t_string,t_tinyint,t_smallint,t_int,t_bigint,t_float,t_double,t_map,t_boolean,t_timestamp,t_binary,t_array_string,t_complex");
-        tableProperties.setProperty(
-                "columns.types",
-                "string:tinyint:smallint:int:bigint:float:double:map<string,string>:boolean:timestamp:binary:array<string>:map<int,array<struct<s_string:string,s_double:double>>>");
-
-        deserializer.initialize(new Configuration(), tableProperties);
-
-        return deserializer;
-    }
-
-    private static Deserializer initializeBinaryDeserializer(Deserializer deserializer)
-            throws SerDeException
-    {
-        Properties tableProperties = new Properties();
-        tableProperties.setProperty(
-                "columns",
-                "t_string,t_tinyint,t_smallint,t_int,t_bigint,t_float,t_double,t_map,t_boolean,t_timestamp,t_binary,t_array_string,t_complex");
-        tableProperties.setProperty(
-                "columns.types",
-                Joiner.on(":").join(Collections.nCopies(13, "string")));
-
-        deserializer.initialize(new Configuration(), tableProperties);
-
-        return deserializer;
-    }
-
-    private static FileSplit createFileSplit(String remotePath, String localFile)
-            throws IOException
-    {
-        File file = new File(localFile);
-        if (!file.exists()) {
-            Configuration config = new Configuration();
-            config.setClass("hadoop.rpc.socket.factory.class.default", SocksSocketFactory.class, SocketFactory.class);
-            config.set("hadoop.socks.server", "localhost:1080");
-
-            Path path = new Path(remotePath);
-            ByteStreams.copy(newHdfsInputStreamSupplier(config, path), Files.newOutputStreamSupplier(file));
-        }
-        return new FileSplit(new Path(file.toURI()), 0, file.length(), new String[0]);
-    }
-
-    public static InputSupplier<FSDataInputStream> newHdfsInputStreamSupplier(final Configuration configuration, final Path path)
-    {
-        return new InputSupplier<FSDataInputStream>()
-        {
-            @Override
-            public FSDataInputStream getInput()
-                    throws IOException
-            {
-                return path.getFileSystem(configuration).open(path);
-            }
-        };
+        return length == 2 && bytes[start] == '\\' && bytes[start + 1] == 'N';
     }
 
     private static class BenchmarkFile
@@ -859,23 +893,39 @@ public class HiveInputFormatBenchmark
         private final String name;
         private final InputFormat<?, ? extends Writable> inputFormat;
         private final Deserializer deserializer;
-        private final Deserializer binaryDeserializer;
         private final FileSplit fileSplit;
 
-        public BenchmarkFile(String name,
-                String remotePath,
-                String localFile,
+        public BenchmarkFile(
+                String name,
+                File file,
                 InputFormat<?, ? extends Writable> inputFormat,
-                Deserializer deserializer,
-                Deserializer binaryDeserializer)
+                HiveOutputFormat<?, ?> outputFormat,
+                SerDe serDe,
+                boolean verifyChecksum)
                 throws Exception
         {
             this.name = name;
             this.inputFormat = inputFormat;
-            this.deserializer = initializeDeserializer(deserializer);
-            this.binaryDeserializer = initializeBinaryDeserializer(binaryDeserializer);
 
-            this.fileSplit = createFileSplit(remotePath, localFile);
+            file.getParentFile().mkdirs();
+
+            Properties tableProperties = new Properties();
+            tableProperties.setProperty(
+                    "columns",
+                    "t_string,t_tinyint,t_smallint,t_int,t_bigint,t_float,t_double,t_map,t_boolean,t_timestamp,t_binary,t_array_string,t_complex");
+            tableProperties.setProperty(
+                    "columns.types",
+                    "string:tinyint:smallint:int:bigint:float:double:map<string,string>:boolean:timestamp:binary:array<string>:map<int,array<struct<s_string:string,s_double:double>>>");
+            serDe.initialize(new Configuration(), tableProperties);
+
+            if (!file.exists()) {
+                writeFile(tableProperties, file, outputFormat, serDe);
+            }
+
+            this.deserializer = serDe;
+            Path path = new Path(file.toURI());
+            path.getFileSystem(new Configuration()).setVerifyChecksum(verifyChecksum);
+            this.fileSplit = new FileSplit(path, 0, file.length(), new String[0]);
         }
 
         private String getName()
@@ -891,11 +941,6 @@ public class HiveInputFormatBenchmark
         private Deserializer getDeserializer()
         {
             return deserializer;
-        }
-
-        private Deserializer getBinaryDeserializer()
-        {
-            return binaryDeserializer;
         }
 
         private FileSplit getFileSplit()
@@ -925,5 +970,4 @@ public class HiveInputFormatBenchmark
             throw new RuntimeException(e);
         }
     }
-
 }
