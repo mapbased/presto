@@ -79,11 +79,36 @@ class GenericHiveRecordCursor<K, V extends Writable>
     private Object rowData;
     private boolean closed;
 
-    public GenericHiveRecordCursor(RecordReader<K, V> recordReader, long totalBytes, Properties splitSchema, List<HivePartitionKey> partitionKeys, List<HiveColumnHandle> columns)
+    public static <K, V extends Writable> GenericHiveRecordCursor<K, V> createGenericHiveRecordCursor(RecordReader<K, V> recordReader,
+            long totalBytes,
+            Properties splitSchema,
+            List<HivePartitionKey> partitionKeys,
+            List<HiveColumnHandle> columns)
+    {
+        checkNotNull(splitSchema, "splitSchema is null");
+        Deserializer deserializer;
+        StructObjectInspector rowInspector;
+        try {
+            deserializer = MetaStoreUtils.getDeserializer(null, splitSchema);
+            rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
+        }
+        catch (MetaException | SerDeException | RuntimeException e) {
+            throw Throwables.propagate(e);
+        }
+
+        return new GenericHiveRecordCursor<>(recordReader, totalBytes, deserializer, rowInspector, partitionKeys, columns);
+    }
+
+    public GenericHiveRecordCursor(
+            RecordReader<K, V> recordReader,
+            long totalBytes,
+            Deserializer deserializer,
+            StructObjectInspector rowInspector,
+            List<HivePartitionKey> partitionKeys,
+            List<HiveColumnHandle> columns)
     {
         checkNotNull(recordReader, "recordReader is null");
         checkArgument(totalBytes >= 0, "totalBytes is negative");
-        checkNotNull(splitSchema, "splitSchema is null");
         checkNotNull(partitionKeys, "partitionKeys is null");
         checkNotNull(columns, "columns is null");
         checkArgument(!columns.isEmpty(), "columns is empty");
@@ -93,13 +118,8 @@ class GenericHiveRecordCursor<K, V extends Writable>
         this.key = recordReader.createKey();
         this.value = recordReader.createValue();
 
-        try {
-            this.deserializer = MetaStoreUtils.getDeserializer(null, splitSchema);
-            this.rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
-        }
-        catch (MetaException | SerDeException | RuntimeException e) {
-            throw Throwables.propagate(e);
-        }
+        this.deserializer = deserializer;
+        this.rowInspector = rowInspector;
 
         int size = columns.size();
 

@@ -110,16 +110,16 @@ public class HiveRecordSet
 
         RecordReader<?, ?> recordReader = createRecordReader(split, configuration, wrappedPath);
 
-        if (usesColumnarSerDe(split)) {
-            return new BytesHiveRecordCursor<>(
-                    bytesRecordReader(recordReader),
-                    split.getLength(),
-                    split.getSchema(),
-                    split.getPartitionKeys(),
-                    columns);
-        }
+//        if (usesColumnarSerDe(split)) {
+//            return new BytesHiveRecordCursor<>(
+//                    bytesRecordReader(recordReader),
+//                    split.getLength(),
+//                    split.getSchema(),
+//                    split.getPartitionKeys(),
+//                    columns);
+//        }
 
-        return new GenericHiveRecordCursor<>(
+        return GenericHiveRecordCursor.createGenericHiveRecordCursor(
                 genericRecordReader(recordReader),
                 split.getLength(),
                 split.getSchema(),
