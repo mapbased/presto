@@ -139,7 +139,7 @@ public final class HiveInputFormatBenchmark
 
         System.out.println("============ WARM UP ============");
         for (BenchmarkFile benchmarkFile : benchmarkFiles) {
-            benchmark(jobConf, benchmarkFile, 7);
+            benchmark(jobConf, benchmarkFile, 5);
         }
 
         System.out.println();
@@ -182,7 +182,7 @@ public final class HiveInputFormatBenchmark
             }
         }
         logDuration("b_string", start, loopCount, value);
-        
+
 //        start = System.nanoTime();
 //        for (int loops = 0; loops < loopCount; loops++) {
 //            benchmarkReadSmallint(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
@@ -246,12 +246,8 @@ public final class HiveInputFormatBenchmark
 //        logDuration("float", start, loopCount, value);
 
         start = System.nanoTime();
-        // todo rc file seems to be invalid
-        value = null;
-        if (!(benchmarkFile.getDeserializer() instanceof LazyBinaryColumnarSerDe)) {
-            for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadDouble(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
-            }
+        for (int loops = 0; loops < loopCount; loops++) {
+            value = benchmarkReadDouble(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
         }
         logDuration("double", start, loopCount, value);
 
@@ -266,12 +262,10 @@ public final class HiveInputFormatBenchmark
                 value = benchmarkReadDoubleColumnarText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
         }
-        // todo rc file seems to be invalid
         if (benchmarkFile.getDeserializer() instanceof LazyBinaryColumnarSerDe) {
-            value = null;
-//            for (int loops = 0; loops < loopCount; loops++) {
-//                value = benchmarkReadDoubleColumnarBinary(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
-//            }
+            for (int loops = 0; loops < loopCount; loops++) {
+                value = benchmarkReadDoubleColumnarBinary(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+            }
         }
         logDuration("b_double", start, loopCount, value);
 
@@ -758,8 +752,8 @@ public final class HiveInputFormatBenchmark
                 int start = bytesRefWritable.getStart();
                 int length = bytesRefWritable.getLength();
 
-                if (!isNull(bytes, start, length)) {
-                    int intValue = readVInt(bytes, start);
+                if (length != 0) {
+                    int intValue = readVInt(bytes, start, length);
                     intSum += intValue;
                 }
             }
@@ -768,20 +762,19 @@ public final class HiveInputFormatBenchmark
         return intSum;
     }
 
-    public static int readVInt(byte[] bytes, int offset)
+    public static int readVInt(byte[] bytes, int offset, int length)
     {
-        byte firstByte = bytes[offset];
-        int size = WritableUtils.decodeVIntSize(firstByte);
-        if (size == 1) {
-            return firstByte;
+        if (length == 1) {
+            return bytes[offset];
         }
+
         int i = 0;
-        for (int idx = 0; idx < size - 1; idx++) {
+        for (int idx = 0; idx < length - 1; idx++) {
             byte b = bytes[offset + 1 + idx];
             i = i << 8;
             i = i | (b & 0xFF);
         }
-        return WritableUtils.isNegativeVInt(firstByte) ? ~i : i;
+        return WritableUtils.isNegativeVInt(bytes[offset]) ? ~i : i;
     }
 
     private static <K, V extends Writable> long benchmarkReadBigint(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
@@ -911,8 +904,8 @@ public final class HiveInputFormatBenchmark
                 int start = bytesRefWritable.getStart();
                 int length = bytesRefWritable.getLength();
 
-                if (!isNull(bytes, start, length)) {
-                    long bigintValue = readVBigint(bytes, start);
+                if (length != 0) {
+                    long bigintValue = readVBigint(bytes, start, length);
                     bigintSum += bigintValue;
                 }
             }
@@ -921,20 +914,19 @@ public final class HiveInputFormatBenchmark
         return bigintSum;
     }
 
-    public static long readVBigint(byte[] bytes, int offset)
+    public static long readVBigint(byte[] bytes, int offset, int length)
     {
-        byte firstByte = bytes[offset];
-        int size = WritableUtils.decodeVIntSize(firstByte);
-        if (size == 1) {
-            return firstByte;
+        if (length == 1) {
+            return bytes[offset];
         }
+
         long i = 0;
-        for (int idx = 0; idx < size - 1; idx++) {
+        for (int idx = 0; idx < length - 1; idx++) {
             byte b = bytes[offset + 1 + idx];
             i = i << 8;
             i = i | (b & 0xFF);
         }
-        return WritableUtils.isNegativeVInt(firstByte) ? ~i : i;
+        return WritableUtils.isNegativeVInt(bytes[offset]) ? ~i : i;
     }
 
     private static <K, V extends Writable> void benchmarkReadFloat(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
@@ -1093,8 +1085,8 @@ public final class HiveInputFormatBenchmark
                 int start = bytesRefWritable.getStart();
                 int length = bytesRefWritable.getLength();
 
-                if (!isNull(bytes, start, length)) {
-                    long longBits = unsafe.getLong(((BytesRefArrayWritable) value).get(6).getData(), (long) Unsafe.ARRAY_BYTE_BASE_OFFSET);
+                if (length != 0) {
+                    long longBits = unsafe.getLong(bytes, (long) Unsafe.ARRAY_BYTE_BASE_OFFSET + start);
                     double doubleValue = Double.longBitsToDouble(Long.reverseBytes(longBits));
                     doubleSum += doubleValue;
                 }
