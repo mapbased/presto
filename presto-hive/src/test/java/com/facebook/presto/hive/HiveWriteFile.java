@@ -11,6 +11,7 @@ import org.apache.hadoop.hive.ql.io.RCFileOutputFormat;
 import org.apache.hadoop.hive.serde2.MetadataTypedColumnsetSerDe;
 import org.apache.hadoop.hive.serde2.SerDe;
 import org.apache.hadoop.hive.serde2.columnar.ColumnarSerDe;
+import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.SettableStructObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.StructField;
 import org.apache.hadoop.io.Text;
@@ -21,10 +22,24 @@ import org.joda.time.DateTime;
 
 import java.io.File;
 import java.sql.Timestamp;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
 
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
+import static org.apache.hadoop.hive.serde2.objectinspector.ObjectInspectorFactory.getStandardListObjectInspector;
+import static org.apache.hadoop.hive.serde2.objectinspector.ObjectInspectorFactory.getStandardMapObjectInspector;
+import static org.apache.hadoop.hive.serde2.objectinspector.ObjectInspectorFactory.getStandardStructObjectInspector;
+import static org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory.javaBooleanObjectInspector;
+import static org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory.javaByteArrayObjectInspector;
+import static org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory.javaByteObjectInspector;
+import static org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory.javaDoubleObjectInspector;
+import static org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory.javaFloatObjectInspector;
+import static org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory.javaIntObjectInspector;
+import static org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory.javaLongObjectInspector;
+import static org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory.javaShortObjectInspector;
+import static org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory.javaStringObjectInspector;
+import static org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory.javaTimestampObjectInspector;
 
 @SuppressWarnings("deprecation")
 public class HiveWriteFile
@@ -66,10 +81,50 @@ public class HiveWriteFile
 
         serDe.initialize(new Configuration(), tableProperties);
 
-        MetadataTypedColumnsetSerDe structBuilderSerDe = new MetadataTypedColumnsetSerDe();
-        structBuilderSerDe.initialize(new Configuration(), tableProperties);
-        SettableStructObjectInspector settableStructObjectInspector = (SettableStructObjectInspector) structBuilderSerDe.getObjectInspector();
+//        MetadataTypedColumnsetSerDe structBuilderSerDe = new MetadataTypedColumnsetSerDe();
+//        structBuilderSerDe.initialize(new Configuration(), tableProperties);
+//        SettableStructObjectInspector settableStructObjectInspector = (SettableStructObjectInspector) structBuilderSerDe.getObjectInspector();
 
+        // Deserialize
+        List<String> fieldNames = ImmutableList.of("t_string",
+                "t_tinyint",
+                "t_smallint",
+                "t_int",
+                "t_bigint",
+                "t_float",
+                "t_double",
+                "t_map",
+                "t_boolean",
+                "t_timestamp",
+                "t_binary",
+                "t_array_string",
+                "t_complex");
+
+        List<ObjectInspector> fieldInspectors = ImmutableList.of(
+                javaStringObjectInspector,
+                javaByteObjectInspector,
+                javaShortObjectInspector,
+                javaIntObjectInspector,
+                javaLongObjectInspector,
+                javaFloatObjectInspector,
+                javaDoubleObjectInspector,
+                getStandardMapObjectInspector(javaStringObjectInspector, javaStringObjectInspector),
+                javaBooleanObjectInspector,
+                javaTimestampObjectInspector,
+                javaByteArrayObjectInspector,
+                getStandardListObjectInspector(javaStringObjectInspector),
+                getStandardMapObjectInspector(
+                        javaStringObjectInspector,
+                        getStandardListObjectInspector(
+                                getStandardStructObjectInspector(
+                                        ImmutableList.of("s_string", "s_double"),
+                                        ImmutableList.<ObjectInspector>of(javaStringObjectInspector, javaDoubleObjectInspector)
+                                )
+                        )
+                )
+        );
+
+        SettableStructObjectInspector settableStructObjectInspector = getStandardStructObjectInspector(fieldNames, fieldInspectors);
         writeData(recordWriter, serDe, "file", 7, settableStructObjectInspector);
     }
 
@@ -81,52 +136,75 @@ public class HiveWriteFile
         List<StructField> fields = ImmutableList.copyOf(objectInspector.getAllStructFieldRefs());
 
         for (int rowNumber = 0; rowNumber < 1_000_000; rowNumber++) {
+            List<Object> data = new ArrayList<>(fields.size());
             if (rowNumber % 19 == 0) {
                 objectInspector.setStructFieldData(row, fields.get(0), null);
+                data.add(null);
             }
             else {
                 objectInspector.setStructFieldData(row, fields.get(0), fileType + " test");
+                data.add( fileType + " test");
             }
 
             objectInspector.setStructFieldData(row, fields.get(1), ((byte) (baseValue + 1 + rowNumber)));
+            data.add((byte) (baseValue + 1 + rowNumber));
             objectInspector.setStructFieldData(row, fields.get(2), (short) (baseValue + 2 + rowNumber));
+            data.add((short) (baseValue + 2 + rowNumber));
             objectInspector.setStructFieldData(row, fields.get(3), baseValue + 3 + rowNumber);
+            data.add(baseValue + 3 + rowNumber);
 
             if (rowNumber % 13 == 0) {
                 objectInspector.setStructFieldData(row, fields.get(4), null);
+                data.add(null);
             }
             else {
                 objectInspector.setStructFieldData(row, fields.get(4), (long) baseValue + 4 + rowNumber);
+                data.add((long) baseValue + 4 + rowNumber);
             }
 
             objectInspector.setStructFieldData(row, fields.get(5), (float) (baseValue + 5.1 + rowNumber));
+            data.add((float) (baseValue + 5.1 + rowNumber));
             objectInspector.setStructFieldData(row, fields.get(6), baseValue + 6.2 + rowNumber);
+            data.add(baseValue + 6.2 + rowNumber);
+
+            objectInspector.setStructFieldData(row, fields.get(7), null);
+            data.add(null);
 
             if (rowNumber % 3 == 2) {
                 objectInspector.setStructFieldData(row, fields.get(8), null);
+                data.add(null);
             }
             else {
                 objectInspector.setStructFieldData(row, fields.get(8), rowNumber % 3 != 0);
+                data.add(rowNumber % 3 != 0);
             }
 
             if (rowNumber % 17 == 0) {
                 objectInspector.setStructFieldData(row, fields.get(9), null);
+                data.add(null);
             }
             else {
                 long seconds = MILLISECONDS.toSeconds(new DateTime(2011, 5, 6, 7, 8, 9, 123).getMillis());
                 objectInspector.setStructFieldData(row, fields.get(9), new Timestamp(seconds * 1000));
+                data.add(new Timestamp(seconds * 1000));
             }
 
             if (rowNumber % 23 == 0) {
                 objectInspector.setStructFieldData(row, fields.get(10), null);
+                data.add(null);
             }
             else {
                 objectInspector.setStructFieldData(row, fields.get(10), (fileType + " test").getBytes(Charsets.UTF_8));
+                data.add((fileType + " test").getBytes(Charsets.UTF_8));
             }
 
-            Writable record = serDe.serialize(row, objectInspector);
-            recordWriter.write(record);
+            objectInspector.setStructFieldData(row, fields.get(11), null);
+            data.add(null);
+            objectInspector.setStructFieldData(row, fields.get(12), null);
+            data.add(null);
 
+            Writable record = serDe.serialize(data, objectInspector);
+            recordWriter.write(record);
         }
         recordWriter.close(false);
     }
