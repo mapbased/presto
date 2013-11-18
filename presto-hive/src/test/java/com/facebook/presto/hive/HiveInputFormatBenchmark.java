@@ -157,7 +157,7 @@ public final class HiveInputFormatBenchmark
 
         Object value = null;
 
-        long start = System.nanoTime();
+        long start;
 
         start = System.nanoTime();
         for (int loops = 0; loops < loopCount; loops++) {
@@ -181,7 +181,7 @@ public final class HiveInputFormatBenchmark
                 value = benchmarkReadStringColumnarBinary(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
         }
-        logDuration("b_string", start, loopCount, value);
+        logDuration("p_string", start, loopCount, value);
 
 //        start = System.nanoTime();
 //        for (int loops = 0; loops < loopCount; loops++) {
@@ -211,7 +211,7 @@ public final class HiveInputFormatBenchmark
                 value = benchmarkReadIntColumnarBinary(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
         }
-        logDuration("b_int", start, loopCount, value);
+        logDuration("p_int", start, loopCount, value);
 
 
         start = System.nanoTime();
@@ -236,7 +236,7 @@ public final class HiveInputFormatBenchmark
                 value = benchmarkReadBigintColumnarBinary(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
         }
-        logDuration("b_bigint", start, loopCount, value);
+        logDuration("p_bigint", start, loopCount, value);
 
 
 //        start = System.nanoTime();
@@ -267,7 +267,7 @@ public final class HiveInputFormatBenchmark
                 value = benchmarkReadDoubleColumnarBinary(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
         }
-        logDuration("b_double", start, loopCount, value);
+        logDuration("p_double", start, loopCount, value);
 
 //        start = System.nanoTime();
 //        for (int loops = 0; loops < loopCount; loops++) {
@@ -280,13 +280,31 @@ public final class HiveInputFormatBenchmark
 //            benchmarkReadBinary(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
 //        }
 //        logDuration("binary", start, loopCount, value);
-//
-//        start = System.nanoTime();
-//        for (int loops = 0; loops < loopCount; loops++) {
-//            benchmarkRead3Columns(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
-//        }
-//        logDuration("three", start, loopCount, value);
-//
+
+        start = System.nanoTime();
+        for (int loops = 0; loops < loopCount; loops++) {
+            value = benchmarkRead3Columns(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+        }
+        logDuration("three", start, loopCount, value);
+
+        start = System.nanoTime();
+        if (benchmarkFile.getDeserializer() instanceof LazySimpleSerDe) {
+            for (int loops = 0; loops < loopCount; loops++) {
+                value = benchmarkRead3ColumnsText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+            }
+        }
+        if (benchmarkFile.getDeserializer() instanceof ColumnarSerDe) {
+            for (int loops = 0; loops < loopCount; loops++) {
+                value = benchmarkRead3ColumnsColumnarText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+            }
+        }
+        if (benchmarkFile.getDeserializer() instanceof LazyBinaryColumnarSerDe) {
+            for (int loops = 0; loops < loopCount; loops++) {
+                value = benchmarkRead3ColumnsColumnarBinary(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+            }
+        }
+        logDuration("p_three", start, loopCount, value);
+
 //        start = System.nanoTime();
 //        for (int loops = 0; loops < loopCount; loops++) {
 //            benchmarkReadAllColumns(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
@@ -408,7 +426,7 @@ public final class HiveInputFormatBenchmark
         }
     }
 
-    private static <K, V extends Writable> void benchmarkRead3Columns(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
+    private static <K, V extends Writable> List<Object> benchmarkRead3Columns(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
@@ -419,14 +437,16 @@ public final class HiveInputFormatBenchmark
         StructField bigintField = rowInspector.getStructFieldRef("t_bigint");
         PrimitiveObjectInspector bigintFieldInspector = (PrimitiveObjectInspector) bigintField.getFieldObjectInspector();
 
+        long stringSum = 0;
+        double doubleSum = 0;
+        long bigintSum = 0;
         for (int i = 0; i < LOOPS; i++) {
+            stringSum = 0;
+            doubleSum = 0;
+            bigintSum = 0;
             RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
             K key = recordReader.createKey();
             V value = recordReader.createValue();
-
-            long stringLengthSum = 0;
-            double doubleSum = 0;
-            long bigintSum = 0;
 
             while (recordReader.next(key, value)) {
                 Object rowData = deserializer.deserialize(value);
@@ -435,7 +455,7 @@ public final class HiveInputFormatBenchmark
                 if (stringData != null) {
                     Object stringPrimitive = stringFieldInspector.getPrimitiveJavaObject(stringData);
                     String stringValue = (String) stringPrimitive;
-                    stringLengthSum += stringValue.length();
+                    stringSum += stringValue.length();
                 }
 
                 Object doubleData = rowInspector.getStructFieldData(rowData, doubleField);
@@ -454,6 +474,198 @@ public final class HiveInputFormatBenchmark
             }
             recordReader.close();
         }
+        return ImmutableList.<Object>of(stringSum, doubleSum, bigintSum);
+    }
+
+    private static <K, V extends Writable> List<Object> benchmarkRead3ColumnsText(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
+            throws Exception
+    {
+        StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
+
+        List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
+        StructField stringField = rowInspector.getStructFieldRef("t_string");
+        int stringFieldIndex = allStructFieldRefs.indexOf(stringField);
+        StructField doubleField = rowInspector.getStructFieldRef("t_double");
+        int doubleFieldIndex = allStructFieldRefs.indexOf(doubleField);
+        StructField bigintField = rowInspector.getStructFieldRef("t_bigint");
+        int bigintFieldIndex = allStructFieldRefs.indexOf(bigintField);
+
+        int[] startPosition = new int[13];
+
+        long stringSum = 0;
+        double doubleSum = 0;
+        long bigintSum = 0;
+        for (int i = 0; i < LOOPS; i++) {
+            stringSum = 0;
+            doubleSum = 0;
+            bigintSum = 0;
+            RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
+            K key = recordReader.createKey();
+            V value = recordReader.createValue();
+
+            while (recordReader.next(key, value)) {
+                BinaryComparable row = (BinaryComparable) value;
+
+                byte[] bytes = row.getBytes();
+                parseTextFields(bytes, 0, row.getLength(), startPosition);
+
+                int stringStart = startPosition[stringFieldIndex];
+                int stringLength = startPosition[stringFieldIndex + 1] - stringStart - 1;
+                if (!isNull(bytes, stringStart, stringLength)) {
+                    byte[] stringValue = Arrays.copyOfRange(bytes, stringStart, stringStart + stringLength);
+                    stringSum += stringValue.length;
+                }
+
+                int doubleStart = startPosition[doubleFieldIndex];
+                int doubleLength = startPosition[doubleFieldIndex + 1] - doubleStart - 1;
+                if (!isNull(bytes, doubleStart, doubleLength)) {
+                    double doubleValue = NumberParser.parseDouble(bytes, doubleStart, doubleLength);
+                    doubleSum += doubleValue;
+                }
+
+                int bigintStart = startPosition[bigintFieldIndex];
+                int bigintLength = startPosition[bigintFieldIndex + 1] - bigintStart - 1;
+                if (!isNull(bytes, bigintStart, bigintLength)) {
+                    long bigintValue = NumberParser.parseLong(bytes, bigintStart, bigintLength);
+                    bigintSum += bigintValue;
+                }
+            }
+            recordReader.close();
+        }
+        return ImmutableList.<Object>of(stringSum, doubleSum, bigintSum);
+    }
+
+    private static <K, V extends Writable> List<Object> benchmarkRead3ColumnsColumnarText(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
+            throws Exception
+    {
+        StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
+
+        List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
+        StructField stringField = rowInspector.getStructFieldRef("t_string");
+        int stringFieldIndex = allStructFieldRefs.indexOf(stringField);
+        StructField doubleField = rowInspector.getStructFieldRef("t_double");
+        int doubleFieldIndex = allStructFieldRefs.indexOf(doubleField);
+        StructField bigintField = rowInspector.getStructFieldRef("t_bigint");
+        int bigintFieldIndex = allStructFieldRefs.indexOf(bigintField);
+
+        long stringSum = 0;
+        double doubleSum = 0;
+        long bigintSum = 0;
+        for (int i = 0; i < LOOPS; i++) {
+            stringSum = 0;
+            doubleSum = 0;
+            bigintSum = 0;
+
+            RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
+            K key = recordReader.createKey();
+            V value = recordReader.createValue();
+
+            while (recordReader.next(key, value)) {
+                BytesRefArrayWritable row = (BytesRefArrayWritable) value;
+
+                BytesRefWritable stringBytesRefWritable = row.unCheckedGet(stringFieldIndex);
+                byte[] stringBytes = stringBytesRefWritable.getData();
+                int stringStart = stringBytesRefWritable.getStart();
+                int stringLength = stringBytesRefWritable.getLength();
+                if (!isNull(stringBytes, stringStart, stringLength)) {
+                    byte[] stringValue = Arrays.copyOfRange(stringBytes, stringStart, stringStart + stringLength);
+                    stringSum += stringValue.length;
+                }
+
+                BytesRefWritable doubleBytesRefWritable = row.unCheckedGet(doubleFieldIndex);
+                byte[] doubleBytes = doubleBytesRefWritable.getData();
+                int doubleStart = doubleBytesRefWritable.getStart();
+                int doubleLength = doubleBytesRefWritable.getLength();
+                if (!isNull(doubleBytes, doubleStart, doubleLength)) {
+                    double doubleValue = NumberParser.parseDouble(doubleBytes, doubleStart, doubleLength);
+                    doubleSum += doubleValue;
+                }
+
+                BytesRefWritable bigintBytesRefWritable = row.unCheckedGet(bigintFieldIndex);
+                byte[] bigintBytes = bigintBytesRefWritable.getData();
+                int bigintStart = bigintBytesRefWritable.getStart();
+                int bigintLength = bigintBytesRefWritable.getLength();
+                if (!isNull(bigintBytes, bigintStart, bigintLength)) {
+                    long bigintValue = NumberParser.parseLong(bigintBytes, bigintStart, bigintLength);
+                    bigintSum += bigintValue;
+                }
+            }
+            recordReader.close();
+        }
+        return ImmutableList.<Object>of(stringSum, doubleSum, bigintSum);
+    }
+
+    private static <K, V extends Writable> List<Object> benchmarkRead3ColumnsColumnarBinary(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
+            throws Exception
+    {
+        StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
+
+        List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
+        StructField stringField = rowInspector.getStructFieldRef("t_string");
+        int stringFieldIndex = allStructFieldRefs.indexOf(stringField);
+        StructField doubleField = rowInspector.getStructFieldRef("t_double");
+        int doubleFieldIndex = allStructFieldRefs.indexOf(doubleField);
+        StructField bigintField = rowInspector.getStructFieldRef("t_bigint");
+        int bigintFieldIndex = allStructFieldRefs.indexOf(bigintField);
+
+        long stringSum = 0;
+        double doubleSum = 0;
+        long bigintSum = 0;
+        for (int i = 0; i < LOOPS; i++) {
+            stringSum = 0;
+            doubleSum = 0;
+            bigintSum = 0;
+
+            RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
+            K key = recordReader.createKey();
+            V value = recordReader.createValue();
+
+
+            while (recordReader.next(key, value)) {
+//                BytesRefArrayWritable row = (BytesRefArrayWritable) value;
+//                BytesRefWritable bytesRefWritable = row.unCheckedGet(fieldIndex);
+//                byte[] bytes = bytesRefWritable.getData();
+//                int start = bytesRefWritable.getStart();
+//                int length = bytesRefWritable.getLength();
+//
+//                if (length != 0) {
+//                    long bigintValue = readVBigint(bytes, start, length);
+//                    bigintSum += bigintValue;
+//                }
+                BytesRefArrayWritable row = (BytesRefArrayWritable) value;
+
+                BytesRefWritable stringBytesRefWritable = row.unCheckedGet(stringFieldIndex);
+                byte[] stringBytes = stringBytesRefWritable.getData();
+                int stringStart = stringBytesRefWritable.getStart();
+                int stringLength = stringBytesRefWritable.getLength();
+                // todo how are string nulls encoded in binary
+                if (!isNull(stringBytes, stringStart, stringLength)) {
+                    byte[] stringValue = Arrays.copyOfRange(stringBytes, stringStart, stringStart + stringLength);
+                    stringSum += stringValue.length;
+                }
+
+                BytesRefWritable doubleBytesRefWritable = row.unCheckedGet(doubleFieldIndex);
+                byte[] doubleBytes = doubleBytesRefWritable.getData();
+                int doubleStart = doubleBytesRefWritable.getStart();
+                int doubleLength = doubleBytesRefWritable.getLength();
+                if (doubleLength != 0) {
+                    long longBits = unsafe.getLong(doubleBytes, (long) Unsafe.ARRAY_BYTE_BASE_OFFSET + doubleStart);
+                    double doubleValue = Double.longBitsToDouble(Long.reverseBytes(longBits));
+                    doubleSum += doubleValue;
+                }
+
+                BytesRefWritable bigintBytesRefWritable = row.unCheckedGet(bigintFieldIndex);
+                byte[] bigintBytes = bigintBytesRefWritable.getData();
+                int bigintStart = bigintBytesRefWritable.getStart();
+                int bigintLength = bigintBytesRefWritable.getLength();
+                if (bigintLength != 0) {
+                    long bigintValue = readVBigint(bigintBytes, bigintStart, bigintLength);
+                    bigintSum += bigintValue;
+                }
+            }
+            recordReader.close();
+        }
+        return ImmutableList.<Object>of(stringSum, doubleSum, bigintSum);
     }
 
     private static <K, V extends Writable> long benchmarkReadString(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
@@ -1000,7 +1212,7 @@ public final class HiveInputFormatBenchmark
 
         int[] startPosition = new int[13];
 
-        long doubleSum = 0;
+        double doubleSum = 0;
         for (int i = 0; i < LOOPS; i++) {
             doubleSum = 0;
             RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
