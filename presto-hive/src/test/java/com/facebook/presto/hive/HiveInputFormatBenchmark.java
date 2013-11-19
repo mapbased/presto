@@ -20,10 +20,12 @@ import com.facebook.hive.orc.lazy.OrcLazyObject;
 import com.facebook.hive.orc.lazy.OrcLazyRow;
 import com.facebook.presto.hadoop.HadoopNative;
 import com.facebook.presto.hive.shaded.org.apache.commons.codec.binary.Base64;
+import com.google.common.base.Charsets;
 import com.google.common.collect.ImmutableList;
 import io.airlift.units.Duration;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.hive.ql.exec.FileSinkOperator.RecordWriter;
 import org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat;
 import org.apache.hadoop.hive.ql.io.HiveOutputFormat;
 import org.apache.hadoop.hive.ql.io.HiveSequenceFileOutputFormat;
@@ -39,7 +41,9 @@ import org.apache.hadoop.hive.serde2.columnar.LazyBinaryColumnarSerDe;
 import org.apache.hadoop.hive.serde2.io.DoubleWritable;
 import org.apache.hadoop.hive.serde2.io.ShortWritable;
 import org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe;
+import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.PrimitiveObjectInspector;
+import org.apache.hadoop.hive.serde2.objectinspector.SettableStructObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.StructField;
 import org.apache.hadoop.hive.serde2.objectinspector.StructObjectInspector;
 import org.apache.hadoop.io.BinaryComparable;
@@ -48,9 +52,12 @@ import org.apache.hadoop.io.BytesWritable;
 import org.apache.hadoop.io.FloatWritable;
 import org.apache.hadoop.io.IntWritable;
 import org.apache.hadoop.io.LongWritable;
+import org.apache.hadoop.io.SequenceFile.CompressionType;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.io.Writable;
 import org.apache.hadoop.io.WritableUtils;
+import org.apache.hadoop.io.compress.CompressionCodec;
+import org.apache.hadoop.io.compress.CompressionCodecFactory;
 import org.apache.hadoop.mapred.FileSplit;
 import org.apache.hadoop.mapred.InputFormat;
 import org.apache.hadoop.mapred.JobConf;
@@ -58,19 +65,37 @@ import org.apache.hadoop.mapred.RecordReader;
 import org.apache.hadoop.mapred.Reporter;
 import org.apache.hadoop.mapred.SequenceFileInputFormat;
 import org.apache.hadoop.mapred.TextInputFormat;
+import org.apache.hadoop.util.Progressable;
+import org.joda.time.DateTime;
 import sun.misc.Unsafe;
 
 import java.io.File;
 import java.lang.reflect.Field;
+import java.sql.Timestamp;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Properties;
 
 import static com.facebook.presto.hive.HiveBooleanParser.isFalse;
 import static com.facebook.presto.hive.HiveBooleanParser.isTrue;
-import static com.facebook.presto.hive.HiveWriteFile.writeFile;
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.concurrent.TimeUnit.NANOSECONDS;
 import static java.util.concurrent.TimeUnit.SECONDS;
+import static org.apache.hadoop.hive.serde2.objectinspector.ObjectInspectorFactory.getStandardListObjectInspector;
+import static org.apache.hadoop.hive.serde2.objectinspector.ObjectInspectorFactory.getStandardMapObjectInspector;
+import static org.apache.hadoop.hive.serde2.objectinspector.ObjectInspectorFactory.getStandardStructObjectInspector;
+import static org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory.javaBooleanObjectInspector;
+import static org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory.javaByteArrayObjectInspector;
+import static org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory.javaByteObjectInspector;
+import static org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory.javaDoubleObjectInspector;
+import static org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory.javaFloatObjectInspector;
+import static org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory.javaIntObjectInspector;
+import static org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory.javaLongObjectInspector;
+import static org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory.javaShortObjectInspector;
+import static org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory.javaStringObjectInspector;
+import static org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory.javaTimestampObjectInspector;
+import static org.apache.hadoop.mapreduce.lib.output.FileOutputFormat.COMPRESS_CODEC;
+import static org.apache.hadoop.mapreduce.lib.output.FileOutputFormat.COMPRESS_TYPE;
 
 @SuppressWarnings("deprecation")
 public final class HiveInputFormatBenchmark
@@ -3205,6 +3230,139 @@ public final class HiveInputFormatBenchmark
         {
             return fileSplit;
         }
+    }
+
+
+    public static void writeFile(Properties tableProperties, File outputFile, HiveOutputFormat<?, ?> outputFormat, SerDe serDe, String compressionCodec)
+            throws Exception
+    {
+        JobConf jobConf = new JobConf();
+        if (compressionCodec != null) {
+            CompressionCodec codec = new CompressionCodecFactory(new Configuration()).getCodecByName(compressionCodec);
+            jobConf.set(COMPRESS_CODEC, codec.getClass().getName());
+            jobConf.set(COMPRESS_TYPE, CompressionType.BLOCK.toString());
+        }
+
+        RecordWriter recordWriter = outputFormat.getHiveRecordWriter(
+                jobConf,
+                new Path(outputFile.toURI()),
+                Text.class,
+                compressionCodec != null,
+                tableProperties,
+                new Progressable()
+                    {
+                        @Override
+                        public void progress()
+                        {
+                        }
+                    }
+        );
+
+        serDe.initialize(new Configuration(), tableProperties);
+
+        // Deserialize
+        List<String> fieldNames = ImmutableList.of("t_string",
+                "t_tinyint",
+                "t_smallint",
+                "t_int",
+                "t_bigint",
+                "t_float",
+                "t_double",
+                "t_map",
+                "t_boolean",
+                "t_timestamp",
+                "t_binary",
+                "t_array_string",
+                "t_complex");
+
+        List<ObjectInspector> fieldInspectors = ImmutableList.of(
+                javaStringObjectInspector,
+                javaByteObjectInspector,
+                javaShortObjectInspector,
+                javaIntObjectInspector,
+                javaLongObjectInspector,
+                javaFloatObjectInspector,
+                javaDoubleObjectInspector,
+                getStandardMapObjectInspector(javaStringObjectInspector, javaStringObjectInspector),
+                javaBooleanObjectInspector,
+                javaTimestampObjectInspector,
+                javaByteArrayObjectInspector,
+                getStandardListObjectInspector(javaStringObjectInspector),
+                getStandardMapObjectInspector(
+                        javaStringObjectInspector,
+                        getStandardListObjectInspector(
+                                getStandardStructObjectInspector(
+                                        ImmutableList.of("s_string", "s_double"),
+                                        ImmutableList.<ObjectInspector>of(javaStringObjectInspector, javaDoubleObjectInspector)
+                                )
+                        )
+                )
+        );
+
+        SettableStructObjectInspector settableStructObjectInspector = getStandardStructObjectInspector(fieldNames, fieldInspectors);
+        writeData(recordWriter, serDe, "file", 7, settableStructObjectInspector);
+    }
+
+    private static void writeData(RecordWriter recordWriter, SerDe serDe, String fileType, int baseValue, SettableStructObjectInspector objectInspector)
+            throws Exception
+    {
+        Object row = objectInspector.create();
+
+        List<StructField> fields = ImmutableList.copyOf(objectInspector.getAllStructFieldRefs());
+
+        for (int rowNumber = 0; rowNumber < 1_000_000; rowNumber++) {
+            if (rowNumber % 19 == 0) {
+                objectInspector.setStructFieldData(row, fields.get(0), null);
+            }
+            else {
+                objectInspector.setStructFieldData(row, fields.get(0), fileType + " test");
+            }
+
+            objectInspector.setStructFieldData(row, fields.get(1), ((byte) (baseValue + 1 + rowNumber)));
+            objectInspector.setStructFieldData(row, fields.get(2), (short) (baseValue + 2 + rowNumber));
+            objectInspector.setStructFieldData(row, fields.get(3), baseValue + 3 + rowNumber);
+
+            if (rowNumber % 13 == 0) {
+                objectInspector.setStructFieldData(row, fields.get(4), null);
+            }
+            else {
+                objectInspector.setStructFieldData(row, fields.get(4), (long) baseValue + 4 + rowNumber);
+            }
+
+            objectInspector.setStructFieldData(row, fields.get(5), (float) (baseValue + 5.1 + rowNumber));
+            objectInspector.setStructFieldData(row, fields.get(6), baseValue + 6.2 + rowNumber);
+
+            objectInspector.setStructFieldData(row, fields.get(7), null);
+
+            if (rowNumber % 3 == 2) {
+                objectInspector.setStructFieldData(row, fields.get(8), null);
+            }
+            else {
+                objectInspector.setStructFieldData(row, fields.get(8), rowNumber % 3 != 0);
+            }
+
+            if (rowNumber % 17 == 0) {
+                objectInspector.setStructFieldData(row, fields.get(9), null);
+            }
+            else {
+                long seconds = MILLISECONDS.toSeconds(new DateTime(2011, 5, 6, 7, 8, 9, 123).getMillis());
+                objectInspector.setStructFieldData(row, fields.get(9), new Timestamp(seconds * 1000));
+            }
+
+            if (rowNumber % 23 == 0) {
+                objectInspector.setStructFieldData(row, fields.get(10), null);
+            }
+            else {
+                objectInspector.setStructFieldData(row, fields.get(10), (fileType + " test").getBytes(Charsets.UTF_8));
+            }
+
+            objectInspector.setStructFieldData(row, fields.get(11), null);
+            objectInspector.setStructFieldData(row, fields.get(12), null);
+
+            Writable record = serDe.serialize(row, objectInspector);
+            recordWriter.write(record);
+        }
+        recordWriter.close(false);
     }
 
     private static final Unsafe unsafe;
