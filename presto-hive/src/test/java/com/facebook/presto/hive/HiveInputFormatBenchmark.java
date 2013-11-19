@@ -24,6 +24,7 @@ import org.apache.hadoop.hive.ql.io.HiveOutputFormat;
 import org.apache.hadoop.hive.ql.io.HiveSequenceFileOutputFormat;
 import org.apache.hadoop.hive.ql.io.RCFileInputFormat;
 import org.apache.hadoop.hive.ql.io.RCFileOutputFormat;
+import org.apache.hadoop.hive.serde2.ColumnProjectionUtils;
 import org.apache.hadoop.hive.serde2.Deserializer;
 import org.apache.hadoop.hive.serde2.SerDe;
 import org.apache.hadoop.hive.serde2.columnar.BytesRefArrayWritable;
@@ -92,6 +93,15 @@ public final class HiveInputFormatBenchmark
                         true),
 
                 new BenchmarkFile(
+                        "text snappy",
+                        new File("target/presto_test.txt.snappy"),
+                        new TextInputFormat(),
+                        new HiveIgnoreKeyTextOutputFormat<>(),
+                        new LazySimpleSerDe(),
+                        "snappy",
+                        true),
+
+                new BenchmarkFile(
                         "sequence",
                         new File("target/presto_test.sequence"),
                         new SequenceFileInputFormat<Object, Writable>(),
@@ -107,6 +117,15 @@ public final class HiveInputFormatBenchmark
                         new HiveSequenceFileOutputFormat<>(),
                         new LazySimpleSerDe(),
                         "gzip",
+                        true),
+
+                new BenchmarkFile(
+                        "sequence snappy",
+                        new File("target/presto_test.sequence.snappy"),
+                        new SequenceFileInputFormat<Object, Writable>(),
+                        new HiveSequenceFileOutputFormat<>(),
+                        new LazySimpleSerDe(),
+                        "snappy",
                         true),
 
                 new BenchmarkFile(
@@ -128,6 +147,15 @@ public final class HiveInputFormatBenchmark
                         true),
 
                 new BenchmarkFile(
+                        "rc text snappy",
+                        new File("target/presto_test.rc.snappy"),
+                        new RCFileInputFormat<>(),
+                        new RCFileOutputFormat(),
+                        new ColumnarSerDe(),
+                        "snappy",
+                        true),
+
+                new BenchmarkFile(
                         "rc binary",
                         new File("target/presto_test.rc-binary"),
                         new RCFileInputFormat<>(),
@@ -143,6 +171,15 @@ public final class HiveInputFormatBenchmark
                         new RCFileOutputFormat(),
                         new LazyBinaryColumnarSerDe(),
                         "gzip",
+                        true),
+
+                new BenchmarkFile(
+                        "rc binary snappy",
+                        new File("target/presto_test.rc-binary.snappy"),
+                        new RCFileInputFormat<>(),
+                        new RCFileOutputFormat(),
+                        new LazyBinaryColumnarSerDe(),
+                        "snappy",
                         true)
         );
 
@@ -163,6 +200,7 @@ public final class HiveInputFormatBenchmark
     private static void benchmark(JobConf jobConf, BenchmarkFile benchmarkFile, int loopCount)
             throws Exception
     {
+        System.out.println();
         System.out.println(benchmarkFile.getName());
 
         Object value = null;
@@ -463,29 +501,49 @@ public final class HiveInputFormatBenchmark
     {
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
 
+        List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
+
         StructField stringField = rowInspector.getStructFieldRef("t_string");
+        int stringFieldIndex = allStructFieldRefs.indexOf(stringField);
         PrimitiveObjectInspector stringFieldInspector = (PrimitiveObjectInspector) stringField.getFieldObjectInspector();
 
         StructField smallintField = rowInspector.getStructFieldRef("t_smallint");
+        int smallintFieldIndex = allStructFieldRefs.indexOf(smallintField);
         PrimitiveObjectInspector smallintFieldInspector = (PrimitiveObjectInspector) smallintField.getFieldObjectInspector();
 
         StructField intField = rowInspector.getStructFieldRef("t_int");
+        int intFieldIndex = allStructFieldRefs.indexOf(intField);
         PrimitiveObjectInspector intFieldInspector = (PrimitiveObjectInspector) intField.getFieldObjectInspector();
 
         StructField bigintField = rowInspector.getStructFieldRef("t_bigint");
+        int bigintFieldIndex = allStructFieldRefs.indexOf(bigintField);
         PrimitiveObjectInspector bigintFieldInspector = (PrimitiveObjectInspector) bigintField.getFieldObjectInspector();
 
         StructField floatField = rowInspector.getStructFieldRef("t_float");
+        int floatFieldIndex = allStructFieldRefs.indexOf(floatField);
         PrimitiveObjectInspector floatFieldInspector = (PrimitiveObjectInspector) floatField.getFieldObjectInspector();
 
         StructField doubleField = rowInspector.getStructFieldRef("t_double");
+        int doubleFieldIndex = allStructFieldRefs.indexOf(doubleField);
         PrimitiveObjectInspector doubleFieldInspector = (PrimitiveObjectInspector) doubleField.getFieldObjectInspector();
 
         StructField booleanField = rowInspector.getStructFieldRef("t_boolean");
+        int booleanFieldIndex = allStructFieldRefs.indexOf(booleanField);
         PrimitiveObjectInspector booleanFieldInspector = (PrimitiveObjectInspector) booleanField.getFieldObjectInspector();
 
         StructField binaryField = rowInspector.getStructFieldRef("t_binary");
+        int binaryFieldIndex = allStructFieldRefs.indexOf(binaryField);
         PrimitiveObjectInspector binaryFieldInspector = (PrimitiveObjectInspector) binaryField.getFieldObjectInspector();
+
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(
+                stringFieldIndex,
+                smallintFieldIndex,
+                intFieldIndex,
+                bigintFieldIndex,
+                floatFieldIndex,
+                doubleFieldIndex,
+                booleanFieldIndex,
+                binaryFieldIndex));
 
         long stringLengthSum = 0;
         long smallintSum = 0;
@@ -732,6 +790,16 @@ public final class HiveInputFormatBenchmark
         StructField binaryField = rowInspector.getStructFieldRef("t_binary");
         int binaryFieldIndex = allStructFieldRefs.indexOf(binaryField);
 
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(
+                stringFieldIndex,
+                smallintFieldIndex,
+                intFieldIndex,
+                bigintFieldIndex,
+                floatFieldIndex,
+                doubleFieldIndex,
+                booleanFieldIndex,
+                binaryFieldIndex));
+
         long stringSum = 0;
         long smallintSum = 0;
         long intSum = 0;
@@ -871,6 +939,16 @@ public final class HiveInputFormatBenchmark
         StructField binaryField = rowInspector.getStructFieldRef("t_binary");
         int binaryFieldIndex = allStructFieldRefs.indexOf(binaryField);
 
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(
+                stringFieldIndex,
+                smallintFieldIndex,
+                intFieldIndex,
+                bigintFieldIndex,
+                floatFieldIndex,
+                doubleFieldIndex,
+                booleanFieldIndex,
+                binaryFieldIndex));
+
         long stringSum = 0;
         long smallintSum = 0;
         long intSum = 0;
@@ -981,12 +1059,21 @@ public final class HiveInputFormatBenchmark
             throws Exception
     {
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
+        List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
+
         StructField stringField = rowInspector.getStructFieldRef("t_string");
+        int stringFieldIndex = allStructFieldRefs.indexOf(stringField);
         PrimitiveObjectInspector stringFieldInspector = (PrimitiveObjectInspector) stringField.getFieldObjectInspector();
+
         StructField doubleField = rowInspector.getStructFieldRef("t_double");
+        int doubleFieldIndex = allStructFieldRefs.indexOf(doubleField);
         PrimitiveObjectInspector doubleFieldInspector = (PrimitiveObjectInspector) doubleField.getFieldObjectInspector();
+
         StructField bigintField = rowInspector.getStructFieldRef("t_bigint");
+        int bigintFieldIndex = allStructFieldRefs.indexOf(bigintField);
         PrimitiveObjectInspector bigintFieldInspector = (PrimitiveObjectInspector) bigintField.getFieldObjectInspector();
+
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(stringFieldIndex, doubleFieldIndex, bigintFieldIndex));
 
         long stringSum = 0;
         double doubleSum = 0;
@@ -1102,6 +1189,8 @@ public final class HiveInputFormatBenchmark
         StructField bigintField = rowInspector.getStructFieldRef("t_bigint");
         int bigintFieldIndex = allStructFieldRefs.indexOf(bigintField);
 
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(stringFieldIndex, doubleFieldIndex, bigintFieldIndex));
+
         long stringSum = 0;
         double doubleSum = 0;
         long bigintSum = 0;
@@ -1162,6 +1251,8 @@ public final class HiveInputFormatBenchmark
         StructField bigintField = rowInspector.getStructFieldRef("t_bigint");
         int bigintFieldIndex = allStructFieldRefs.indexOf(bigintField);
 
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(stringFieldIndex, doubleFieldIndex, bigintFieldIndex));
+
         long stringSum = 0;
         double doubleSum = 0;
         long bigintSum = 0;
@@ -1216,9 +1307,13 @@ public final class HiveInputFormatBenchmark
             throws Exception
     {
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
+        List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
 
         StructField stringField = rowInspector.getStructFieldRef("t_string");
+        int fieldIndex = allStructFieldRefs.indexOf(stringField);
         PrimitiveObjectInspector stringFieldInspector = (PrimitiveObjectInspector) stringField.getFieldObjectInspector();
+
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
 
         long stringLengthSum = 0;
         for (int i = 0; i < LOOPS; i++) {
@@ -1290,6 +1385,8 @@ public final class HiveInputFormatBenchmark
         StructField stringField = rowInspector.getStructFieldRef("t_string");
         int fieldIndex = allStructFieldRefs.indexOf(stringField);
 
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
+
         long stringSum = 0;
         for (int i = 0; i < LOOPS; i++) {
             stringSum = 0;
@@ -1324,6 +1421,8 @@ public final class HiveInputFormatBenchmark
         StructField stringField = rowInspector.getStructFieldRef("t_string");
         int fieldIndex = allStructFieldRefs.indexOf(stringField);
 
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
+
         long stringSum = 0;
         for (int i = 0; i < LOOPS; i++) {
             stringSum = 0;
@@ -1355,8 +1454,12 @@ public final class HiveInputFormatBenchmark
     {
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
 
+        List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
         StructField smallintField = rowInspector.getStructFieldRef("t_smallint");
+        int fieldIndex = allStructFieldRefs.indexOf(smallintField);
         PrimitiveObjectInspector smallintFieldInspector = (PrimitiveObjectInspector) smallintField.getFieldObjectInspector();
+
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
 
         long smallintSum = 0;
         for (int i = 0; i < LOOPS; i++) {
@@ -1426,6 +1529,8 @@ public final class HiveInputFormatBenchmark
         StructField smallintField = rowInspector.getStructFieldRef("t_smallint");
         int fieldIndex = allStructFieldRefs.indexOf(smallintField);
 
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
+
         long smallintSum = 0;
         for (int i = 0; i < LOOPS; i++) {
             smallintSum = 0;
@@ -1460,6 +1565,8 @@ public final class HiveInputFormatBenchmark
         StructField smallintField = rowInspector.getStructFieldRef("t_smallint");
         int fieldIndex = allStructFieldRefs.indexOf(smallintField);
 
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
+
         long smallintSum = 0;
         for (int i = 0; i < LOOPS; i++) {
             smallintSum = 0;
@@ -1492,8 +1599,12 @@ public final class HiveInputFormatBenchmark
     {
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
 
+        List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
         StructField intField = rowInspector.getStructFieldRef("t_int");
+        int fieldIndex = allStructFieldRefs.indexOf(intField);
         PrimitiveObjectInspector intFieldInspector = (PrimitiveObjectInspector) intField.getFieldObjectInspector();
+
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
 
         long intSum = 0;
         for (int i = 0; i < LOOPS; i++) {
@@ -1565,6 +1676,8 @@ public final class HiveInputFormatBenchmark
         StructField intField = rowInspector.getStructFieldRef("t_int");
         int fieldIndex = allStructFieldRefs.indexOf(intField);
 
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
+
         long intSum = 0;
         for (int i = 0; i < LOOPS; i++) {
             intSum = 0;
@@ -1599,6 +1712,8 @@ public final class HiveInputFormatBenchmark
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
         StructField intField = rowInspector.getStructFieldRef("t_int");
         int fieldIndex = allStructFieldRefs.indexOf(intField);
+
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
 
         long intSum = 0;
         for (int i = 0; i < LOOPS; i++) {
@@ -1646,8 +1761,12 @@ public final class HiveInputFormatBenchmark
     {
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
 
+        List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
         StructField bigintField = rowInspector.getStructFieldRef("t_bigint");
+        int fieldIndex = allStructFieldRefs.indexOf(bigintField);
         PrimitiveObjectInspector bigintFieldInspector = (PrimitiveObjectInspector) bigintField.getFieldObjectInspector();
+
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
 
         long bigintSum = 0;
         for (int i = 0; i < LOOPS; i++) {
@@ -1718,6 +1837,8 @@ public final class HiveInputFormatBenchmark
         StructField bigintField = rowInspector.getStructFieldRef("t_bigint");
         int fieldIndex = allStructFieldRefs.indexOf(bigintField);
 
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
+
         long bigintSum = 0;
         for (int i = 0; i < LOOPS; i++) {
             bigintSum = 0;
@@ -1751,6 +1872,8 @@ public final class HiveInputFormatBenchmark
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
         StructField bigintField = rowInspector.getStructFieldRef("t_bigint");
         int fieldIndex = allStructFieldRefs.indexOf(bigintField);
+
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
 
         long bigintSum = 0;
         for (int i = 0; i < LOOPS; i++) {
@@ -1798,8 +1921,12 @@ public final class HiveInputFormatBenchmark
     {
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
 
+        List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
         StructField floatField = rowInspector.getStructFieldRef("t_float");
+        int fieldIndex = allStructFieldRefs.indexOf(floatField);
         PrimitiveObjectInspector floatFieldInspector = (PrimitiveObjectInspector) floatField.getFieldObjectInspector();
+
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
 
         double floatSum = 0;
         for (int i = 0; i < LOOPS; i++) {
@@ -1870,6 +1997,8 @@ public final class HiveInputFormatBenchmark
         StructField floatField = rowInspector.getStructFieldRef("t_float");
         int fieldIndex = allStructFieldRefs.indexOf(floatField);
 
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
+
         double floatSum = 0;
         for (int i = 0; i < LOOPS; i++) {
             floatSum = 0;
@@ -1914,6 +2043,8 @@ public final class HiveInputFormatBenchmark
         StructField floatField = rowInspector.getStructFieldRef("t_float");
         int fieldIndex = allStructFieldRefs.indexOf(floatField);
 
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
+
         double floatSum = 0;
         for (int i = 0; i < LOOPS; i++) {
             floatSum = 0;
@@ -1946,8 +2077,12 @@ public final class HiveInputFormatBenchmark
     {
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
 
+        List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
         StructField doubleField = rowInspector.getStructFieldRef("t_double");
+        int fieldIndex = allStructFieldRefs.indexOf(doubleField);
         PrimitiveObjectInspector doubleFieldInspector = (PrimitiveObjectInspector) doubleField.getFieldObjectInspector();
+
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
 
         double doubleSum = 0;
         for (int i = 0; i < LOOPS; i++) {
@@ -2018,6 +2153,8 @@ public final class HiveInputFormatBenchmark
         StructField doubleField = rowInspector.getStructFieldRef("t_double");
         int fieldIndex = allStructFieldRefs.indexOf(doubleField);
 
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
+
         double doubleSum = 0;
         for (int i = 0; i < LOOPS; i++) {
             doubleSum = 0;
@@ -2052,6 +2189,8 @@ public final class HiveInputFormatBenchmark
         StructField doubleField = rowInspector.getStructFieldRef("t_double");
         int fieldIndex = allStructFieldRefs.indexOf(doubleField);
 
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
+
         double doubleSum = 0;
         for (int i = 0; i < LOOPS; i++) {
             doubleSum = 0;
@@ -2084,8 +2223,12 @@ public final class HiveInputFormatBenchmark
     {
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
 
+        List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
         StructField booleanField = rowInspector.getStructFieldRef("t_boolean");
+        int fieldIndex = allStructFieldRefs.indexOf(booleanField);
         PrimitiveObjectInspector booleanFieldInspector = (PrimitiveObjectInspector) booleanField.getFieldObjectInspector();
+
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
 
         long booleanSum = 0;
         for (int i = 0; i < LOOPS; i++) {
@@ -2161,6 +2304,8 @@ public final class HiveInputFormatBenchmark
         StructField booleanField = rowInspector.getStructFieldRef("t_boolean");
         int fieldIndex = allStructFieldRefs.indexOf(booleanField);
 
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
+
         long booleanSum = 0;
         for (int i = 0; i < LOOPS; i++) {
             booleanSum = 0;
@@ -2200,6 +2345,8 @@ public final class HiveInputFormatBenchmark
         StructField booleanField = rowInspector.getStructFieldRef("t_boolean");
         int fieldIndex = allStructFieldRefs.indexOf(booleanField);
 
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
+
         long booleanSum = 0;
         for (int i = 0; i < LOOPS; i++) {
             booleanSum = 0;
@@ -2231,8 +2378,12 @@ public final class HiveInputFormatBenchmark
     {
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
 
+        List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
         StructField binaryField = rowInspector.getStructFieldRef("t_binary");
+        int fieldIndex = allStructFieldRefs.indexOf(binaryField);
         PrimitiveObjectInspector binaryFieldInspector = (PrimitiveObjectInspector) binaryField.getFieldObjectInspector();
+
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
 
         long binaryLengthSum = 0;
         for (int i = 0; i < LOOPS; i++) {
@@ -2304,6 +2455,8 @@ public final class HiveInputFormatBenchmark
         StructField binaryField = rowInspector.getStructFieldRef("t_binary");
         int fieldIndex = allStructFieldRefs.indexOf(binaryField);
 
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
+
         long binarySum = 0;
         for (int i = 0; i < LOOPS; i++) {
             binarySum = 0;
@@ -2338,6 +2491,8 @@ public final class HiveInputFormatBenchmark
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
         StructField binaryField = rowInspector.getStructFieldRef("t_binary");
         int fieldIndex = allStructFieldRefs.indexOf(binaryField);
+
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
 
         long binarySum = 0;
         for (int i = 0; i < LOOPS; i++) {
