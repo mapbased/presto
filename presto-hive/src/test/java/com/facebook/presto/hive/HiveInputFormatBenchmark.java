@@ -1,5 +1,6 @@
 package com.facebook.presto.hive;
 
+import com.facebook.presto.hadoop.HadoopNative;
 import com.google.common.collect.ImmutableList;
 import io.airlift.units.Duration;
 import org.apache.hadoop.conf.Configuration;
@@ -49,6 +50,8 @@ public class HiveInputFormatBenchmark
     public static void main(String[] args)
             throws Exception
     {
+        HadoopNative.requireHadoopNative();
+
         List<BenchmarkFile> benchmarkFiles = ImmutableList.of(
                 new BenchmarkFile(
                         "text",
@@ -56,15 +59,17 @@ public class HiveInputFormatBenchmark
                         new TextInputFormat(),
                         new HiveIgnoreKeyTextOutputFormat<>(),
                         new LazySimpleSerDe(),
+                        null,
                         true),
 
-//                new BenchmarkFile(
-//                        "text no-crc",
-//                        new File("target/presto_test.txt"),
-//                        new TextInputFormat(),
-//                        new HiveIgnoreKeyTextOutputFormat<>(),
-//                        new LazySimpleSerDe(),
-//                        false),
+                new BenchmarkFile(
+                        "text gzip",
+                        new File("target/presto_test.txt.gz"),
+                        new TextInputFormat(),
+                        new HiveIgnoreKeyTextOutputFormat<>(),
+                        new LazySimpleSerDe(),
+                        "gzip",
+                        true),
 
                 new BenchmarkFile(
                         "sequence",
@@ -72,15 +77,17 @@ public class HiveInputFormatBenchmark
                         new SequenceFileInputFormat<Object, Writable>(),
                         new HiveSequenceFileOutputFormat<>(),
                         new LazySimpleSerDe(),
+                        null,
                         true),
 
-//                new BenchmarkFile(
-//                        "sequence no-crc",
-//                        new File("target/presto_test.sequence"),
-//                        new SequenceFileInputFormat<Object, Writable>(),
-//                        new HiveSequenceFileOutputFormat<>(),
-//                        new LazySimpleSerDe(),
-//                        false),
+                new BenchmarkFile(
+                        "sequence gzip",
+                        new File("target/presto_test.sequence.gz"),
+                        new SequenceFileInputFormat<Object, Writable>(),
+                        new HiveSequenceFileOutputFormat<>(),
+                        new LazySimpleSerDe(),
+                        "gzip",
+                        true),
 
                 new BenchmarkFile(
                         "rc text",
@@ -88,15 +95,17 @@ public class HiveInputFormatBenchmark
                         new RCFileInputFormat<>(),
                         new RCFileOutputFormat(),
                         new ColumnarSerDe(),
+                        null,
                         true),
 
-//                new BenchmarkFile(
-//                        "rc text no-crc",
-//                        new File("target/presto_test.rc"),
-//                        new RCFileInputFormat<>(),
-//                        new RCFileOutputFormat(),
-//                        new ColumnarSerDe(),
-//                        false),
+                new BenchmarkFile(
+                        "rc text gzip",
+                        new File("target/presto_test.rc.gz"),
+                        new RCFileInputFormat<>(),
+                        new RCFileOutputFormat(),
+                        new ColumnarSerDe(),
+                        "gzip",
+                        true),
 
                 new BenchmarkFile(
                         "rc binary",
@@ -104,22 +113,20 @@ public class HiveInputFormatBenchmark
                         new RCFileInputFormat<>(),
                         new RCFileOutputFormat(),
                         new LazyBinaryColumnarSerDe(),
+                        null,
+                        true),
+
+                new BenchmarkFile(
+                        "rc binary gzip",
+                        new File("target/presto_test.rc-binary.gz"),
+                        new RCFileInputFormat<>(),
+                        new RCFileOutputFormat(),
+                        new LazyBinaryColumnarSerDe(),
+                        "gzip",
                         true)
-//
-//                new BenchmarkFile(
-//                        "rc binary no-crc",
-//                        new File("target/presto_test.rc-binary"),
-//                        new RCFileInputFormat<>(),
-//                        new RCFileOutputFormat(),
-//                        new LazyBinaryColumnarSerDe(),
-//                        false)
         );
 
         JobConf jobConf = new JobConf();
-//        while (System.currentTimeMillis() > 0) {
-//            benchmark(jobConf, benchmarkFiles.get(3), 4);
-//        }
-
         System.out.println("============ WARM UP ============");
         for (BenchmarkFile benchmarkFile : benchmarkFiles) {
             benchmark(jobConf, benchmarkFile, 5);
@@ -1510,6 +1517,7 @@ public class HiveInputFormatBenchmark
                 InputFormat<?, ? extends Writable> inputFormat,
                 HiveOutputFormat<?, ?> outputFormat,
                 SerDe serDe,
+                String compressionCodec,
                 boolean verifyChecksum)
                 throws Exception
         {
@@ -1528,7 +1536,7 @@ public class HiveInputFormatBenchmark
             serDe.initialize(new Configuration(), tableProperties);
 
             if (!file.exists()) {
-                writeFile(tableProperties, file, outputFormat, serDe);
+                writeFile(tableProperties, file, outputFormat, serDe, compressionCodec);
             }
 
             this.deserializer = serDe;

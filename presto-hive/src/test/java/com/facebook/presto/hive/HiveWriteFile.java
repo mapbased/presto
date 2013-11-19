@@ -14,8 +14,11 @@ import org.apache.hadoop.hive.serde2.columnar.ColumnarSerDe;
 import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.SettableStructObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.StructField;
+import org.apache.hadoop.io.SequenceFile.CompressionType;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.io.Writable;
+import org.apache.hadoop.io.compress.CompressionCodec;
+import org.apache.hadoop.io.compress.CompressionCodecFactory;
 import org.apache.hadoop.mapred.JobConf;
 import org.apache.hadoop.util.Progressable;
 import org.joda.time.DateTime;
@@ -40,6 +43,8 @@ import static org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveO
 import static org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory.javaShortObjectInspector;
 import static org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory.javaStringObjectInspector;
 import static org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory.javaTimestampObjectInspector;
+import static org.apache.hadoop.mapreduce.lib.output.FileOutputFormat.COMPRESS_CODEC;
+import static org.apache.hadoop.mapreduce.lib.output.FileOutputFormat.COMPRESS_TYPE;
 
 @SuppressWarnings("deprecation")
 public class HiveWriteFile
@@ -63,18 +68,27 @@ public class HiveWriteFile
                 "columns.types",
                 "string:tinyint:smallint:int:bigint:float:double:map<string,string>:boolean:timestamp:binary:array<string>:map<int,array<struct<s_string:string,s_double:double>>>");
 
-        writeFile(tableProperties, new File("test.txt"), new HiveIgnoreKeyTextOutputFormat<>(), new MetadataTypedColumnsetSerDe());
-        writeFile(tableProperties, new File("test.rc"), new RCFileOutputFormat(), new ColumnarSerDe());
+        writeFile(tableProperties, new File("test.txt"), new HiveIgnoreKeyTextOutputFormat<>(), new MetadataTypedColumnsetSerDe(), null);
+        writeFile(tableProperties, new File("test.txt.gz"), new HiveIgnoreKeyTextOutputFormat<>(), new MetadataTypedColumnsetSerDe(), "gzip");
+        writeFile(tableProperties, new File("test.rc"), new RCFileOutputFormat(), new ColumnarSerDe(), null);
+        writeFile(tableProperties, new File("test.rc.gz"), new RCFileOutputFormat(), new ColumnarSerDe(), "gzip");
     }
 
-    public static void writeFile(Properties tableProperties, File outputFile, HiveOutputFormat<?, ?> outputFormat, SerDe serDe)
+    public static void writeFile(Properties tableProperties, File outputFile, HiveOutputFormat<?, ?> outputFormat, SerDe serDe, String compressionCodec)
             throws Exception
     {
+        JobConf jobConf = new JobConf();
+        if (compressionCodec != null) {
+            CompressionCodec codec = new CompressionCodecFactory(new Configuration()).getCodecByName(compressionCodec);
+            jobConf.set(COMPRESS_CODEC, codec.getClass().getName());
+            jobConf.set(COMPRESS_TYPE, CompressionType.BLOCK.toString());
+        }
+
         RecordWriter recordWriter = outputFormat.getHiveRecordWriter(
-                new JobConf(),
+                jobConf,
                 new Path(outputFile.toURI()),
                 Text.class,
-                false,
+                compressionCodec != null,
                 tableProperties,
                 NULL_PROGRESSABLE
         );
