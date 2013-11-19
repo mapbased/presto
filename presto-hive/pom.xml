@@ -18,6 +18,12 @@
 
     <dependencies>
         <dependency>
+            <groupId>com.facebook.hive</groupId>
+            <artifactId>hive-dwrf</artifactId>
+            <version>0.1-SNAPSHOT</version>
+        </dependency>
+
+        <dependency>
             <groupId>com.facebook.presto</groupId>
             <artifactId>presto-spi</artifactId>
             <scope>provided</scope>
