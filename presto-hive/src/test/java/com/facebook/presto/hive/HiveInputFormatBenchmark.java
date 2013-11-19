@@ -13,6 +13,11 @@
  */
 package com.facebook.presto.hive;
 
+import com.facebook.hive.orc.OrcInputFormat;
+import com.facebook.hive.orc.OrcOutputFormat;
+import com.facebook.hive.orc.OrcSerde;
+import com.facebook.hive.orc.lazy.OrcLazyObject;
+import com.facebook.hive.orc.lazy.OrcLazyRow;
 import com.facebook.presto.hadoop.HadoopNative;
 import com.facebook.presto.hive.shaded.org.apache.commons.codec.binary.Base64;
 import com.google.common.collect.ImmutableList;
@@ -31,11 +36,19 @@ import org.apache.hadoop.hive.serde2.columnar.BytesRefArrayWritable;
 import org.apache.hadoop.hive.serde2.columnar.BytesRefWritable;
 import org.apache.hadoop.hive.serde2.columnar.ColumnarSerDe;
 import org.apache.hadoop.hive.serde2.columnar.LazyBinaryColumnarSerDe;
+import org.apache.hadoop.hive.serde2.io.DoubleWritable;
+import org.apache.hadoop.hive.serde2.io.ShortWritable;
 import org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe;
 import org.apache.hadoop.hive.serde2.objectinspector.PrimitiveObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.StructField;
 import org.apache.hadoop.hive.serde2.objectinspector.StructObjectInspector;
 import org.apache.hadoop.io.BinaryComparable;
+import org.apache.hadoop.io.BooleanWritable;
+import org.apache.hadoop.io.BytesWritable;
+import org.apache.hadoop.io.FloatWritable;
+import org.apache.hadoop.io.IntWritable;
+import org.apache.hadoop.io.LongWritable;
+import org.apache.hadoop.io.Text;
 import org.apache.hadoop.io.Writable;
 import org.apache.hadoop.io.WritableUtils;
 import org.apache.hadoop.mapred.FileSplit;
@@ -74,6 +87,15 @@ public final class HiveInputFormatBenchmark
         HadoopNative.requireHadoopNative();
 
         List<BenchmarkFile> benchmarkFiles = ImmutableList.of(
+                new BenchmarkFile(
+                        "dwrf",
+                        new File("target/presto_test.dwrf"),
+                        new OrcInputFormat(),
+                        new OrcOutputFormat(),
+                        new OrcSerde(),
+                        null,
+                        true),
+
                 new BenchmarkFile(
                         "text",
                         new File("target/presto_test.txt"),
@@ -222,15 +244,23 @@ public final class HiveInputFormatBenchmark
                 value = benchmarkReadStringText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
         }
-        if (benchmarkFile.getDeserializer() instanceof ColumnarSerDe) {
+        else if (benchmarkFile.getDeserializer() instanceof ColumnarSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
                 value = benchmarkReadStringColumnarText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
         }
-        if (benchmarkFile.getDeserializer() instanceof LazyBinaryColumnarSerDe) {
+        else if (benchmarkFile.getDeserializer() instanceof LazyBinaryColumnarSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
                 value = benchmarkReadStringColumnarBinary(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
+        }
+        else if (benchmarkFile.getDeserializer() instanceof OrcSerde) {
+            for (int loops = 0; loops < loopCount; loops++) {
+                value = benchmarkReadStringOrc(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+            }
+        }
+        else {
+            throw new UnsupportedOperationException("Unsupported serde " + benchmarkFile.getDeserializer().getClass().getName());
         }
         logDuration("p_string", start, loopCount, value);
 
@@ -249,15 +279,23 @@ public final class HiveInputFormatBenchmark
                 value = benchmarkReadSmallintText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
         }
-        if (benchmarkFile.getDeserializer() instanceof ColumnarSerDe) {
+        else if (benchmarkFile.getDeserializer() instanceof ColumnarSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
                 value = benchmarkReadSmallintColumnarText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
         }
-        if (benchmarkFile.getDeserializer() instanceof LazyBinaryColumnarSerDe) {
+        else if (benchmarkFile.getDeserializer() instanceof LazyBinaryColumnarSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
                 value = benchmarkReadSmallintColumnarBinary(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
+        }
+        else if (benchmarkFile.getDeserializer() instanceof OrcSerde) {
+            for (int loops = 0; loops < loopCount; loops++) {
+                value = benchmarkReadSmallintOrc(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+            }
+        }
+        else {
+            throw new UnsupportedOperationException("Unsupported serde " + benchmarkFile.getDeserializer().getClass().getName());
         }
         logDuration("p_smallint", start, loopCount, value);
 
@@ -277,14 +315,19 @@ public final class HiveInputFormatBenchmark
                 value = benchmarkReadIntText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
         }
-        if (benchmarkFile.getDeserializer() instanceof ColumnarSerDe) {
+        else if (benchmarkFile.getDeserializer() instanceof ColumnarSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
                 value = benchmarkReadIntColumnarText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
         }
-        if (benchmarkFile.getDeserializer() instanceof LazyBinaryColumnarSerDe) {
+        else if (benchmarkFile.getDeserializer() instanceof LazyBinaryColumnarSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
                 value = benchmarkReadIntColumnarBinary(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+            }
+        }
+        else if (benchmarkFile.getDeserializer() instanceof OrcSerde) {
+            for (int loops = 0; loops < loopCount; loops++) {
+                value = benchmarkReadIntOrc(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
         }
         logDuration("p_int", start, loopCount, value);
@@ -305,15 +348,23 @@ public final class HiveInputFormatBenchmark
                 value = benchmarkReadBigintText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
         }
-        if (benchmarkFile.getDeserializer() instanceof ColumnarSerDe) {
+        else if (benchmarkFile.getDeserializer() instanceof ColumnarSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
                 value = benchmarkReadBigintColumnarText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
         }
-        if (benchmarkFile.getDeserializer() instanceof LazyBinaryColumnarSerDe) {
+        else if (benchmarkFile.getDeserializer() instanceof LazyBinaryColumnarSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
                 value = benchmarkReadBigintColumnarBinary(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
+        }
+        else if (benchmarkFile.getDeserializer() instanceof OrcSerde) {
+            for (int loops = 0; loops < loopCount; loops++) {
+                value = benchmarkReadBigintOrc(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+            }
+        }
+        else {
+            throw new UnsupportedOperationException("Unsupported serde " + benchmarkFile.getDeserializer().getClass().getName());
         }
         logDuration("p_bigint", start, loopCount, value);
 
@@ -333,15 +384,23 @@ public final class HiveInputFormatBenchmark
                 value = benchmarkReadFloatText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
         }
-        if (benchmarkFile.getDeserializer() instanceof ColumnarSerDe) {
+        else if (benchmarkFile.getDeserializer() instanceof ColumnarSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
                 value = benchmarkReadFloatColumnarText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
         }
-        if (benchmarkFile.getDeserializer() instanceof LazyBinaryColumnarSerDe) {
+        else if (benchmarkFile.getDeserializer() instanceof LazyBinaryColumnarSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
                 value = benchmarkReadFloatColumnarBinary(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
+        }
+        else if (benchmarkFile.getDeserializer() instanceof OrcSerde) {
+            for (int loops = 0; loops < loopCount; loops++) {
+                value = benchmarkReadFloatOrc(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+            }
+        }
+        else {
+            throw new UnsupportedOperationException("Unsupported serde " + benchmarkFile.getDeserializer().getClass().getName());
         }
         logDuration("p_float", start, loopCount, value);
 
@@ -361,15 +420,23 @@ public final class HiveInputFormatBenchmark
                 value = benchmarkReadDoubleText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
         }
-        if (benchmarkFile.getDeserializer() instanceof ColumnarSerDe) {
+        else if (benchmarkFile.getDeserializer() instanceof ColumnarSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
                 value = benchmarkReadDoubleColumnarText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
         }
-        if (benchmarkFile.getDeserializer() instanceof LazyBinaryColumnarSerDe) {
+        else if (benchmarkFile.getDeserializer() instanceof LazyBinaryColumnarSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
                 value = benchmarkReadDoubleColumnarBinary(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
+        }
+        else if (benchmarkFile.getDeserializer() instanceof OrcSerde) {
+            for (int loops = 0; loops < loopCount; loops++) {
+                value = benchmarkReadDoubleOrc(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+            }
+        }
+        else {
+            throw new UnsupportedOperationException("Unsupported serde " + benchmarkFile.getDeserializer().getClass().getName());
         }
         logDuration("p_double", start, loopCount, value);
 
@@ -389,15 +456,23 @@ public final class HiveInputFormatBenchmark
                 value = benchmarkReadBooleanText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
         }
-        if (benchmarkFile.getDeserializer() instanceof ColumnarSerDe) {
+        else if (benchmarkFile.getDeserializer() instanceof ColumnarSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
                 value = benchmarkReadBooleanColumnarText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
         }
-        if (benchmarkFile.getDeserializer() instanceof LazyBinaryColumnarSerDe) {
+        else if (benchmarkFile.getDeserializer() instanceof LazyBinaryColumnarSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
                 value = benchmarkReadBooleanColumnarBinary(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
+        }
+        else if (benchmarkFile.getDeserializer() instanceof OrcSerde) {
+            for (int loops = 0; loops < loopCount; loops++) {
+                value = benchmarkReadBooleanOrc(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+            }
+        }
+        else {
+            throw new UnsupportedOperationException("Unsupported serde " + benchmarkFile.getDeserializer().getClass().getName());
         }
         logDuration("p_boolean", start, loopCount, value);
 
@@ -418,15 +493,23 @@ public final class HiveInputFormatBenchmark
                 value = benchmarkReadBinaryText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
         }
-        if (benchmarkFile.getDeserializer() instanceof ColumnarSerDe) {
+        else if (benchmarkFile.getDeserializer() instanceof ColumnarSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
                 value = benchmarkReadBinaryColumnarText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
         }
-        if (benchmarkFile.getDeserializer() instanceof LazyBinaryColumnarSerDe) {
+        else if (benchmarkFile.getDeserializer() instanceof LazyBinaryColumnarSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
                 value = benchmarkReadBinaryColumnarBinary(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
+        }
+        else if (benchmarkFile.getDeserializer() instanceof OrcSerde) {
+            for (int loops = 0; loops < loopCount; loops++) {
+                value = benchmarkReadBinaryOrc(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+            }
+        }
+        else {
+            throw new UnsupportedOperationException("Unsupported serde " + benchmarkFile.getDeserializer().getClass().getName());
         }
         logDuration("p_binary", start, loopCount, value);
 
@@ -447,15 +530,23 @@ public final class HiveInputFormatBenchmark
                 value = benchmarkRead3ColumnsText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
         }
-        if (benchmarkFile.getDeserializer() instanceof ColumnarSerDe) {
+        else if (benchmarkFile.getDeserializer() instanceof ColumnarSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
                 value = benchmarkRead3ColumnsColumnarText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
         }
-        if (benchmarkFile.getDeserializer() instanceof LazyBinaryColumnarSerDe) {
+        else if (benchmarkFile.getDeserializer() instanceof LazyBinaryColumnarSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
                 value = benchmarkRead3ColumnsColumnarBinary(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
+        }
+        else if (benchmarkFile.getDeserializer() instanceof OrcSerde) {
+            for (int loops = 0; loops < loopCount; loops++) {
+                value = benchmarkRead3ColumnsOrc(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+            }
+        }
+        else {
+            throw new UnsupportedOperationException("Unsupported serde " + benchmarkFile.getDeserializer().getClass().getName());
         }
         logDuration("p_three", start, loopCount, value);
 
@@ -475,15 +566,23 @@ public final class HiveInputFormatBenchmark
                 value = benchmarkReadAllColumnsText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
         }
-        if (benchmarkFile.getDeserializer() instanceof ColumnarSerDe) {
+        else if (benchmarkFile.getDeserializer() instanceof ColumnarSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
                 value = benchmarkReadAllColumnsColumnarText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
         }
-        if (benchmarkFile.getDeserializer() instanceof LazyBinaryColumnarSerDe) {
+        else if (benchmarkFile.getDeserializer() instanceof LazyBinaryColumnarSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
                 value = benchmarkReadAllColumnsColumnarBinary(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
+        }
+        else if (benchmarkFile.getDeserializer() instanceof OrcSerde) {
+            for (int loops = 0; loops < loopCount; loops++) {
+                value = benchmarkReadAllColumnsOrc(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+            }
+        }
+        else {
+            throw new UnsupportedOperationException("Unsupported serde " + benchmarkFile.getDeserializer().getClass().getName());
         }
         logDuration("p_all", start, loopCount, value);
     }
@@ -1055,6 +1154,127 @@ public final class HiveInputFormatBenchmark
         return ImmutableList.<Object>of(stringSum, smallintSum, intSum, bigintSum, floatSum, doubleSum, booleanSum, binarySum);
     }
 
+    private static <K, V extends Writable> List<Object> benchmarkReadAllColumnsOrc(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
+            throws Exception
+    {
+        StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
+
+        List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
+
+        StructField stringField = rowInspector.getStructFieldRef("t_string");
+        int stringFieldIndex = allStructFieldRefs.indexOf(stringField);
+
+        StructField smallintField = rowInspector.getStructFieldRef("t_smallint");
+        int smallintFieldIndex = allStructFieldRefs.indexOf(smallintField);
+
+        StructField intField = rowInspector.getStructFieldRef("t_int");
+        int intFieldIndex = allStructFieldRefs.indexOf(intField);
+
+        StructField bigintField = rowInspector.getStructFieldRef("t_bigint");
+        int bigintFieldIndex = allStructFieldRefs.indexOf(bigintField);
+
+        StructField floatField = rowInspector.getStructFieldRef("t_float");
+        int floatFieldIndex = allStructFieldRefs.indexOf(floatField);
+
+        StructField doubleField = rowInspector.getStructFieldRef("t_double");
+        int doubleFieldIndex = allStructFieldRefs.indexOf(doubleField);
+
+        StructField booleanField = rowInspector.getStructFieldRef("t_boolean");
+        int booleanFieldIndex = allStructFieldRefs.indexOf(booleanField);
+
+        StructField binaryField = rowInspector.getStructFieldRef("t_binary");
+        int binaryFieldIndex = allStructFieldRefs.indexOf(binaryField);
+
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(
+                stringFieldIndex,
+                smallintFieldIndex,
+                intFieldIndex,
+                bigintFieldIndex,
+                floatFieldIndex,
+                doubleFieldIndex,
+                booleanFieldIndex,
+                binaryFieldIndex));
+
+        long stringSum = 0;
+        long smallintSum = 0;
+        long intSum = 0;
+        long bigintSum = 0;
+        double floatSum = 0;
+        double doubleSum = 0;
+        long booleanSum = 0;
+        long binarySum = 0;
+        for (int i = 0; i < LOOPS; i++) {
+            stringSum = 0;
+            smallintSum = 0;
+            intSum = 0;
+            bigintSum = 0;
+            floatSum = 0;
+            doubleSum = 0;
+            booleanSum = 0;
+            binarySum = 0;
+
+            RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
+            K key = recordReader.createKey();
+            V value = recordReader.createValue();
+
+            while (recordReader.next(key, value)) {
+                OrcLazyRow row = (OrcLazyRow) value;
+
+                OrcLazyObject stringLazyObject = row.getFieldValue(stringFieldIndex);
+                Text text = (Text) stringLazyObject.materialize();
+                if (text != null) {
+                    byte[] stringValue = Arrays.copyOfRange(text.getBytes(), 0, text.getLength());
+                    stringSum += stringValue.length;
+                }
+
+                OrcLazyObject smallintLazyObject = row.getFieldValue(smallintFieldIndex);
+                ShortWritable smallintValue = (ShortWritable) smallintLazyObject.materialize();
+                if (smallintValue != null) {
+                    smallintSum += smallintValue.get();
+                }
+
+                OrcLazyObject intLazyObject = row.getFieldValue(intFieldIndex);
+                IntWritable intValue = (IntWritable) intLazyObject.materialize();
+                if (intValue != null) {
+                    intSum += intValue.get();
+                }
+
+                OrcLazyObject bigintLazyObject = row.getFieldValue(bigintFieldIndex);
+                LongWritable bigintValue = (LongWritable) bigintLazyObject.materialize();
+                if (bigintValue != null) {
+                    bigintSum += bigintValue.get();
+                }
+
+                OrcLazyObject floatLazyObject = row.getFieldValue(floatFieldIndex);
+                FloatWritable floatValue = (FloatWritable) floatLazyObject.materialize();
+                if (floatValue != null) {
+                    floatSum += floatValue.get();
+                }
+
+                OrcLazyObject doubleLazyObject = row.getFieldValue(doubleFieldIndex);
+                DoubleWritable doubleValue = (DoubleWritable) doubleLazyObject.materialize();
+                if (doubleValue != null) {
+                    doubleSum += doubleValue.get();
+                }
+
+                OrcLazyObject booleanLazyObject = row.getFieldValue(booleanFieldIndex);
+                BooleanWritable booleanValue = (BooleanWritable) booleanLazyObject.materialize();
+                if (booleanValue != null) {
+                    booleanSum += booleanValue.get() ? 1 : 2;
+                }
+
+                OrcLazyObject binaryLazyObject = row.getFieldValue(binaryFieldIndex);
+                BytesWritable bytesWritable = (BytesWritable) binaryLazyObject.materialize();
+                if (bytesWritable != null) {
+                    byte[] binaryValue = Arrays.copyOfRange(bytesWritable.getBytes(), 0, bytesWritable.getLength());
+                    binarySum += binaryValue.length;
+                }
+            }
+            recordReader.close();
+        }
+        return ImmutableList.<Object>of(stringSum, smallintSum, intSum, bigintSum, floatSum, doubleSum, booleanSum, binarySum);
+    }
+
     private static <K, V extends Writable> List<Object> benchmarkRead3Columns(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
@@ -1265,7 +1485,6 @@ public final class HiveInputFormatBenchmark
             K key = recordReader.createKey();
             V value = recordReader.createValue();
 
-
             while (recordReader.next(key, value)) {
                 BytesRefArrayWritable row = (BytesRefArrayWritable) value;
 
@@ -1296,6 +1515,60 @@ public final class HiveInputFormatBenchmark
                 if (bigintLength != 0) {
                     long bigintValue = readVBigint(bigintBytes, bigintStart, bigintLength);
                     bigintSum += bigintValue;
+                }
+            }
+            recordReader.close();
+        }
+        return ImmutableList.<Object>of(stringSum, doubleSum, bigintSum);
+    }
+
+    private static <K, V extends Writable> List<Object> benchmarkRead3ColumnsOrc(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
+            throws Exception
+    {
+        StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
+
+        List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
+        StructField stringField = rowInspector.getStructFieldRef("t_string");
+        int stringFieldIndex = allStructFieldRefs.indexOf(stringField);
+        StructField doubleField = rowInspector.getStructFieldRef("t_double");
+        int doubleFieldIndex = allStructFieldRefs.indexOf(doubleField);
+        StructField bigintField = rowInspector.getStructFieldRef("t_bigint");
+        int bigintFieldIndex = allStructFieldRefs.indexOf(bigintField);
+
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(stringFieldIndex, doubleFieldIndex, bigintFieldIndex));
+
+        long stringSum = 0;
+        double doubleSum = 0;
+        long bigintSum = 0;
+        for (int i = 0; i < LOOPS; i++) {
+            stringSum = 0;
+            doubleSum = 0;
+            bigintSum = 0;
+
+            RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
+            K key = recordReader.createKey();
+            V value = recordReader.createValue();
+
+            while (recordReader.next(key, value)) {
+                OrcLazyRow row = (OrcLazyRow) value;
+
+                OrcLazyObject stringLazyObject = row.getFieldValue(stringFieldIndex);
+                Text text = (Text) stringLazyObject.materialize();
+                if (text != null) {
+                    byte[] stringValue = Arrays.copyOfRange(text.getBytes(), 0, text.getLength());
+                    stringSum += stringValue.length;
+                }
+
+                OrcLazyObject bigintLazyObject = row.getFieldValue(bigintFieldIndex);
+                LongWritable bigintValue = (LongWritable) bigintLazyObject.materialize();
+                if (bigintValue != null) {
+                    bigintSum += bigintValue.get();
+                }
+
+                OrcLazyObject doubleLazyObject = row.getFieldValue(doubleFieldIndex);
+                DoubleWritable doubleValue = (DoubleWritable) doubleLazyObject.materialize();
+                if (doubleValue != null) {
+                    doubleSum += doubleValue.get();
                 }
             }
             recordReader.close();
@@ -1449,6 +1722,39 @@ public final class HiveInputFormatBenchmark
         return stringSum;
     }
 
+    private static <K, V extends Writable> long benchmarkReadStringOrc(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
+            throws Exception
+    {
+        StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
+
+        List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
+        StructField stringField = rowInspector.getStructFieldRef("t_string");
+        int fieldIndex = allStructFieldRefs.indexOf(stringField);
+
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
+
+        long stringSum = 0;
+        for (int i = 0; i < LOOPS; i++) {
+            stringSum = 0;
+
+            RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
+            K key = recordReader.createKey();
+            V value = recordReader.createValue();
+
+            while (recordReader.next(key, value)) {
+                OrcLazyRow row = (OrcLazyRow) value;
+                OrcLazyObject orcLazyObject = row.getFieldValue(fieldIndex);
+                Text text = (Text) orcLazyObject.materialize();
+                if (text != null) {
+                    byte[] stringValue = Arrays.copyOfRange(text.getBytes(), 0, text.getLength());
+                    stringSum += stringValue.length;
+                }
+            }
+            recordReader.close();
+        }
+        return stringSum;
+    }
+
     private static <K, V extends Writable> long benchmarkReadSmallint(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
@@ -1587,6 +1893,39 @@ public final class HiveInputFormatBenchmark
                     short smallintValue = unsafe.getShort(bytes, (long) Unsafe.ARRAY_BYTE_BASE_OFFSET + start);
                     smallintValue = Short.reverseBytes(smallintValue);
                     smallintSum += smallintValue;
+                }
+            }
+            recordReader.close();
+        }
+        return smallintSum;
+    }
+
+    private static <K, V extends Writable> long benchmarkReadSmallintOrc(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
+            throws Exception
+    {
+        StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
+
+        List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
+        StructField smallintField = rowInspector.getStructFieldRef("t_smallint");
+        int fieldIndex = allStructFieldRefs.indexOf(smallintField);
+
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
+
+        long smallintSum = 0;
+        for (int i = 0; i < LOOPS; i++) {
+            smallintSum = 0;
+
+            RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
+            K key = recordReader.createKey();
+            V value = recordReader.createValue();
+
+
+            while (recordReader.next(key, value)) {
+                OrcLazyRow row = (OrcLazyRow) value;
+                OrcLazyObject orcLazyObject = row.getFieldValue(fieldIndex);
+                ShortWritable smallintValue = (ShortWritable) orcLazyObject.materialize();
+                if (smallintValue != null) {
+                    smallintSum += smallintValue.get();
                 }
             }
             recordReader.close();
@@ -1756,6 +2095,39 @@ public final class HiveInputFormatBenchmark
         return WritableUtils.isNegativeVInt(bytes[offset]) ? ~i : i;
     }
 
+    private static <K, V extends Writable> long benchmarkReadIntOrc(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
+            throws Exception
+    {
+        StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
+
+        List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
+        StructField intField = rowInspector.getStructFieldRef("t_int");
+        int fieldIndex = allStructFieldRefs.indexOf(intField);
+
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
+
+        long intSum = 0;
+        for (int i = 0; i < LOOPS; i++) {
+            intSum = 0;
+
+            RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
+            K key = recordReader.createKey();
+            V value = recordReader.createValue();
+
+
+            while (recordReader.next(key, value)) {
+                OrcLazyRow row = (OrcLazyRow) value;
+                OrcLazyObject orcLazyObject = row.getFieldValue(fieldIndex);
+                IntWritable intValue = (IntWritable) orcLazyObject.materialize();
+                if (intValue != null) {
+                    intSum += intValue.get();
+                }
+            }
+            recordReader.close();
+        }
+        return intSum;
+    }
+
     private static <K, V extends Writable> long benchmarkReadBigint(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
@@ -1900,7 +2272,6 @@ public final class HiveInputFormatBenchmark
         }
         return bigintSum;
     }
-
     public static long readVBigint(byte[] bytes, int offset, int length)
     {
         if (length == 1) {
@@ -1914,6 +2285,39 @@ public final class HiveInputFormatBenchmark
             i = i | (b & 0xFF);
         }
         return WritableUtils.isNegativeVInt(bytes[offset]) ? ~i : i;
+    }
+
+    private static <K, V extends Writable> long benchmarkReadBigintOrc(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
+            throws Exception
+    {
+        StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
+
+        List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
+        StructField bigintField = rowInspector.getStructFieldRef("t_bigint");
+        int fieldIndex = allStructFieldRefs.indexOf(bigintField);
+
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
+
+        long bigintSum = 0;
+        for (int i = 0; i < LOOPS; i++) {
+            bigintSum = 0;
+
+            RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
+            K key = recordReader.createKey();
+            V value = recordReader.createValue();
+
+
+            while (recordReader.next(key, value)) {
+                OrcLazyRow row = (OrcLazyRow) value;
+                OrcLazyObject orcLazyObject = row.getFieldValue(fieldIndex);
+                LongWritable bigintValue = (LongWritable) orcLazyObject.materialize();
+                if (bigintValue != null) {
+                    bigintSum += bigintValue.get();
+                }
+            }
+            recordReader.close();
+        }
+        return bigintSum;
     }
 
     private static <K, V extends Writable> double benchmarkReadFloat(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
@@ -2072,6 +2476,39 @@ public final class HiveInputFormatBenchmark
         return floatSum;
     }
 
+    private static <K, V extends Writable> double benchmarkReadFloatOrc(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
+            throws Exception
+    {
+        StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
+
+        List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
+        StructField floatField = rowInspector.getStructFieldRef("t_float");
+        int fieldIndex = allStructFieldRefs.indexOf(floatField);
+
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
+
+        double floatSum = 0;
+        for (int i = 0; i < LOOPS; i++) {
+            floatSum = 0;
+
+            RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
+            K key = recordReader.createKey();
+            V value = recordReader.createValue();
+
+
+            while (recordReader.next(key, value)) {
+                OrcLazyRow row = (OrcLazyRow) value;
+                OrcLazyObject orcLazyObject = row.getFieldValue(fieldIndex);
+                FloatWritable floatValue = (FloatWritable) orcLazyObject.materialize();
+                if (floatValue != null) {
+                    floatSum += floatValue.get();
+                }
+            }
+            recordReader.close();
+        }
+        return floatSum;
+    }
+
     private static <K, V extends Writable> double benchmarkReadDouble(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
@@ -2211,6 +2648,39 @@ public final class HiveInputFormatBenchmark
                     long longBits = unsafe.getLong(bytes, (long) Unsafe.ARRAY_BYTE_BASE_OFFSET + start);
                     double doubleValue = Double.longBitsToDouble(Long.reverseBytes(longBits));
                     doubleSum += doubleValue;
+                }
+            }
+            recordReader.close();
+        }
+        return doubleSum;
+    }
+
+    private static <K, V extends Writable> double benchmarkReadDoubleOrc(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
+            throws Exception
+    {
+        StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
+
+        List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
+        StructField doubleField = rowInspector.getStructFieldRef("t_double");
+        int fieldIndex = allStructFieldRefs.indexOf(doubleField);
+
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
+
+        double doubleSum = 0;
+        for (int i = 0; i < LOOPS; i++) {
+            doubleSum = 0;
+
+            RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
+            K key = recordReader.createKey();
+            V value = recordReader.createValue();
+
+
+            while (recordReader.next(key, value)) {
+                OrcLazyRow row = (OrcLazyRow) value;
+                OrcLazyObject orcLazyObject = row.getFieldValue(fieldIndex);
+                DoubleWritable doubleValue = (DoubleWritable) orcLazyObject.materialize();
+                if (doubleValue != null) {
+                    doubleSum += doubleValue.get();
                 }
             }
             recordReader.close();
@@ -2373,6 +2843,39 @@ public final class HiveInputFormatBenchmark
         return booleanSum;
     }
 
+    private static <K, V extends Writable> long benchmarkReadBooleanOrc(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
+            throws Exception
+    {
+        StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
+
+        List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
+        StructField booleanField = rowInspector.getStructFieldRef("t_boolean");
+        int fieldIndex = allStructFieldRefs.indexOf(booleanField);
+
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
+
+        long booleanSum = 0;
+        for (int i = 0; i < LOOPS; i++) {
+            booleanSum = 0;
+
+            RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
+            K key = recordReader.createKey();
+            V value = recordReader.createValue();
+
+
+            while (recordReader.next(key, value)) {
+                OrcLazyRow row = (OrcLazyRow) value;
+                OrcLazyObject orcLazyObject = row.getFieldValue(fieldIndex);
+                BooleanWritable booleanValue = (BooleanWritable) orcLazyObject.materialize();
+                if (booleanValue != null) {
+                    booleanSum += booleanValue.get() ? 1 : 2;
+                }
+            }
+            recordReader.close();
+        }
+        return booleanSum;
+    }
+
     private static <K, V extends Writable> long benchmarkReadBinary(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
@@ -2512,6 +3015,40 @@ public final class HiveInputFormatBenchmark
 
                 if (!isNull(bytes, start, length)) {
                     byte[] binaryValue = Arrays.copyOfRange(bytes, start, start + length);
+                    binarySum += binaryValue.length;
+                }
+            }
+            recordReader.close();
+        }
+        return binarySum;
+    }
+
+    private static <K, V extends Writable> long benchmarkReadBinaryOrc(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
+            throws Exception
+    {
+        StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
+
+        List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
+        StructField binaryField = rowInspector.getStructFieldRef("t_binary");
+        int fieldIndex = allStructFieldRefs.indexOf(binaryField);
+
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
+
+        long binarySum = 0;
+        for (int i = 0; i < LOOPS; i++) {
+            binarySum = 0;
+
+            RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
+            K key = recordReader.createKey();
+            V value = recordReader.createValue();
+
+
+            while (recordReader.next(key, value)) {
+                OrcLazyRow row = (OrcLazyRow) value;
+                OrcLazyObject orcLazyObject = row.getFieldValue(fieldIndex);
+                BytesWritable bytesWritable = (BytesWritable) orcLazyObject.materialize();
+                if (bytesWritable != null) {
+                    byte[] binaryValue = Arrays.copyOfRange(bytesWritable.getBytes(), 0, bytesWritable.getLength());
                     binarySum += binaryValue.length;
                 }
             }

@@ -230,7 +230,7 @@ public class HiveWriteFile
             objectInspector.setStructFieldData(row, fields.get(12), null);
             data.add(null);
 
-            Writable record = serDe.serialize(data, objectInspector);
+            Writable record = serDe.serialize(row, objectInspector);
             recordWriter.write(record);
         }
         recordWriter.close(false);
