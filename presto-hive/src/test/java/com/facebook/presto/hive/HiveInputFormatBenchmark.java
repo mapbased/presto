@@ -26,9 +26,7 @@ import io.airlift.units.Duration;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hive.ql.exec.FileSinkOperator.RecordWriter;
-import org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat;
 import org.apache.hadoop.hive.ql.io.HiveOutputFormat;
-import org.apache.hadoop.hive.ql.io.HiveSequenceFileOutputFormat;
 import org.apache.hadoop.hive.ql.io.RCFileInputFormat;
 import org.apache.hadoop.hive.ql.io.RCFileOutputFormat;
 import org.apache.hadoop.hive.serde2.ColumnProjectionUtils;
@@ -63,8 +61,6 @@ import org.apache.hadoop.mapred.InputFormat;
 import org.apache.hadoop.mapred.JobConf;
 import org.apache.hadoop.mapred.RecordReader;
 import org.apache.hadoop.mapred.Reporter;
-import org.apache.hadoop.mapred.SequenceFileInputFormat;
-import org.apache.hadoop.mapred.TextInputFormat;
 import org.apache.hadoop.util.Progressable;
 import org.joda.time.DateTime;
 import sun.misc.Unsafe;
@@ -101,6 +97,7 @@ import static org.apache.hadoop.mapreduce.lib.output.FileOutputFormat.COMPRESS_T
 public class HiveInputFormatBenchmark
 {
     private static final int LOOPS = 1;
+    private static final String NOT_SUPPORTED = "NOT_SUPPORTED";
 
     public static void main(String[] args)
             throws Exception
@@ -109,101 +106,20 @@ public class HiveInputFormatBenchmark
 
         List<BenchmarkFile> benchmarkFiles = ImmutableList.of(
                 new BenchmarkFile(
+                        "orc",
+                        new File("target/presto_test.orc"),
+                        new org.apache.hadoop.hive.ql.io.orc.OrcInputFormat(),
+                        new org.apache.hadoop.hive.ql.io.orc.OrcOutputFormat(),
+                        new org.apache.hadoop.hive.ql.io.orc.OrcSerde(),
+                        null,
+                        true),
+
+                new BenchmarkFile(
                         "dwrf",
                         new File("target/presto_test.dwrf"),
                         new OrcInputFormat(),
                         new OrcOutputFormat(),
                         new OrcSerde(),
-                        null,
-                        true),
-
-                new BenchmarkFile(
-                        "text",
-                        new File("target/presto_test.txt"),
-                        new TextInputFormat(),
-                        new HiveIgnoreKeyTextOutputFormat<>(),
-                        new LazySimpleSerDe(),
-                        null,
-                        true),
-
-                new BenchmarkFile(
-                        "text gzip",
-                        new File("target/presto_test.txt.gz"),
-                        new TextInputFormat(),
-                        new HiveIgnoreKeyTextOutputFormat<>(),
-                        new LazySimpleSerDe(),
-                        "gzip",
-                        true),
-
-                new BenchmarkFile(
-                        "text snappy",
-                        new File("target/presto_test.txt.snappy"),
-                        new TextInputFormat(),
-                        new HiveIgnoreKeyTextOutputFormat<>(),
-                        new LazySimpleSerDe(),
-                        "snappy",
-                        true),
-
-                new BenchmarkFile(
-                        "sequence",
-                        new File("target/presto_test.sequence"),
-                        new SequenceFileInputFormat<Object, Writable>(),
-                        new HiveSequenceFileOutputFormat<>(),
-                        new LazySimpleSerDe(),
-                        null,
-                        true),
-
-                new BenchmarkFile(
-                        "sequence gzip",
-                        new File("target/presto_test.sequence.gz"),
-                        new SequenceFileInputFormat<Object, Writable>(),
-                        new HiveSequenceFileOutputFormat<>(),
-                        new LazySimpleSerDe(),
-                        "gzip",
-                        true),
-
-                new BenchmarkFile(
-                        "sequence snappy",
-                        new File("target/presto_test.sequence.snappy"),
-                        new SequenceFileInputFormat<Object, Writable>(),
-                        new HiveSequenceFileOutputFormat<>(),
-                        new LazySimpleSerDe(),
-                        "snappy",
-                        true),
-
-                new BenchmarkFile(
-                        "rc text",
-                        new File("target/presto_test.rc"),
-                        new RCFileInputFormat<>(),
-                        new RCFileOutputFormat(),
-                        new ColumnarSerDe(),
-                        null,
-                        true),
-
-                new BenchmarkFile(
-                        "rc text gzip",
-                        new File("target/presto_test.rc.gz"),
-                        new RCFileInputFormat<>(),
-                        new RCFileOutputFormat(),
-                        new ColumnarSerDe(),
-                        "gzip",
-                        true),
-
-                new BenchmarkFile(
-                        "rc text snappy",
-                        new File("target/presto_test.rc.snappy"),
-                        new RCFileInputFormat<>(),
-                        new RCFileOutputFormat(),
-                        new ColumnarSerDe(),
-                        "snappy",
-                        true),
-
-                new BenchmarkFile(
-                        "rc binary",
-                        new File("target/presto_test.rc-binary"),
-                        new RCFileInputFormat<>(),
-                        new RCFileOutputFormat(),
-                        new LazyBinaryColumnarSerDe(),
                         null,
                         true),
 
@@ -217,13 +133,104 @@ public class HiveInputFormatBenchmark
                         true),
 
                 new BenchmarkFile(
-                        "rc binary snappy",
-                        new File("target/presto_test.rc-binary.snappy"),
+                        "rc text gzip",
+                        new File("target/presto_test.rc.gz"),
                         new RCFileInputFormat<>(),
                         new RCFileOutputFormat(),
-                        new LazyBinaryColumnarSerDe(),
-                        "snappy",
+                        new ColumnarSerDe(),
+                        "gzip",
                         true)
+
+//                new BenchmarkFile(
+//                        "rc binary",
+//                        new File("target/presto_test.rc-binary"),
+//                        new RCFileInputFormat<>(),
+//                        new RCFileOutputFormat(),
+//                        new LazyBinaryColumnarSerDe(),
+//                        null,
+//                        true),
+//
+//                new BenchmarkFile(
+//                        "rc binary snappy",
+//                        new File("target/presto_test.rc-binary.snappy"),
+//                        new RCFileInputFormat<>(),
+//                        new RCFileOutputFormat(),
+//                        new LazyBinaryColumnarSerDe(),
+//                        "snappy",
+//                        true)
+//
+//                new BenchmarkFile(
+//                        "rc text",
+//                        new File("target/presto_test.rc"),
+//                        new RCFileInputFormat<>(),
+//                        new RCFileOutputFormat(),
+//                        new ColumnarSerDe(),
+//                        null,
+//                        true),
+//
+//                new BenchmarkFile(
+//                        "rc text snappy",
+//                        new File("target/presto_test.rc.snappy"),
+//                        new RCFileInputFormat<>(),
+//                        new RCFileOutputFormat(),
+//                        new ColumnarSerDe(),
+//                        "snappy",
+//                        true),
+//
+//                new BenchmarkFile(
+//                        "text",
+//                        new File("target/presto_test.txt"),
+//                        new TextInputFormat(),
+//                        new HiveIgnoreKeyTextOutputFormat<>(),
+//                        new LazySimpleSerDe(),
+//                        null,
+//                        true),
+//
+//                new BenchmarkFile(
+//                        "text gzip",
+//                        new File("target/presto_test.txt.gz"),
+//                        new TextInputFormat(),
+//                        new HiveIgnoreKeyTextOutputFormat<>(),
+//                        new LazySimpleSerDe(),
+//                        "gzip",
+//                        true),
+//
+//                new BenchmarkFile(
+//                        "text snappy",
+//                        new File("target/presto_test.txt.snappy"),
+//                        new TextInputFormat(),
+//                        new HiveIgnoreKeyTextOutputFormat<>(),
+//                        new LazySimpleSerDe(),
+//                        "snappy",
+//                        true),
+//
+//                new BenchmarkFile(
+//                        "sequence",
+//                        new File("target/presto_test.sequence"),
+//                        new SequenceFileInputFormat<Object, Writable>(),
+//                        new HiveSequenceFileOutputFormat<>(),
+//                        new LazySimpleSerDe(),
+//                        null,
+//                        true),
+//
+//                new BenchmarkFile(
+//                        "sequence gzip",
+//                        new File("target/presto_test.sequence.gz"),
+//                        new SequenceFileInputFormat<Object, Writable>(),
+//                        new HiveSequenceFileOutputFormat<>(),
+//                        new LazySimpleSerDe(),
+//                        "gzip",
+//                        true),
+//
+//                new BenchmarkFile(
+//                        "sequence snappy",
+//                        new File("target/presto_test.sequence.snappy"),
+//                        new SequenceFileInputFormat<Object, Writable>(),
+//                        new HiveSequenceFileOutputFormat<>(),
+//                        new LazySimpleSerDe(),
+//                        "snappy",
+//                        true),
+//
         );
 
         JobConf jobConf = new JobConf();
@@ -277,8 +284,11 @@ public class HiveInputFormatBenchmark
         }
         else if (benchmarkFile.getDeserializer() instanceof OrcSerde) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadStringOrc(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadStringDwrf(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
+        }
+        else if (benchmarkFile.getDeserializer() instanceof org.apache.hadoop.hive.ql.io.orc.OrcSerde) {
+            value = "NOT_SUPPORTED";
         }
         else {
             throw new UnsupportedOperationException("Unsupported serde " + benchmarkFile.getDeserializer().getClass().getName());
@@ -312,8 +322,11 @@ public class HiveInputFormatBenchmark
         }
         else if (benchmarkFile.getDeserializer() instanceof OrcSerde) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadSmallintOrc(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadSmallintDwrf(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
+        }
+        else if (benchmarkFile.getDeserializer() instanceof org.apache.hadoop.hive.ql.io.orc.OrcSerde) {
+            value = "NOT_SUPPORTED";
         }
         else {
             throw new UnsupportedOperationException("Unsupported serde " + benchmarkFile.getDeserializer().getClass().getName());
@@ -348,8 +361,14 @@ public class HiveInputFormatBenchmark
         }
         else if (benchmarkFile.getDeserializer() instanceof OrcSerde) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadIntOrc(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadIntDwrf(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
+        }
+        else if (benchmarkFile.getDeserializer() instanceof org.apache.hadoop.hive.ql.io.orc.OrcSerde) {
+            value = "NOT_SUPPORTED";
+        }
+        else {
+            throw new UnsupportedOperationException("Unsupported serde " + benchmarkFile.getDeserializer().getClass().getName());
         }
         logDuration("p_int", start, loopCount, value);
 
@@ -381,8 +400,11 @@ public class HiveInputFormatBenchmark
         }
         else if (benchmarkFile.getDeserializer() instanceof OrcSerde) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadBigintOrc(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadBigintDwrf(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
+        }
+        else if (benchmarkFile.getDeserializer() instanceof org.apache.hadoop.hive.ql.io.orc.OrcSerde) {
+            value = "NOT_SUPPORTED";
         }
         else {
             throw new UnsupportedOperationException("Unsupported serde " + benchmarkFile.getDeserializer().getClass().getName());
@@ -417,8 +439,11 @@ public class HiveInputFormatBenchmark
         }
         else if (benchmarkFile.getDeserializer() instanceof OrcSerde) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadFloatOrc(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadFloatDwrf(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
+        }
+        else if (benchmarkFile.getDeserializer() instanceof org.apache.hadoop.hive.ql.io.orc.OrcSerde) {
+            value = "NOT_SUPPORTED";
         }
         else {
             throw new UnsupportedOperationException("Unsupported serde " + benchmarkFile.getDeserializer().getClass().getName());
@@ -453,8 +478,11 @@ public class HiveInputFormatBenchmark
         }
         else if (benchmarkFile.getDeserializer() instanceof OrcSerde) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadDoubleOrc(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadDoubleDwrf(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
+        }
+        else if (benchmarkFile.getDeserializer() instanceof org.apache.hadoop.hive.ql.io.orc.OrcSerde) {
+            value = "NOT_SUPPORTED";
         }
         else {
             throw new UnsupportedOperationException("Unsupported serde " + benchmarkFile.getDeserializer().getClass().getName());
@@ -489,8 +517,11 @@ public class HiveInputFormatBenchmark
         }
         else if (benchmarkFile.getDeserializer() instanceof OrcSerde) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadBooleanOrc(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadBooleanDwrf(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
+        }
+        else if (benchmarkFile.getDeserializer() instanceof org.apache.hadoop.hive.ql.io.orc.OrcSerde) {
+            value = "NOT_SUPPORTED";
         }
         else {
             throw new UnsupportedOperationException("Unsupported serde " + benchmarkFile.getDeserializer().getClass().getName());
@@ -526,8 +557,11 @@ public class HiveInputFormatBenchmark
         }
         else if (benchmarkFile.getDeserializer() instanceof OrcSerde) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadBinaryOrc(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadBinaryDwrf(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
+        }
+        else if (benchmarkFile.getDeserializer() instanceof org.apache.hadoop.hive.ql.io.orc.OrcSerde) {
+            value = "NOT_SUPPORTED";
         }
         else {
             throw new UnsupportedOperationException("Unsupported serde " + benchmarkFile.getDeserializer().getClass().getName());
@@ -563,8 +597,11 @@ public class HiveInputFormatBenchmark
         }
         else if (benchmarkFile.getDeserializer() instanceof OrcSerde) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkRead3ColumnsOrc(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkRead3ColumnsDwrf(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
+        }
+        else if (benchmarkFile.getDeserializer() instanceof org.apache.hadoop.hive.ql.io.orc.OrcSerde) {
+            value = "NOT_SUPPORTED";
         }
         else {
             throw new UnsupportedOperationException("Unsupported serde " + benchmarkFile.getDeserializer().getClass().getName());
@@ -599,8 +636,11 @@ public class HiveInputFormatBenchmark
         }
         else if (benchmarkFile.getDeserializer() instanceof OrcSerde) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadAllColumnsOrc(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadAllColumnsDwrf(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
             }
+        }
+        else if (benchmarkFile.getDeserializer() instanceof org.apache.hadoop.hive.ql.io.orc.OrcSerde) {
+            value = "NOT_SUPPORTED";
         }
         else {
             throw new UnsupportedOperationException("Unsupported serde " + benchmarkFile.getDeserializer().getClass().getName());
@@ -610,6 +650,10 @@ public class HiveInputFormatBenchmark
 
     private static void logDuration(String label, long start, int loopCount, Object value)
     {
+        if (NOT_SUPPORTED.equals(value)) {
+            return;
+        }
+
         long end = System.nanoTime();
         long nanos = end - start;
         Duration duration = new Duration(1.0 * nanos / loopCount, NANOSECONDS).convertTo(SECONDS);
@@ -1175,7 +1219,7 @@ public class HiveInputFormatBenchmark
         return ImmutableList.<Object>of(stringSum, smallintSum, intSum, bigintSum, floatSum, doubleSum, booleanSum, binarySum);
     }
 
-    private static <K, V extends Writable> List<Object> benchmarkReadAllColumnsOrc(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
+    private static <K, V extends Writable> List<Object> benchmarkReadAllColumnsDwrf(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
@@ -1543,7 +1587,7 @@ public class HiveInputFormatBenchmark
         return ImmutableList.<Object>of(stringSum, doubleSum, bigintSum);
     }
 
-    private static <K, V extends Writable> List<Object> benchmarkRead3ColumnsOrc(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
+    private static <K, V extends Writable> List<Object> benchmarkRead3ColumnsDwrf(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
@@ -1743,7 +1787,7 @@ public class HiveInputFormatBenchmark
         return stringSum;
     }
 
-    private static <K, V extends Writable> long benchmarkReadStringOrc(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
+    private static <K, V extends Writable> long benchmarkReadStringDwrf(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
@@ -1921,7 +1965,7 @@ public class HiveInputFormatBenchmark
         return smallintSum;
     }
 
-    private static <K, V extends Writable> long benchmarkReadSmallintOrc(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
+    private static <K, V extends Writable> long benchmarkReadSmallintDwrf(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
@@ -2116,7 +2160,7 @@ public class HiveInputFormatBenchmark
         return WritableUtils.isNegativeVInt(bytes[offset]) ? ~i : i;
     }
 
-    private static <K, V extends Writable> long benchmarkReadIntOrc(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
+    private static <K, V extends Writable> long benchmarkReadIntDwrf(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
@@ -2308,7 +2352,7 @@ public class HiveInputFormatBenchmark
         return WritableUtils.isNegativeVInt(bytes[offset]) ? ~i : i;
     }
 
-    private static <K, V extends Writable> long benchmarkReadBigintOrc(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
+    private static <K, V extends Writable> long benchmarkReadBigintDwrf(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
@@ -2497,7 +2541,7 @@ public class HiveInputFormatBenchmark
         return floatSum;
     }
 
-    private static <K, V extends Writable> double benchmarkReadFloatOrc(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
+    private static <K, V extends Writable> double benchmarkReadFloatDwrf(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
@@ -2676,7 +2720,7 @@ public class HiveInputFormatBenchmark
         return doubleSum;
     }
 
-    private static <K, V extends Writable> double benchmarkReadDoubleOrc(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
+    private static <K, V extends Writable> double benchmarkReadDoubleDwrf(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
@@ -2864,7 +2908,7 @@ public class HiveInputFormatBenchmark
         return booleanSum;
     }
 
-    private static <K, V extends Writable> long benchmarkReadBooleanOrc(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
+    private static <K, V extends Writable> long benchmarkReadBooleanDwrf(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
@@ -3044,7 +3088,7 @@ public class HiveInputFormatBenchmark
         return binarySum;
     }
 
-    private static <K, V extends Writable> long benchmarkReadBinaryOrc(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
+    private static <K, V extends Writable> long benchmarkReadBinaryDwrf(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
