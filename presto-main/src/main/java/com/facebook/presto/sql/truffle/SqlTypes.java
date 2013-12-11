@@ -32,4 +32,17 @@ public class SqlTypes
         assert isDouble(value);
         return ((Number) value).doubleValue();
     }
+
+    @TypeCheck
+    public boolean isBoolean(Object value)
+    {
+        return value instanceof Boolean;
+    }
+
+    @TypeCast
+    public boolean asBoolean(Object value)
+    {
+        assert isBoolean(value);
+        return (Boolean) value;
+    }
 }

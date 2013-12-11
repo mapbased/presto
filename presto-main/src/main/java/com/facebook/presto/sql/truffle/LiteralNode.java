@@ -39,6 +39,23 @@ public abstract class LiteralNode
         }
     }
 
+    public abstract static class BooleanLiteral
+            extends LiteralNode
+    {
+        private final boolean value;
+
+        public BooleanLiteral(boolean value)
+        {
+            this.value = value;
+        }
+
+        @Specialization
+        public boolean getValue()
+        {
+            return value;
+        }
+    }
+
     public abstract static class UnknownLiteral
             extends LiteralNode
     {
