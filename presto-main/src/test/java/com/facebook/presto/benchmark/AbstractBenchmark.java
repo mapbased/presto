@@ -123,5 +123,10 @@ public abstract class AbstractBenchmark
                 formatDataSize(outputBytes, true),
                 formatCountRate(outputRows, cpuNanos, true),
                 formatDataRate(outputBytes, cpuNanos, true));
+
+        System.out.println("=================================================");
+        System.out.println("=================================================");
+        System.out.println("=================================================");
+        System.out.println("============ DONE " + measuredIterations + "=================");
     }
 }

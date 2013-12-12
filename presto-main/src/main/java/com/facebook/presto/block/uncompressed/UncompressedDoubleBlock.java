@@ -131,6 +131,6 @@ public class UncompressedDoubleBlock
 
     private void checkReadablePosition(int position)
     {
-        Preconditions.checkState(position > 0 && position < positionCount, "position is not valid");
+        Preconditions.checkState(position >= 0 && position < positionCount, "position is not valid");
     }
 }

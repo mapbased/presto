@@ -117,17 +117,17 @@ public class FilterTest
         return result;
     }
 
-    private LongLiteral newLongLiteral(long value)
+    public static LongLiteral newLongLiteral(long value)
     {
         return LongLiteralFactory.getInstance().createNode(value);
     }
 
-    private DoubleLiteral newDoubleLiteral(double value)
+    public static DoubleLiteral newDoubleLiteral(double value)
     {
         return DoubleLiteralFactory.getInstance().createNode(value);
     }
 
-    private UnknownLiteral newUnknownLiteral()
+    public static UnknownLiteral newUnknownLiteral()
     {
         return UnknownLiteralFactory.getInstance().createNode();
     }

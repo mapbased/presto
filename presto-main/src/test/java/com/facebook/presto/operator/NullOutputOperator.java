@@ -13,6 +13,7 @@
  */
 package com.facebook.presto.operator;
 
+import com.facebook.presto.block.BlockCursor;
 import com.facebook.presto.tuple.TupleInfo;
 import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -114,6 +115,10 @@ public class NullOutputOperator
     @Override
     public void addInput(Page page)
     {
+        BlockCursor cursor = page.getBlock(0).cursor();
+        if (cursor.advanceNextPosition()) {
+            System.out.println(cursor.getDouble());
+        }
         operatorContext.recordGeneratedOutput(page.getDataSize(), page.getPositionCount());
     }
 

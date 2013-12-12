@@ -16,17 +16,30 @@ package com.facebook.presto.operator;
 import com.facebook.presto.block.Block;
 import com.facebook.presto.block.RandomAccessBlock;
 import com.google.common.base.Objects;
-import com.google.common.base.Preconditions;
 import io.airlift.slice.Slice;
 import io.airlift.units.DataSize;
 import io.airlift.units.DataSize.Unit;
 
 import java.util.Arrays;
 
+import static com.google.common.base.Preconditions.checkNotNull;
+
 public class RandomAccessPage
 {
     private final RandomAccessBlock[] blocks;
     private final int positionCount;
+    private final boolean[] filtered;
+
+    public RandomAccessPage(Page page)
+    {
+        checkNotNull(page, "page is null");
+        this.positionCount = page.getPositionCount();
+        this.blocks = new RandomAccessBlock[page.getChannelCount()];
+        for (int i = 0; i < blocks.length; i++) {
+            blocks[i] = page.getBlock(i).toRandomAccessBlock();
+        }
+        this.filtered = new boolean[positionCount];
+    }
 
     public RandomAccessPage(RandomAccessBlock... blocks)
     {
@@ -35,9 +48,10 @@ public class RandomAccessPage
 
     public RandomAccessPage(int positionCount, RandomAccessBlock... blocks)
     {
-        Preconditions.checkNotNull(blocks, "blocks is null");
+        checkNotNull(blocks, "blocks is null");
         this.blocks = Arrays.copyOf(blocks, blocks.length);
         this.positionCount = positionCount;
+        this.filtered = new boolean[positionCount];
     }
 
     public int getChannelCount()
@@ -92,6 +106,16 @@ public class RandomAccessPage
     public boolean isNull(int channel, int position)
     {
         return getBlock(channel).isNull(position);
+    }
+
+    public boolean isFiltered(int position)
+    {
+        return filtered[position];
+    }
+
+    public void setFiltered(int position)
+    {
+        filtered[position] = true;
     }
 
     @Override

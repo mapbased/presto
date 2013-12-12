@@ -153,6 +153,6 @@ public class UncompressedSliceBlock
 
     private void checkReadablePosition(int position)
     {
-        Preconditions.checkState(position > 0 && position < offsets.length, "position is not valid");
+        Preconditions.checkState(position >= 0 && position < offsets.length, "position is not valid");
     }
 }
