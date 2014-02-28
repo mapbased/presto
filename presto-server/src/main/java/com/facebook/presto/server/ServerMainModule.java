@@ -83,6 +83,7 @@ import io.airlift.dbpool.H2EmbeddedDataSourceModule;
 import io.airlift.dbpool.MySqlDataSourceModule;
 import io.airlift.discovery.client.ServiceAnnouncement.ServiceAnnouncementBuilder;
 import io.airlift.discovery.client.ServiceDescriptor;
+import io.airlift.http.client.HttpClientConfig;
 import io.airlift.units.Duration;
 import org.skife.jdbi.v2.DBI;
 import org.skife.jdbi.v2.IDBI;
@@ -143,13 +144,13 @@ public class ServerMainModule
 
         // exchange client
         binder.bind(new TypeLiteral<Supplier<ExchangeClient>>() {}).to(ExchangeClientFactory.class).in(Scopes.SINGLETON);
-        httpClientBinder(binder).bindHttpClient("exchange", ForExchange.class).withTracing();
+        httpClientBinder(binder).bindHttpClient("exchange", ForExchange.class, new HttpClientConfig().setReadTimeout(new Duration(1, SECONDS))).withTracing();
         bindConfig(binder).to(ExchangeClientConfig.class);
 
         // execution
         binder.bind(LocationFactory.class).to(HttpLocationFactory.class).in(Scopes.SINGLETON);
         binder.bind(RemoteTaskFactory.class).to(HttpRemoteTaskFactory.class).in(Scopes.SINGLETON);
-        httpClientBinder(binder).bindHttpClient("scheduler", ForScheduler.class).withTracing();
+        httpClientBinder(binder).bindHttpClient("scheduler", ForScheduler.class, new HttpClientConfig().setReadTimeout(new Duration(1, SECONDS))).withTracing();
 
         // local storage manager
         bindConfig(binder).to(DatabaseLocalStorageManagerConfig.class);
@@ -235,7 +236,7 @@ public class ServerMainModule
 
         // execute resource
         binder.bind(ExecuteResource.class).in(Scopes.SINGLETON);
-        httpClientBinder(binder).bindHttpClient("execute", ForExecute.class);
+        httpClientBinder(binder).bindHttpClient("execute", ForExecute.class, new HttpClientConfig().setReadTimeout(new Duration(1, SECONDS)));
 
         // plugin manager
         binder.bind(PluginManager.class).in(Scopes.SINGLETON);
