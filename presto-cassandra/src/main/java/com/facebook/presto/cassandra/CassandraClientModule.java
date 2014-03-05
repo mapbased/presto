@@ -18,6 +18,7 @@ import com.google.inject.Binder;
 import com.google.inject.Module;
 import com.google.inject.Provides;
 import com.google.inject.Scopes;
+import org.apache.cassandra.thrift.Cassandra;
 
 import javax.inject.Singleton;
 
@@ -45,6 +46,7 @@ public class CassandraClientModule
         binder.bind(CassandraConnector.class).in(Scopes.SINGLETON);
         binder.bind(CassandraMetadata.class).in(Scopes.SINGLETON);
         binder.bind(CassandraSplitManager.class).in(Scopes.SINGLETON);
+        binder.bind(CassandraTokenSplitManager.class).in(Scopes.SINGLETON);
         binder.bind(CassandraRecordSetProvider.class).in(Scopes.SINGLETON);
         binder.bind(CassandraHandleResolver.class).in(Scopes.SINGLETON);
 
@@ -72,6 +74,14 @@ public class CassandraClientModule
     public CassandraSession createCassandraSession(CassandraConnectorId connectorId, CassandraClientConfig config)
     {
         CassandraSessionFactory factory = new CassandraSessionFactory(connectorId, config);
+        return factory.create();
+    }
+
+    @Singleton
+    @Provides
+    public Cassandra.Client createCassandraThriftConnection(CassandraClientConfig config)
+    {
+        CassandraThriftConnectionFactory factory = new CassandraThriftConnectionFactory(config);
         return factory.create();
     }
 }
