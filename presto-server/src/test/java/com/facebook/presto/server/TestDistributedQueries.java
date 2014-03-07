@@ -37,7 +37,7 @@ import com.google.common.base.Joiner;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
-import io.airlift.http.client.AsyncHttpClient;
+import io.airlift.http.client.HttpClient;
 import io.airlift.http.client.HttpClientConfig;
 import io.airlift.http.client.jetty.JettyHttpClient;
 import io.airlift.json.JsonCodec;
@@ -81,7 +81,7 @@ public class TestDistributedQueries
 
     private TestingPrestoServer coordinator;
     private List<TestingPrestoServer> servers;
-    private AsyncHttpClient httpClient;
+    private HttpClient httpClient;
     private TestingDiscoveryServer discoveryServer;
 
     @Test(expectedExceptions = RuntimeException.class, expectedExceptionsMessageRegExp = "statement is too large \\(stack overflow during analysis\\)")

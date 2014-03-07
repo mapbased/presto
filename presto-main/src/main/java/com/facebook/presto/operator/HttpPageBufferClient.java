@@ -20,7 +20,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.net.MediaType;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
-import io.airlift.http.client.AsyncHttpClient;
+import io.airlift.http.client.HttpClient;
 import io.airlift.http.client.HttpClient.HttpResponseFuture;
 import io.airlift.http.client.HttpStatus;
 import io.airlift.http.client.HttpUriBuilder;
@@ -78,7 +78,7 @@ public class HttpPageBufferClient
         void clientFinished(HttpPageBufferClient client);
     }
 
-    private final AsyncHttpClient httpClient;
+    private final HttpClient httpClient;
     private final DataSize maxResponseSize;
     private final URI location;
     private final ClientCallback clientCallback;
@@ -96,7 +96,7 @@ public class HttpPageBufferClient
     private final AtomicInteger requestsScheduled = new AtomicInteger();
     private final AtomicInteger requestsCompleted = new AtomicInteger();
 
-    public HttpPageBufferClient(AsyncHttpClient httpClient, DataSize maxResponseSize, URI location, ClientCallback clientCallback, Executor executor)
+    public HttpPageBufferClient(HttpClient httpClient, DataSize maxResponseSize, URI location, ClientCallback clientCallback, Executor executor)
     {
         this.httpClient = checkNotNull(httpClient, "httpClient is null");
         this.maxResponseSize = checkNotNull(maxResponseSize, "maxResponseSize is null");

@@ -16,7 +16,7 @@ package com.facebook.presto.cli;
 import com.facebook.presto.client.ClientSession;
 import com.facebook.presto.client.QueryResults;
 import com.facebook.presto.client.StatementClient;
-import io.airlift.http.client.AsyncHttpClient;
+import io.airlift.http.client.HttpClient;
 import io.airlift.http.client.HttpClientConfig;
 import io.airlift.http.client.jetty.JettyHttpClient;
 import io.airlift.json.JsonCodec;
@@ -33,7 +33,7 @@ public class QueryRunner
 {
     private final JsonCodec<QueryResults> queryResultsCodec;
     private final ClientSession session;
-    private final AsyncHttpClient httpClient;
+    private final HttpClient httpClient;
 
     public QueryRunner(ClientSession session, JsonCodec<QueryResults> queryResultsCodec)
     {

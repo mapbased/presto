@@ -49,8 +49,8 @@ import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.RateLimiter;
-import io.airlift.http.client.AsyncHttpClient;
 import io.airlift.http.client.FullJsonResponseHandler.JsonResponse;
+import io.airlift.http.client.HttpClient;
 import io.airlift.http.client.HttpStatus;
 import io.airlift.http.client.Request;
 import io.airlift.http.client.StatusResponseHandler.StatusResponse;
@@ -124,7 +124,7 @@ public class HttpRemoteTask
     @GuardedBy("this")
     private ContinuousTaskInfoFetcher continuousTaskInfoFetcher;
 
-    private final AsyncHttpClient httpClient;
+    private final HttpClient httpClient;
     private final Executor executor;
     private final JsonCodec<TaskInfo> taskInfoCodec;
     private final JsonCodec<TaskUpdateRequest> taskUpdateRequestCodec;
@@ -145,7 +145,7 @@ public class HttpRemoteTask
             PlanFragment planFragment,
             Multimap<PlanNodeId, Split> initialSplits,
             OutputBuffers outputBuffers,
-            AsyncHttpClient httpClient,
+            HttpClient httpClient,
             Executor executor,
             int maxConsecutiveErrorCount,
             Duration minErrorDuration,

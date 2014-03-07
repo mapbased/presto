@@ -19,7 +19,7 @@ import com.google.common.collect.Sets;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
-import io.airlift.http.client.AsyncHttpClient;
+import io.airlift.http.client.HttpClient;
 import io.airlift.units.DataSize;
 import io.airlift.units.Duration;
 
@@ -55,7 +55,7 @@ public class ExchangeClient
     private final long maxBufferedBytes;
     private final DataSize maxResponseSize;
     private final int concurrentRequestMultiplier;
-    private final AsyncHttpClient httpClient;
+    private final HttpClient httpClient;
     private final Executor executor;
 
     @GuardedBy("this")
@@ -87,7 +87,7 @@ public class ExchangeClient
     public ExchangeClient(DataSize maxBufferedBytes,
             DataSize maxResponseSize,
             int concurrentRequestMultiplier,
-            AsyncHttpClient httpClient,
+            HttpClient httpClient,
             Executor executor)
     {
         this.maxBufferedBytes = maxBufferedBytes.toBytes();

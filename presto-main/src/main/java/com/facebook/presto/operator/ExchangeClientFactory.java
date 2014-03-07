@@ -14,7 +14,7 @@
 package com.facebook.presto.operator;
 
 import com.google.common.base.Supplier;
-import io.airlift.http.client.AsyncHttpClient;
+import io.airlift.http.client.HttpClient;
 import io.airlift.units.DataSize;
 import io.airlift.units.DataSize.Unit;
 
@@ -30,12 +30,12 @@ public class ExchangeClientFactory
 {
     private final DataSize maxBufferedBytes;
     private final int concurrentRequestMultiplier;
-    private final AsyncHttpClient httpClient;
+    private final HttpClient httpClient;
     private final DataSize maxResponseSize;
     private final Executor executor;
 
     @Inject
-    public ExchangeClientFactory(ExchangeClientConfig config, @ForExchange AsyncHttpClient httpClient, @ForExchange Executor executor)
+    public ExchangeClientFactory(ExchangeClientConfig config, @ForExchange HttpClient httpClient, @ForExchange Executor executor)
     {
         this(config.getExchangeMaxBufferSize(),
                 new DataSize(10, Unit.MEGABYTE),
@@ -47,7 +47,7 @@ public class ExchangeClientFactory
     public ExchangeClientFactory(DataSize maxBufferedBytes,
             DataSize maxResponseSize,
             int concurrentRequestMultiplier,
-            AsyncHttpClient httpClient,
+            HttpClient httpClient,
             Executor executor)
     {
         this.maxBufferedBytes = checkNotNull(maxBufferedBytes, "maxBufferedBytes is null");
