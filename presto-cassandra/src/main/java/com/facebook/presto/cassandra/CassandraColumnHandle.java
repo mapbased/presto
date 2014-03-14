@@ -33,6 +33,7 @@ import static com.google.common.base.Preconditions.checkNotNull;
 public class CassandraColumnHandle
         implements ConnectorColumnHandle
 {
+    public static final String SAMPLE_WEIGHT_COLUMN_NAME = "__presto__sample_weight__";
     private final String connectorId;
     private final String name;
     private final int ordinalPosition;
@@ -199,14 +200,17 @@ public class CassandraColumnHandle
         };
     }
 
-    public static Function<CassandraColumnHandle, ColumnMetadata> columnMetadataGetter()
+    public static Function<ConnectorColumnHandle, ColumnMetadata> columnMetadataGetter()
     {
-        return new Function<CassandraColumnHandle, ColumnMetadata>()
+        return new Function<ConnectorColumnHandle, ColumnMetadata>()
         {
             @Override
-            public ColumnMetadata apply(CassandraColumnHandle input)
+            public ColumnMetadata apply(ConnectorColumnHandle columnHandle)
             {
-                return input.getColumnMetadata();
+                checkNotNull(columnHandle, "columnHandle is null");
+                checkArgument(columnHandle instanceof CassandraColumnHandle,
+                        "columnHandle is not an instance of CassandraColumnHandle");
+                return ((CassandraColumnHandle) columnHandle).getColumnMetadata();
             }
         };
     }

@@ -35,6 +35,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 
+import static com.facebook.presto.cassandra.CassandraColumnHandle.SAMPLE_WEIGHT_COLUMN_NAME;
 import static com.facebook.presto.cassandra.CassandraColumnHandle.columnMetadataGetter;
 import static com.facebook.presto.cassandra.CassandraType.toCassandraType;
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
@@ -46,7 +47,6 @@ import static com.google.common.collect.Iterables.transform;
 public class CassandraMetadata
     implements ConnectorMetadata
 {
-    public static final String SAMPLE_WEIGHT_COLUMN_NAME = "__presto__sample_weight__";
     private final String connectorId;
     private final CachingCassandraSchemaProvider schemaProvider;
     private final CassandraSession cassandraSession;
@@ -97,8 +97,8 @@ public class CassandraMetadata
     private ConnectorTableMetadata getTableMetadata(SchemaTableName tableName)
     {
         CassandraTableHandle tableHandle = schemaProvider.getTableHandle(tableName);
-        CassandraTable table = schemaProvider.getTable(tableHandle);
-        List<ColumnMetadata> columns = ImmutableList.copyOf(transform(table.getColumns(), columnMetadataGetter()));
+        Collection<ConnectorColumnHandle> values = getColumnHandles(tableHandle, false).values();
+        List<ColumnMetadata> columns = ImmutableList.copyOf(transform(values, columnMetadataGetter()));
         return new ConnectorTableMetadata(tableName, columns);
     }
 
@@ -138,16 +138,31 @@ public class CassandraMetadata
     @Override
     public ConnectorColumnHandle getSampleWeightColumnHandle(ConnectorTableHandle tableHandle)
     {
+        for (ConnectorColumnHandle handle : getColumnHandles(tableHandle, true).values()) {
+            CassandraColumnHandle columnHandle = (CassandraColumnHandle) handle;
+            if (columnHandle.getName().equals(SAMPLE_WEIGHT_COLUMN_NAME)) {
+                return columnHandle;
+            }
+        }
         return null;
     }
 
     @Override
     public Map<String, ConnectorColumnHandle> getColumnHandles(ConnectorTableHandle tableHandle)
     {
+        return getColumnHandles(tableHandle, false);
+    }
+
+    private Map<String, ConnectorColumnHandle> getColumnHandles(ConnectorTableHandle tableHandle, boolean includeSampleWeight)
+    {
         CassandraTable table = schemaProvider.getTable((CassandraTableHandle) tableHandle);
         ImmutableMap.Builder<String, ConnectorColumnHandle> columnHandles = ImmutableMap.builder();
         for (CassandraColumnHandle columnHandle : table.getColumns()) {
             columnHandles.put(CassandraCqlUtils.cqlNameToSqlName(columnHandle.getName()).toLowerCase(), columnHandle);
+        }
+        if (includeSampleWeight) {
+            CassandraColumnHandle sampleWeightColumnHandle = new CassandraColumnHandle(connectorId, SAMPLE_WEIGHT_COLUMN_NAME, 0, CassandraType.BIGINT, null, false, false, false);
+            columnHandles.put(SAMPLE_WEIGHT_COLUMN_NAME, sampleWeightColumnHandle);
         }
         return columnHandles.build();
     }
