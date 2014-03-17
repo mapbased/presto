@@ -97,8 +97,7 @@ public class CassandraMetadata
     private ConnectorTableMetadata getTableMetadata(SchemaTableName tableName)
     {
         CassandraTableHandle tableHandle = schemaProvider.getTableHandle(tableName);
-        Collection<ConnectorColumnHandle> values = getColumnHandles(tableHandle, false).values();
-        List<ColumnMetadata> columns = ImmutableList.copyOf(transform(values, columnMetadataGetter()));
+        List<ColumnMetadata> columns = ImmutableList.copyOf(transform(getColumnHandles(tableHandle).values(), columnMetadataGetter()));
         return new ConnectorTableMetadata(tableName, columns);
     }
 
@@ -158,11 +157,9 @@ public class CassandraMetadata
         CassandraTable table = schemaProvider.getTable((CassandraTableHandle) tableHandle);
         ImmutableMap.Builder<String, ConnectorColumnHandle> columnHandles = ImmutableMap.builder();
         for (CassandraColumnHandle columnHandle : table.getColumns()) {
-            columnHandles.put(CassandraCqlUtils.cqlNameToSqlName(columnHandle.getName()).toLowerCase(), columnHandle);
-        }
-        if (includeSampleWeight) {
-            CassandraColumnHandle sampleWeightColumnHandle = new CassandraColumnHandle(connectorId, SAMPLE_WEIGHT_COLUMN_NAME, 0, CassandraType.BIGINT, null, false, false, false);
-            columnHandles.put(SAMPLE_WEIGHT_COLUMN_NAME, sampleWeightColumnHandle);
+            if (includeSampleWeight || !columnHandle.getName().equals(SAMPLE_WEIGHT_COLUMN_NAME)) {
+                columnHandles.put(CassandraCqlUtils.cqlNameToSqlName(columnHandle.getName()).toLowerCase(), columnHandle);
+            }
         }
         return columnHandles.build();
     }
@@ -253,10 +250,12 @@ public class CassandraMetadata
         for (int i = 0; i < columns.size(); i++) {
             String name = columns.get(i);
             Type type = types.get(i);
-            queryBuilder.append(", ")
-                        .append(name)
-                        .append(" ")
-                        .append(toCassandraType(type).name().toLowerCase());
+            if (!name.equals(SAMPLE_WEIGHT_COLUMN_NAME)) {
+                queryBuilder.append(", ")
+                            .append(name)
+                            .append(" ")
+                            .append(toCassandraType(type).name().toLowerCase());
+            }
         }
         queryBuilder.append(")");
 
