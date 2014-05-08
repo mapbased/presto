@@ -13,8 +13,6 @@
  */
 package com.facebook.presto.hive;
 
-import com.facebook.hive.orc.OrcInputFormat;
-import com.facebook.hive.orc.OrcOutputFormat;
 import com.facebook.hive.orc.OrcSerde;
 import com.facebook.hive.orc.lazy.OrcLazyObject;
 import com.facebook.hive.orc.lazy.OrcLazyRow;
@@ -25,6 +23,9 @@ import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
+import io.airlift.log.Logging;
+import io.airlift.log.LoggingConfiguration;
+import io.airlift.log.LoggingMBean;
 import io.airlift.tpch.LineItem;
 import io.airlift.tpch.LineItemGenerator;
 import io.airlift.tpch.Order;
@@ -32,10 +33,8 @@ import io.airlift.tpch.OrderGenerator;
 import io.airlift.units.Duration;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.hive.ql.exec.FileSinkOperator.RecordWriter;
+import org.apache.hadoop.hive.ql.io.FSRecordWriter;
 import org.apache.hadoop.hive.ql.io.HiveOutputFormat;
-import org.apache.hadoop.hive.ql.io.RCFileInputFormat;
-import org.apache.hadoop.hive.ql.io.RCFileOutputFormat;
 import org.apache.hadoop.hive.serde2.ColumnProjectionUtils;
 import org.apache.hadoop.hive.serde2.Deserializer;
 import org.apache.hadoop.hive.serde2.SerDe;
@@ -69,9 +68,12 @@ import org.apache.hadoop.mapred.JobConf;
 import org.apache.hadoop.mapred.RecordReader;
 import org.apache.hadoop.mapred.Reporter;
 import org.apache.hadoop.util.Progressable;
+import parquet.Log;
 import sun.misc.Unsafe;
 
 import java.io.File;
+import java.io.IOException;
+import java.io.PrintStream;
 import java.lang.reflect.Field;
 import java.util.Arrays;
 import java.util.List;
@@ -83,6 +85,7 @@ import static com.facebook.presto.hive.HiveInputFormatBenchmark.HiveColumn.nameG
 import static com.facebook.presto.hive.HiveInputFormatBenchmark.HiveColumn.objectInspectorGetter;
 import static com.facebook.presto.hive.HiveInputFormatBenchmark.HiveColumn.typeNameGetter;
 import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.io.ByteStreams.nullOutputStream;
 import static java.util.concurrent.TimeUnit.NANOSECONDS;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.apache.hadoop.hive.serde2.objectinspector.ObjectInspectorFactory.getStandardStructObjectInspector;
@@ -137,10 +140,42 @@ public final class HiveInputFormatBenchmark
     public static void main(String[] args)
             throws Exception
     {
+        workAroundParquetBrokenLoggingSetup();
+
         HadoopNative.requireHadoopNative();
         DATA_DIR.mkdirs();
 
         List<BenchmarkFile> benchmarkFiles = ImmutableList.of(
+//                new BenchmarkFile(
+//                        "parquet",
+//                        "parquet",
+//                        new MapredParquetInputFormat(),
+//                        new MapredParquetOutputFormat(),
+//                        new ParquetHiveSerDe(),
+//                        new ParquetHiveSerDe(),
+//                        null,
+//                        true),
+//
+//                new BenchmarkFile(
+//                        "parquet gzip",
+//                        "parquet.gz",
+//                        new MapredParquetInputFormat(),
+//                        new MapredParquetOutputFormat(),
+//                        new ParquetHiveSerDe(),
+//                        new ParquetHiveSerDe(),
+//                        "gzip",
+//                        true),
+//
+//                new BenchmarkFile(
+//                        "parquet snappy",
+//                        "parquet.snappy",
+//                        new MapredParquetInputFormat(),
+//                        new MapredParquetOutputFormat(),
+//                        new ParquetHiveSerDe(),
+//                        new ParquetHiveSerDe(),
+//                        "snappy",
+//                        true),
+
                 new BenchmarkFile(
                         "orc",
                         "orc",
@@ -149,37 +184,37 @@ public final class HiveInputFormatBenchmark
                         new org.apache.hadoop.hive.ql.io.orc.OrcSerde(),
                         new org.apache.hadoop.hive.ql.io.orc.OrcSerde(),
                         null,
-                        true),
-
-                new BenchmarkFile(
-                        "dwrf",
-                        "dwrf",
-                        new OrcInputFormat(),
-                        new OrcOutputFormat(),
-                        new OrcSerde(),
-                        new OrcSerde(),
-                        null,
-                        true),
-
-                new BenchmarkFile(
-                        "rc binary gzip",
-                        "rc-binary.gz",
-                        new RCFileInputFormat<>(),
-                        new RCFileOutputFormat(),
-                        new LazyBinaryColumnarSerDe(),
-                        new LazyBinaryColumnarSerDe(),
-                        "gzip",
-                        true),
-
-                new BenchmarkFile(
-                        "rc text gzip",
-                        "rc.gz",
-                        new RCFileInputFormat<>(),
-                        new RCFileOutputFormat(),
-                        new ColumnarSerDe(),
-                        new ColumnarSerDe(),
-                        "gzip",
                         true)
+
+//                new BenchmarkFile(
+//                        "dwrf",
+//                        "dwrf",
+//                        new OrcInputFormat(),
+//                        new OrcOutputFormat(),
+//                        new OrcSerde(),
+//                        new OrcSerde(),
+//                        null,
+//                        true),
+
+//                new BenchmarkFile(
+//                        "rc binary gzip",
+//                        "rc-binary.gz",
+//                        new RCFileInputFormat<>(),
+//                        new RCFileOutputFormat(),
+//                        new LazyBinaryColumnarSerDe(),
+//                        new LazyBinaryColumnarSerDe(),
+//                        "gzip",
+//                        true),
+//
+//                new BenchmarkFile(
+//                        "rc text gzip",
+//                        "rc.gz",
+//                        new RCFileInputFormat<>(),
+//                        new RCFileOutputFormat(),
+//                        new ColumnarSerDe(),
+//                        new ColumnarSerDe(),
+//                        "gzip",
+//                        true)
 
 //                new BenchmarkFile(
 //                        "rc binary",
@@ -285,6 +320,33 @@ public final class HiveInputFormatBenchmark
         for (BenchmarkFile benchmarkFile : benchmarkFiles) {
             benchmarkLineItem(jobConf, benchmarkFile, 4);
         }
+    }
+
+    private static void workAroundParquetBrokenLoggingSetup()
+            throws IOException
+    {
+        // unhook out and err while initializing logging or logger will print to them
+        PrintStream out = System.out;
+        PrintStream err = System.err;
+        try {
+            System.setOut(new PrintStream(nullOutputStream()));
+            System.setErr(new PrintStream(nullOutputStream()));
+
+            Log.getLog(Object.class);
+            Logging logging = Logging.initialize();
+            logging.configure(new LoggingConfiguration());
+            logging.disableConsole();
+        }
+        finally {
+            System.setOut(out);
+            System.setErr(err);
+        }
+
+        LoggingMBean logging = new LoggingMBean();
+        logging.setLevel("com.hadoop", "OFF");
+        logging.setLevel("org.apache.hadoop", "OFF");
+        logging.setLevel("org.apache.zookeeper", "OFF");
+        logging.setLevel("parquet", "OFF");
     }
 
     private static void benchmarkOrder(JobConf jobConf, BenchmarkFile benchmarkFile, int loopCount)
@@ -3721,7 +3783,7 @@ public final class HiveInputFormatBenchmark
     public static void writeOrders(File outputFile, HiveOutputFormat<?, ?> outputFormat, SerDe serDe, String compressionCodec)
             throws Exception
     {
-        RecordWriter recordWriter = createRecordReader(ORDER_COLUMNS, outputFile, outputFormat, serDe, compressionCodec);
+        FSRecordWriter recordWriter = createRecordReader(ORDER_COLUMNS, outputFile, outputFormat, compressionCodec);
 
         SettableStructObjectInspector objectInspector = createSettableStructObjectInspector(ORDER_COLUMNS);
         Object row = objectInspector.create();
@@ -3749,7 +3811,7 @@ public final class HiveInputFormatBenchmark
     public static void writeLineItems(File outputFile, HiveOutputFormat<?, ?> outputFormat, SerDe serDe, String compressionCodec)
             throws Exception
     {
-        RecordWriter recordWriter = createRecordReader(LINE_ITEM_COLUMNS, outputFile, outputFormat, serDe, compressionCodec);
+        FSRecordWriter recordWriter = createRecordReader(LINE_ITEM_COLUMNS, outputFile, outputFormat, compressionCodec);
 
         SettableStructObjectInspector objectInspector = createSettableStructObjectInspector(LINE_ITEM_COLUMNS);
         Object row = objectInspector.create();
@@ -3781,7 +3843,7 @@ public final class HiveInputFormatBenchmark
         recordWriter.close(false);
     }
 
-    public static RecordWriter createRecordReader(List<HiveColumn> columns, File outputFile, HiveOutputFormat<?, ?> outputFormat, SerDe serDe, String compressionCodec)
+    public static FSRecordWriter createRecordReader(List<HiveColumn> columns, File outputFile, HiveOutputFormat<?, ?> outputFormat, String compressionCodec)
             throws Exception
     {
         JobConf jobConf = new JobConf();
@@ -3789,9 +3851,11 @@ public final class HiveInputFormatBenchmark
             CompressionCodec codec = new CompressionCodecFactory(new Configuration()).getCodecByName(compressionCodec);
             jobConf.set(COMPRESS_CODEC, codec.getClass().getName());
             jobConf.set(COMPRESS_TYPE, CompressionType.BLOCK.toString());
+            jobConf.set("parquet.compression", compressionCodec);
+            jobConf.set("parquet.enable.dictionary", "true");
         }
 
-        RecordWriter recordWriter = outputFormat.getHiveRecordWriter(
+        FSRecordWriter recordWriter = outputFormat.getHiveRecordWriter(
                 jobConf,
                 new Path(outputFile.toURI()),
                 Text.class,
