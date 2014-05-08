@@ -20,8 +20,15 @@ import com.facebook.hive.orc.lazy.OrcLazyObject;
 import com.facebook.hive.orc.lazy.OrcLazyRow;
 import com.facebook.presto.hadoop.HadoopNative;
 import com.facebook.presto.hive.shaded.org.apache.commons.codec.binary.Base64;
-import com.google.common.base.Charsets;
+import com.google.common.base.Function;
+import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.Iterables;
+import com.google.common.collect.Lists;
+import io.airlift.tpch.LineItem;
+import io.airlift.tpch.LineItemGenerator;
+import io.airlift.tpch.Order;
+import io.airlift.tpch.OrderGenerator;
 import io.airlift.units.Duration;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
@@ -62,42 +69,66 @@ import org.apache.hadoop.mapred.JobConf;
 import org.apache.hadoop.mapred.RecordReader;
 import org.apache.hadoop.mapred.Reporter;
 import org.apache.hadoop.util.Progressable;
-import org.joda.time.DateTime;
 import sun.misc.Unsafe;
 
 import java.io.File;
 import java.lang.reflect.Field;
-import java.sql.Timestamp;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Properties;
 
 import static com.facebook.presto.hive.HiveBooleanParser.isFalse;
 import static com.facebook.presto.hive.HiveBooleanParser.isTrue;
-import static java.util.concurrent.TimeUnit.MILLISECONDS;
+import static com.facebook.presto.hive.HiveInputFormatBenchmark.HiveColumn.nameGetter;
+import static com.facebook.presto.hive.HiveInputFormatBenchmark.HiveColumn.objectInspectorGetter;
+import static com.facebook.presto.hive.HiveInputFormatBenchmark.HiveColumn.typeNameGetter;
+import static com.google.common.base.Preconditions.checkNotNull;
 import static java.util.concurrent.TimeUnit.NANOSECONDS;
 import static java.util.concurrent.TimeUnit.SECONDS;
-import static org.apache.hadoop.hive.serde2.objectinspector.ObjectInspectorFactory.getStandardListObjectInspector;
-import static org.apache.hadoop.hive.serde2.objectinspector.ObjectInspectorFactory.getStandardMapObjectInspector;
 import static org.apache.hadoop.hive.serde2.objectinspector.ObjectInspectorFactory.getStandardStructObjectInspector;
-import static org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory.javaBooleanObjectInspector;
-import static org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory.javaByteArrayObjectInspector;
-import static org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory.javaByteObjectInspector;
 import static org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory.javaDoubleObjectInspector;
-import static org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory.javaFloatObjectInspector;
-import static org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory.javaIntObjectInspector;
 import static org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory.javaLongObjectInspector;
-import static org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory.javaShortObjectInspector;
 import static org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory.javaStringObjectInspector;
-import static org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory.javaTimestampObjectInspector;
 import static org.apache.hadoop.mapreduce.lib.output.FileOutputFormat.COMPRESS_CODEC;
 import static org.apache.hadoop.mapreduce.lib.output.FileOutputFormat.COMPRESS_TYPE;
 
 @SuppressWarnings("deprecation")
 public final class HiveInputFormatBenchmark
 {
-    private static final int LOOPS = 1;
+    public static final int LOOPS = 1;
     private static final String NOT_SUPPORTED = "NOT_SUPPORTED";
+    private static final File DATA_DIR = new File("target");
+
+    private static final List<HiveColumn> ORDER_COLUMNS = ImmutableList.of(
+            new HiveColumn("orderkey", javaLongObjectInspector),
+            new HiveColumn("custkey", javaLongObjectInspector),
+            new HiveColumn("orderstatus", javaStringObjectInspector),
+            new HiveColumn("totalprice", javaDoubleObjectInspector),
+            new HiveColumn("orderdate", javaStringObjectInspector),
+            new HiveColumn("orderpriority", javaStringObjectInspector),
+            new HiveColumn("clerk", javaStringObjectInspector),
+            new HiveColumn("shippriority", javaLongObjectInspector),
+            new HiveColumn("comment", javaStringObjectInspector)
+    );
+
+    private static final List<HiveColumn> LINE_ITEM_COLUMNS = ImmutableList.of(
+            new HiveColumn("orderkey", javaLongObjectInspector),
+            new HiveColumn("partkey", javaLongObjectInspector),
+            new HiveColumn("suppkey", javaLongObjectInspector),
+            new HiveColumn("linenumber", javaLongObjectInspector),
+            new HiveColumn("quantity", javaLongObjectInspector),
+            new HiveColumn("extendedprice", javaDoubleObjectInspector),
+            new HiveColumn("discount", javaDoubleObjectInspector),
+            new HiveColumn("tax", javaDoubleObjectInspector),
+            new HiveColumn("returnflag", javaStringObjectInspector),
+            new HiveColumn("linestatus", javaStringObjectInspector),
+            new HiveColumn("shipdate", javaStringObjectInspector),
+            new HiveColumn("commitdate", javaStringObjectInspector),
+            new HiveColumn("receiptdate", javaStringObjectInspector),
+            new HiveColumn("shipinstruct", javaStringObjectInspector),
+            new HiveColumn("shipmode", javaStringObjectInspector),
+            new HiveColumn("comment", javaStringObjectInspector)
+    );
 
     private HiveInputFormatBenchmark()
     {
@@ -107,40 +138,45 @@ public final class HiveInputFormatBenchmark
             throws Exception
     {
         HadoopNative.requireHadoopNative();
+        DATA_DIR.mkdirs();
 
         List<BenchmarkFile> benchmarkFiles = ImmutableList.of(
                 new BenchmarkFile(
                         "orc",
-                        new File("target/presto_test.orc"),
+                        "orc",
                         new org.apache.hadoop.hive.ql.io.orc.OrcInputFormat(),
                         new org.apache.hadoop.hive.ql.io.orc.OrcOutputFormat(),
+                        new org.apache.hadoop.hive.ql.io.orc.OrcSerde(),
                         new org.apache.hadoop.hive.ql.io.orc.OrcSerde(),
                         null,
                         true),
 
                 new BenchmarkFile(
                         "dwrf",
-                        new File("target/presto_test.dwrf"),
+                        "dwrf",
                         new OrcInputFormat(),
                         new OrcOutputFormat(),
+                        new OrcSerde(),
                         new OrcSerde(),
                         null,
                         true),
 
                 new BenchmarkFile(
                         "rc binary gzip",
-                        new File("target/presto_test.rc-binary.gz"),
+                        "rc-binary.gz",
                         new RCFileInputFormat<>(),
                         new RCFileOutputFormat(),
+                        new LazyBinaryColumnarSerDe(),
                         new LazyBinaryColumnarSerDe(),
                         "gzip",
                         true),
 
                 new BenchmarkFile(
                         "rc text gzip",
-                        new File("target/presto_test.rc.gz"),
+                        "rc.gz",
                         new RCFileInputFormat<>(),
                         new RCFileOutputFormat(),
+                        new ColumnarSerDe(),
                         new ColumnarSerDe(),
                         "gzip",
                         true)
@@ -240,18 +276,292 @@ public final class HiveInputFormatBenchmark
         JobConf jobConf = new JobConf();
         System.out.println("============ WARM UP ============");
         for (BenchmarkFile benchmarkFile : benchmarkFiles) {
-            benchmark(jobConf, benchmarkFile, 5);
+            benchmarkLineItem(jobConf, benchmarkFile, 5);
         }
 
         System.out.println();
         System.out.println();
         System.out.println("============ BENCHMARK ============");
         for (BenchmarkFile benchmarkFile : benchmarkFiles) {
-            benchmark(jobConf, benchmarkFile, 4);
+            benchmarkLineItem(jobConf, benchmarkFile, 4);
         }
     }
 
-    private static void benchmark(JobConf jobConf, BenchmarkFile benchmarkFile, int loopCount)
+    private static void benchmarkOrder(JobConf jobConf, BenchmarkFile benchmarkFile, int loopCount)
+            throws Exception
+    {
+        System.out.println();
+        System.out.println(benchmarkFile.getName());
+
+        Object value = null;
+
+        long start;
+
+        //
+        // orderKey
+        //
+        start = System.nanoTime();
+        for (int loops = 0; loops < loopCount; loops++) {
+            value = BenchmarkOrderGeneric.orderKey(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
+        }
+        logDuration("orderKey", start, loopCount, value);
+
+        //
+        // customerKey
+        //
+        start = System.nanoTime();
+        for (int loops = 0; loops < loopCount; loops++) {
+            value = BenchmarkOrderGeneric.customerKey(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
+        }
+        logDuration("customerKey", start, loopCount, value);
+
+        //
+        // orderStatus
+        //
+        start = System.nanoTime();
+        for (int loops = 0; loops < loopCount; loops++) {
+            value = BenchmarkOrderGeneric.orderStatus(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
+        }
+        logDuration("orderStatus", start, loopCount, value);
+
+        //
+        // totalPrice
+        //
+        start = System.nanoTime();
+        for (int loops = 0; loops < loopCount; loops++) {
+            value = BenchmarkOrderGeneric.totalPrice(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
+        }
+        logDuration("totalPrice", start, loopCount, value);
+
+        //
+        // orderDate
+        //
+        start = System.nanoTime();
+        for (int loops = 0; loops < loopCount; loops++) {
+            value = BenchmarkOrderGeneric.orderDate(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
+        }
+        logDuration("orderDate", start, loopCount, value);
+
+        //
+        // orderPriority
+        //
+        start = System.nanoTime();
+        for (int loops = 0; loops < loopCount; loops++) {
+            value = BenchmarkOrderGeneric.orderPriority(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
+        }
+        logDuration("orderPriority", start, loopCount, value);
+
+        //
+        // clerk
+        //
+        start = System.nanoTime();
+        for (int loops = 0; loops < loopCount; loops++) {
+            value = BenchmarkOrderGeneric.clerk(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
+        }
+        logDuration("clerk", start, loopCount, value);
+
+        //
+        // shipPriority
+        //
+        start = System.nanoTime();
+        for (int loops = 0; loops < loopCount; loops++) {
+            value = BenchmarkOrderGeneric.shipPriority(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
+        }
+        logDuration("shipPriority", start, loopCount, value);
+
+        //
+        // comment
+        //
+        start = System.nanoTime();
+        for (int loops = 0; loops < loopCount; loops++) {
+            value = BenchmarkOrderGeneric.comment(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
+        }
+        logDuration("comment", start, loopCount, value);
+    }
+
+    private static void benchmarkLineItem(JobConf jobConf, BenchmarkFile benchmarkFile, int loopCount)
+            throws Exception
+    {
+        System.out.println();
+        System.out.println(benchmarkFile.getName());
+
+        Object value = null;
+
+        long start;
+
+        //
+        // orderKey
+        //
+        start = System.nanoTime();
+        for (int loops = 0; loops < loopCount; loops++) {
+            value = BenchmarkLineItemGeneric.orderKey(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
+        }
+        logDuration("orderKey", start, loopCount, value);
+
+        //
+        // orderKey
+        //
+        start = System.nanoTime();
+        for (int loops = 0; loops < loopCount; loops++) {
+            value = BenchmarkLineItemGeneric.partKey(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
+        }
+        logDuration("partKey", start, loopCount, value);
+
+        //
+        // supplierKey
+        //
+        start = System.nanoTime();
+        for (int loops = 0; loops < loopCount; loops++) {
+            value = BenchmarkLineItemGeneric.supplierKey(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
+        }
+        logDuration("supplierKey", start, loopCount, value);
+
+        //
+        // lineNumber
+        //
+        start = System.nanoTime();
+        for (int loops = 0; loops < loopCount; loops++) {
+            value = BenchmarkLineItemGeneric.lineNumber(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
+        }
+        logDuration("lineNumber", start, loopCount, value);
+
+        //
+        // quantity
+        //
+        start = System.nanoTime();
+        for (int loops = 0; loops < loopCount; loops++) {
+            value = BenchmarkLineItemGeneric.quantity(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
+        }
+        logDuration("quantity", start, loopCount, value);
+
+        //
+        // extendedPrice
+        //
+        start = System.nanoTime();
+        for (int loops = 0; loops < loopCount; loops++) {
+            value = BenchmarkLineItemGeneric.extendedPrice(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
+        }
+        logDuration("extendedPrice", start, loopCount, value);
+
+        //
+        // discount
+        //
+        start = System.nanoTime();
+        for (int loops = 0; loops < loopCount; loops++) {
+            value = BenchmarkLineItemGeneric.discount(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
+        }
+        logDuration("discount", start, loopCount, value);
+
+        //
+        // tax
+        //
+        start = System.nanoTime();
+        for (int loops = 0; loops < loopCount; loops++) {
+            value = BenchmarkLineItemGeneric.tax(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
+        }
+        logDuration("tax", start, loopCount, value);
+
+        //
+        // returnFlag
+        //
+        start = System.nanoTime();
+        for (int loops = 0; loops < loopCount; loops++) {
+            value = BenchmarkLineItemGeneric.returnFlag(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
+        }
+        logDuration("returnFlag", start, loopCount, value);
+
+        //
+        // status
+        //
+        start = System.nanoTime();
+        for (int loops = 0; loops < loopCount; loops++) {
+            value = BenchmarkLineItemGeneric.status(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
+        }
+        logDuration("status", start, loopCount, value);
+
+        //
+        // shipDate
+        //
+        start = System.nanoTime();
+        for (int loops = 0; loops < loopCount; loops++) {
+            value = BenchmarkLineItemGeneric.shipDate(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
+        }
+        logDuration("shipDate", start, loopCount, value);
+
+        //
+        // commitDate
+        //
+        start = System.nanoTime();
+        for (int loops = 0; loops < loopCount; loops++) {
+            value = BenchmarkLineItemGeneric.commitDate(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
+        }
+        logDuration("commitDate", start, loopCount, value);
+
+        //
+        // receiptDate
+        //
+        start = System.nanoTime();
+        for (int loops = 0; loops < loopCount; loops++) {
+            value = BenchmarkLineItemGeneric.receiptDate(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
+        }
+        logDuration("receiptDate", start, loopCount, value);
+
+        //
+        // shipInstructions
+        //
+        start = System.nanoTime();
+        for (int loops = 0; loops < loopCount; loops++) {
+            value = BenchmarkLineItemGeneric.shipInstructions(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
+        }
+        logDuration("shipInstructions", start, loopCount, value);
+
+        //
+        // shipMode
+        //
+        start = System.nanoTime();
+        for (int loops = 0; loops < loopCount; loops++) {
+            value = BenchmarkLineItemGeneric.shipMode(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
+        }
+        logDuration("shipMode", start, loopCount, value);
+
+        //
+        // comment
+        //
+        start = System.nanoTime();
+        for (int loops = 0; loops < loopCount; loops++) {
+            value = BenchmarkLineItemGeneric.comment(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
+        }
+        logDuration("comment", start, loopCount, value);
+
+        //
+        // tpchQuery6
+        //
+        start = System.nanoTime();
+        for (int loops = 0; loops < loopCount; loops++) {
+            value = BenchmarkLineItemGeneric.tpchQuery6(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
+        }
+        logDuration("tpchQuery6", start, loopCount, value);
+
+        //
+        // tpchQuery1
+        //
+        start = System.nanoTime();
+        for (int loops = 0; loops < loopCount; loops++) {
+            value = BenchmarkLineItemGeneric.tpchQuery1(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
+        }
+        logDuration("tpchQuery1", start, loopCount, value);
+
+        //
+        // all
+        //
+        start = System.nanoTime();
+        for (int loops = 0; loops < loopCount; loops++) {
+            value = BenchmarkLineItemGeneric.all(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
+        }
+        logDuration("all", start, loopCount, value);
+    }
+
+    private static void benchmarkOld(JobConf jobConf, BenchmarkFile benchmarkFile, int loopCount)
             throws Exception
     {
         System.out.println();
@@ -266,36 +576,36 @@ public final class HiveInputFormatBenchmark
         //
         start = System.nanoTime();
         for (int loops = 0; loops < loopCount; loops++) {
-            value = benchmarkReadString(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+            value = benchmarkReadComment(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
         }
         logDuration("string", start, loopCount, value);
 
         start = System.nanoTime();
-        if (benchmarkFile.getDeserializer() instanceof LazySimpleSerDe) {
+        if (benchmarkFile.getOrderDeserializer() instanceof LazySimpleSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadStringText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadCommentText(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
             }
         }
-        else if (benchmarkFile.getDeserializer() instanceof ColumnarSerDe) {
+        else if (benchmarkFile.getOrderDeserializer() instanceof ColumnarSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadStringColumnarText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadCommentColumnarText(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
             }
         }
-        else if (benchmarkFile.getDeserializer() instanceof LazyBinaryColumnarSerDe) {
+        else if (benchmarkFile.getOrderDeserializer() instanceof LazyBinaryColumnarSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadStringColumnarBinary(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadCommentColumnarBinary(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
             }
         }
-        else if (benchmarkFile.getDeserializer() instanceof OrcSerde) {
+        else if (benchmarkFile.getOrderDeserializer() instanceof OrcSerde) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadStringDwrf(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadCommentDwrf(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
             }
         }
-        else if (benchmarkFile.getDeserializer() instanceof org.apache.hadoop.hive.ql.io.orc.OrcSerde) {
+        else if (benchmarkFile.getOrderDeserializer() instanceof org.apache.hadoop.hive.ql.io.orc.OrcSerde) {
             value = "NOT_SUPPORTED";
         }
         else {
-            throw new UnsupportedOperationException("Unsupported serde " + benchmarkFile.getDeserializer().getClass().getName());
+            throw new UnsupportedOperationException("Unsupported serde " + benchmarkFile.getOrderDeserializer().getClass().getName());
         }
         logDuration("p_string", start, loopCount, value);
 
@@ -304,36 +614,36 @@ public final class HiveInputFormatBenchmark
         //
         start = System.nanoTime();
         for (int loops = 0; loops < loopCount; loops++) {
-            value = benchmarkReadSmallint(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+            value = benchmarkReadSmallint(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
         }
         logDuration("smallint", start, loopCount, value);
 
         start = System.nanoTime();
-        if (benchmarkFile.getDeserializer() instanceof LazySimpleSerDe) {
+        if (benchmarkFile.getOrderDeserializer() instanceof LazySimpleSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadSmallintText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadSmallintText(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
             }
         }
-        else if (benchmarkFile.getDeserializer() instanceof ColumnarSerDe) {
+        else if (benchmarkFile.getOrderDeserializer() instanceof ColumnarSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadSmallintColumnarText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadSmallintColumnarText(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
             }
         }
-        else if (benchmarkFile.getDeserializer() instanceof LazyBinaryColumnarSerDe) {
+        else if (benchmarkFile.getOrderDeserializer() instanceof LazyBinaryColumnarSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadSmallintColumnarBinary(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadSmallintColumnarBinary(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
             }
         }
-        else if (benchmarkFile.getDeserializer() instanceof OrcSerde) {
+        else if (benchmarkFile.getOrderDeserializer() instanceof OrcSerde) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadSmallintDwrf(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadSmallintDwrf(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
             }
         }
-        else if (benchmarkFile.getDeserializer() instanceof org.apache.hadoop.hive.ql.io.orc.OrcSerde) {
+        else if (benchmarkFile.getOrderDeserializer() instanceof org.apache.hadoop.hive.ql.io.orc.OrcSerde) {
             value = "NOT_SUPPORTED";
         }
         else {
-            throw new UnsupportedOperationException("Unsupported serde " + benchmarkFile.getDeserializer().getClass().getName());
+            throw new UnsupportedOperationException("Unsupported serde " + benchmarkFile.getOrderDeserializer().getClass().getName());
         }
         logDuration("p_smallint", start, loopCount, value);
 
@@ -342,36 +652,36 @@ public final class HiveInputFormatBenchmark
         //
         start = System.nanoTime();
         for (int loops = 0; loops < loopCount; loops++) {
-            value = benchmarkReadInt(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+            value = benchmarkReadInt(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
         }
         logDuration("int", start, loopCount, value);
 
         start = System.nanoTime();
-        if (benchmarkFile.getDeserializer() instanceof LazySimpleSerDe) {
+        if (benchmarkFile.getOrderDeserializer() instanceof LazySimpleSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadIntText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadIntText(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
             }
         }
-        else if (benchmarkFile.getDeserializer() instanceof ColumnarSerDe) {
+        else if (benchmarkFile.getOrderDeserializer() instanceof ColumnarSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadIntColumnarText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadIntColumnarText(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
             }
         }
-        else if (benchmarkFile.getDeserializer() instanceof LazyBinaryColumnarSerDe) {
+        else if (benchmarkFile.getOrderDeserializer() instanceof LazyBinaryColumnarSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadIntColumnarBinary(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadIntColumnarBinary(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
             }
         }
-        else if (benchmarkFile.getDeserializer() instanceof OrcSerde) {
+        else if (benchmarkFile.getOrderDeserializer() instanceof OrcSerde) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadIntDwrf(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadIntDwrf(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
             }
         }
-        else if (benchmarkFile.getDeserializer() instanceof org.apache.hadoop.hive.ql.io.orc.OrcSerde) {
+        else if (benchmarkFile.getOrderDeserializer() instanceof org.apache.hadoop.hive.ql.io.orc.OrcSerde) {
             value = "NOT_SUPPORTED";
         }
         else {
-            throw new UnsupportedOperationException("Unsupported serde " + benchmarkFile.getDeserializer().getClass().getName());
+            throw new UnsupportedOperationException("Unsupported serde " + benchmarkFile.getOrderDeserializer().getClass().getName());
         }
         logDuration("p_int", start, loopCount, value);
 
@@ -380,36 +690,36 @@ public final class HiveInputFormatBenchmark
         //
         start = System.nanoTime();
         for (int loops = 0; loops < loopCount; loops++) {
-            value = benchmarkReadBigint(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+            value = benchmarkReadBigint(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
         }
         logDuration("bigint", start, loopCount, value);
 
         start = System.nanoTime();
-        if (benchmarkFile.getDeserializer() instanceof LazySimpleSerDe) {
+        if (benchmarkFile.getOrderDeserializer() instanceof LazySimpleSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadBigintText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadBigintText(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
             }
         }
-        else if (benchmarkFile.getDeserializer() instanceof ColumnarSerDe) {
+        else if (benchmarkFile.getOrderDeserializer() instanceof ColumnarSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadBigintColumnarText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadBigintColumnarText(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
             }
         }
-        else if (benchmarkFile.getDeserializer() instanceof LazyBinaryColumnarSerDe) {
+        else if (benchmarkFile.getOrderDeserializer() instanceof LazyBinaryColumnarSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadBigintColumnarBinary(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadBigintColumnarBinary(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
             }
         }
-        else if (benchmarkFile.getDeserializer() instanceof OrcSerde) {
+        else if (benchmarkFile.getOrderDeserializer() instanceof OrcSerde) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadBigintDwrf(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadBigintDwrf(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
             }
         }
-        else if (benchmarkFile.getDeserializer() instanceof org.apache.hadoop.hive.ql.io.orc.OrcSerde) {
+        else if (benchmarkFile.getOrderDeserializer() instanceof org.apache.hadoop.hive.ql.io.orc.OrcSerde) {
             value = "NOT_SUPPORTED";
         }
         else {
-            throw new UnsupportedOperationException("Unsupported serde " + benchmarkFile.getDeserializer().getClass().getName());
+            throw new UnsupportedOperationException("Unsupported serde " + benchmarkFile.getOrderDeserializer().getClass().getName());
         }
         logDuration("p_bigint", start, loopCount, value);
 
@@ -418,36 +728,36 @@ public final class HiveInputFormatBenchmark
         //
         start = System.nanoTime();
         for (int loops = 0; loops < loopCount; loops++) {
-            value = benchmarkReadFloat(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+            value = benchmarkReadFloat(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
         }
         logDuration("float", start, loopCount, value);
 
         start = System.nanoTime();
-        if (benchmarkFile.getDeserializer() instanceof LazySimpleSerDe) {
+        if (benchmarkFile.getOrderDeserializer() instanceof LazySimpleSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadFloatText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadFloatText(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
             }
         }
-        else if (benchmarkFile.getDeserializer() instanceof ColumnarSerDe) {
+        else if (benchmarkFile.getOrderDeserializer() instanceof ColumnarSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadFloatColumnarText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadFloatColumnarText(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
             }
         }
-        else if (benchmarkFile.getDeserializer() instanceof LazyBinaryColumnarSerDe) {
+        else if (benchmarkFile.getOrderDeserializer() instanceof LazyBinaryColumnarSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadFloatColumnarBinary(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadFloatColumnarBinary(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
             }
         }
-        else if (benchmarkFile.getDeserializer() instanceof OrcSerde) {
+        else if (benchmarkFile.getOrderDeserializer() instanceof OrcSerde) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadFloatDwrf(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadFloatDwrf(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
             }
         }
-        else if (benchmarkFile.getDeserializer() instanceof org.apache.hadoop.hive.ql.io.orc.OrcSerde) {
+        else if (benchmarkFile.getOrderDeserializer() instanceof org.apache.hadoop.hive.ql.io.orc.OrcSerde) {
             value = "NOT_SUPPORTED";
         }
         else {
-            throw new UnsupportedOperationException("Unsupported serde " + benchmarkFile.getDeserializer().getClass().getName());
+            throw new UnsupportedOperationException("Unsupported serde " + benchmarkFile.getOrderDeserializer().getClass().getName());
         }
         logDuration("p_float", start, loopCount, value);
 
@@ -456,36 +766,36 @@ public final class HiveInputFormatBenchmark
         //
         start = System.nanoTime();
         for (int loops = 0; loops < loopCount; loops++) {
-            value = benchmarkReadDouble(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+            value = benchmarkReadDouble(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
         }
         logDuration("double", start, loopCount, value);
 
         start = System.nanoTime();
-        if (benchmarkFile.getDeserializer() instanceof LazySimpleSerDe) {
+        if (benchmarkFile.getOrderDeserializer() instanceof LazySimpleSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadDoubleText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadDoubleText(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
             }
         }
-        else if (benchmarkFile.getDeserializer() instanceof ColumnarSerDe) {
+        else if (benchmarkFile.getOrderDeserializer() instanceof ColumnarSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadDoubleColumnarText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadDoubleColumnarText(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
             }
         }
-        else if (benchmarkFile.getDeserializer() instanceof LazyBinaryColumnarSerDe) {
+        else if (benchmarkFile.getOrderDeserializer() instanceof LazyBinaryColumnarSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadDoubleColumnarBinary(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadDoubleColumnarBinary(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
             }
         }
-        else if (benchmarkFile.getDeserializer() instanceof OrcSerde) {
+        else if (benchmarkFile.getOrderDeserializer() instanceof OrcSerde) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadDoubleDwrf(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadDoubleDwrf(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
             }
         }
-        else if (benchmarkFile.getDeserializer() instanceof org.apache.hadoop.hive.ql.io.orc.OrcSerde) {
+        else if (benchmarkFile.getOrderDeserializer() instanceof org.apache.hadoop.hive.ql.io.orc.OrcSerde) {
             value = "NOT_SUPPORTED";
         }
         else {
-            throw new UnsupportedOperationException("Unsupported serde " + benchmarkFile.getDeserializer().getClass().getName());
+            throw new UnsupportedOperationException("Unsupported serde " + benchmarkFile.getOrderDeserializer().getClass().getName());
         }
         logDuration("p_double", start, loopCount, value);
 
@@ -494,36 +804,36 @@ public final class HiveInputFormatBenchmark
         //
         start = System.nanoTime();
         for (int loops = 0; loops < loopCount; loops++) {
-            value = benchmarkReadBoolean(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+            value = benchmarkReadBoolean(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
         }
         logDuration("boolean", start, loopCount, value);
 
         start = System.nanoTime();
-        if (benchmarkFile.getDeserializer() instanceof LazySimpleSerDe) {
+        if (benchmarkFile.getOrderDeserializer() instanceof LazySimpleSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadBooleanText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadBooleanText(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
             }
         }
-        else if (benchmarkFile.getDeserializer() instanceof ColumnarSerDe) {
+        else if (benchmarkFile.getOrderDeserializer() instanceof ColumnarSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadBooleanColumnarText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadBooleanColumnarText(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
             }
         }
-        else if (benchmarkFile.getDeserializer() instanceof LazyBinaryColumnarSerDe) {
+        else if (benchmarkFile.getOrderDeserializer() instanceof LazyBinaryColumnarSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadBooleanColumnarBinary(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadBooleanColumnarBinary(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
             }
         }
-        else if (benchmarkFile.getDeserializer() instanceof OrcSerde) {
+        else if (benchmarkFile.getOrderDeserializer() instanceof OrcSerde) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadBooleanDwrf(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadBooleanDwrf(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
             }
         }
-        else if (benchmarkFile.getDeserializer() instanceof org.apache.hadoop.hive.ql.io.orc.OrcSerde) {
+        else if (benchmarkFile.getOrderDeserializer() instanceof org.apache.hadoop.hive.ql.io.orc.OrcSerde) {
             value = "NOT_SUPPORTED";
         }
         else {
-            throw new UnsupportedOperationException("Unsupported serde " + benchmarkFile.getDeserializer().getClass().getName());
+            throw new UnsupportedOperationException("Unsupported serde " + benchmarkFile.getOrderDeserializer().getClass().getName());
         }
         logDuration("p_boolean", start, loopCount, value);
 
@@ -532,36 +842,36 @@ public final class HiveInputFormatBenchmark
         //
         start = System.nanoTime();
         for (int loops = 0; loops < loopCount; loops++) {
-            value = benchmarkReadBinary(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+            value = benchmarkReadBinary(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
         }
         logDuration("binary", start, loopCount, value);
 
         start = System.nanoTime();
-        if (benchmarkFile.getDeserializer() instanceof LazySimpleSerDe) {
+        if (benchmarkFile.getOrderDeserializer() instanceof LazySimpleSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadBinaryText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadBinaryText(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
             }
         }
-        else if (benchmarkFile.getDeserializer() instanceof ColumnarSerDe) {
+        else if (benchmarkFile.getOrderDeserializer() instanceof ColumnarSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadBinaryColumnarText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadBinaryColumnarText(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
             }
         }
-        else if (benchmarkFile.getDeserializer() instanceof LazyBinaryColumnarSerDe) {
+        else if (benchmarkFile.getOrderDeserializer() instanceof LazyBinaryColumnarSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadBinaryColumnarBinary(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadBinaryColumnarBinary(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
             }
         }
-        else if (benchmarkFile.getDeserializer() instanceof OrcSerde) {
+        else if (benchmarkFile.getOrderDeserializer() instanceof OrcSerde) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadBinaryDwrf(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadBinaryDwrf(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
             }
         }
-        else if (benchmarkFile.getDeserializer() instanceof org.apache.hadoop.hive.ql.io.orc.OrcSerde) {
+        else if (benchmarkFile.getOrderDeserializer() instanceof org.apache.hadoop.hive.ql.io.orc.OrcSerde) {
             value = "NOT_SUPPORTED";
         }
         else {
-            throw new UnsupportedOperationException("Unsupported serde " + benchmarkFile.getDeserializer().getClass().getName());
+            throw new UnsupportedOperationException("Unsupported serde " + benchmarkFile.getOrderDeserializer().getClass().getName());
         }
         logDuration("p_binary", start, loopCount, value);
 
@@ -570,36 +880,36 @@ public final class HiveInputFormatBenchmark
         //
         start = System.nanoTime();
         for (int loops = 0; loops < loopCount; loops++) {
-            value = benchmarkRead3Columns(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+            value = benchmarkRead3Columns(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
         }
         logDuration("three", start, loopCount, value);
 
         start = System.nanoTime();
-        if (benchmarkFile.getDeserializer() instanceof LazySimpleSerDe) {
+        if (benchmarkFile.getOrderDeserializer() instanceof LazySimpleSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkRead3ColumnsText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkRead3ColumnsText(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
             }
         }
-        else if (benchmarkFile.getDeserializer() instanceof ColumnarSerDe) {
+        else if (benchmarkFile.getOrderDeserializer() instanceof ColumnarSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkRead3ColumnsColumnarText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkRead3ColumnsColumnarText(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
             }
         }
-        else if (benchmarkFile.getDeserializer() instanceof LazyBinaryColumnarSerDe) {
+        else if (benchmarkFile.getOrderDeserializer() instanceof LazyBinaryColumnarSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkRead3ColumnsColumnarBinary(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkRead3ColumnsColumnarBinary(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
             }
         }
-        else if (benchmarkFile.getDeserializer() instanceof OrcSerde) {
+        else if (benchmarkFile.getOrderDeserializer() instanceof OrcSerde) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkRead3ColumnsDwrf(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkRead3ColumnsDwrf(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
             }
         }
-        else if (benchmarkFile.getDeserializer() instanceof org.apache.hadoop.hive.ql.io.orc.OrcSerde) {
+        else if (benchmarkFile.getOrderDeserializer() instanceof org.apache.hadoop.hive.ql.io.orc.OrcSerde) {
             value = "NOT_SUPPORTED";
         }
         else {
-            throw new UnsupportedOperationException("Unsupported serde " + benchmarkFile.getDeserializer().getClass().getName());
+            throw new UnsupportedOperationException("Unsupported serde " + benchmarkFile.getOrderDeserializer().getClass().getName());
         }
         logDuration("p_three", start, loopCount, value);
 
@@ -608,35 +918,35 @@ public final class HiveInputFormatBenchmark
         //
         start = System.nanoTime();
         for (int loops = 0; loops < loopCount; loops++) {
-            value = benchmarkReadAllColumns(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+            value = benchmarkReadAllColumns(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
         }
         logDuration("all", start, loopCount, value);
         start = System.nanoTime();
-        if (benchmarkFile.getDeserializer() instanceof LazySimpleSerDe) {
+        if (benchmarkFile.getOrderDeserializer() instanceof LazySimpleSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadAllColumnsText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadAllColumnsText(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
             }
         }
-        else if (benchmarkFile.getDeserializer() instanceof ColumnarSerDe) {
+        else if (benchmarkFile.getOrderDeserializer() instanceof ColumnarSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadAllColumnsColumnarText(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadAllColumnsColumnarText(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
             }
         }
-        else if (benchmarkFile.getDeserializer() instanceof LazyBinaryColumnarSerDe) {
+        else if (benchmarkFile.getOrderDeserializer() instanceof LazyBinaryColumnarSerDe) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadAllColumnsColumnarBinary(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadAllColumnsColumnarBinary(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
             }
         }
-        else if (benchmarkFile.getDeserializer() instanceof OrcSerde) {
+        else if (benchmarkFile.getOrderDeserializer() instanceof OrcSerde) {
             for (int loops = 0; loops < loopCount; loops++) {
-                value = benchmarkReadAllColumnsDwrf(jobConf, benchmarkFile.getFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getDeserializer());
+                value = benchmarkReadAllColumnsDwrf(jobConf, benchmarkFile.getOrderFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getOrderDeserializer());
             }
         }
-        else if (benchmarkFile.getDeserializer() instanceof org.apache.hadoop.hive.ql.io.orc.OrcSerde) {
+        else if (benchmarkFile.getOrderDeserializer() instanceof org.apache.hadoop.hive.ql.io.orc.OrcSerde) {
             value = "NOT_SUPPORTED";
         }
         else {
-            throw new UnsupportedOperationException("Unsupported serde " + benchmarkFile.getDeserializer().getClass().getName());
+            throw new UnsupportedOperationException("Unsupported serde " + benchmarkFile.getOrderDeserializer().getClass().getName());
         }
         logDuration("p_all", start, loopCount, value);
     }
@@ -650,7 +960,7 @@ public final class HiveInputFormatBenchmark
         long end = System.nanoTime();
         long nanos = end - start;
         Duration duration = new Duration(1.0 * nanos / loopCount, NANOSECONDS).convertTo(SECONDS);
-        System.out.printf("%10s %6s %s\n", label, duration, value);
+        System.out.printf("%16s %6s %s\n", label, duration, value);
     }
 
     private static <K, V extends Writable> List<Object> benchmarkReadAllColumns(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
@@ -1634,13 +1944,154 @@ public final class HiveInputFormatBenchmark
         return ImmutableList.<Object>of(stringSum, doubleSum, bigintSum);
     }
 
-    private static <K, V extends Writable> long benchmarkReadString(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
+    private static <K, V extends Writable> long customerKeyText(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
+            throws Exception
+    {
+        StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
+
+        List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
+        StructField bigintField = rowInspector.getStructFieldRef("custkey");
+        int fieldIndex = allStructFieldRefs.indexOf(bigintField);
+
+        int[] startPosition = new int[13];
+
+        long bigintSum = 0;
+        for (int i = 0; i < LOOPS; i++) {
+            bigintSum = 0;
+            RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
+            K key = recordReader.createKey();
+            V value = recordReader.createValue();
+
+            while (recordReader.next(key, value)) {
+                BinaryComparable row = (BinaryComparable) value;
+
+                byte[] bytes = row.getBytes();
+                parseTextFields(bytes, 0, row.getLength(), startPosition);
+
+                int start = startPosition[fieldIndex];
+                int length = startPosition[fieldIndex + 1] - start - 1;
+
+                if (!isNull(bytes, start, length)) {
+                    long bigintValue = NumberParser.parseLong(bytes, start, length);
+                    bigintSum += bigintValue;
+                }
+            }
+            recordReader.close();
+        }
+        return bigintSum;
+    }
+
+    private static <K, V extends Writable> long customerKeyColumnarText(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
+            throws Exception
+    {
+        StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
+
+        List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
+        StructField bigintField = rowInspector.getStructFieldRef("custkey");
+        int fieldIndex = allStructFieldRefs.indexOf(bigintField);
+
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
+
+        long bigintSum = 0;
+        for (int i = 0; i < LOOPS; i++) {
+            bigintSum = 0;
+
+            RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
+            K key = recordReader.createKey();
+            V value = recordReader.createValue();
+
+            while (recordReader.next(key, value)) {
+                BytesRefArrayWritable row = (BytesRefArrayWritable) value;
+                BytesRefWritable bytesRefWritable = row.unCheckedGet(fieldIndex);
+                byte[] bytes = bytesRefWritable.getData();
+                int start = bytesRefWritable.getStart();
+                int length = bytesRefWritable.getLength();
+
+                if (!isNull(bytes, start, length)) {
+                    long bigintValue = NumberParser.parseLong(bytes, start, length);
+                    bigintSum += bigintValue;
+                }
+            }
+            recordReader.close();
+        }
+        return bigintSum;
+    }
+
+    private static <K, V extends Writable> long customerKeyColumnarBinary(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
+            throws Exception
+    {
+        StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
+
+        List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
+        StructField bigintField = rowInspector.getStructFieldRef("custkey");
+        int fieldIndex = allStructFieldRefs.indexOf(bigintField);
+
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
+
+        long bigintSum = 0;
+        for (int i = 0; i < LOOPS; i++) {
+            bigintSum = 0;
+
+            RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
+            K key = recordReader.createKey();
+            V value = recordReader.createValue();
+
+            while (recordReader.next(key, value)) {
+                BytesRefArrayWritable row = (BytesRefArrayWritable) value;
+                BytesRefWritable bytesRefWritable = row.unCheckedGet(fieldIndex);
+                byte[] bytes = bytesRefWritable.getData();
+                int start = bytesRefWritable.getStart();
+                int length = bytesRefWritable.getLength();
+
+                if (length != 0) {
+                    long bigintValue = readVBigint(bytes, start, length);
+                    bigintSum += bigintValue;
+                }
+            }
+            recordReader.close();
+        }
+        return bigintSum;
+    }
+
+    private static <K, V extends Writable> long customerKeyDwrf(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
+            throws Exception
+    {
+        StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
+
+        List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
+        StructField bigintField = rowInspector.getStructFieldRef("custkey");
+        int fieldIndex = allStructFieldRefs.indexOf(bigintField);
+
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
+
+        long bigintSum = 0;
+        for (int i = 0; i < LOOPS; i++) {
+            bigintSum = 0;
+
+            RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
+            K key = recordReader.createKey();
+            V value = recordReader.createValue();
+
+            while (recordReader.next(key, value)) {
+                OrcLazyRow row = (OrcLazyRow) value;
+                OrcLazyObject orcLazyObject = row.getFieldValue(fieldIndex);
+                LongWritable bigintValue = (LongWritable) orcLazyObject.materialize();
+                if (bigintValue != null) {
+                    bigintSum += bigintValue.get();
+                }
+            }
+            recordReader.close();
+        }
+        return bigintSum;
+    }
+
+    private static <K, V extends Writable> long benchmarkReadComment(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
 
-        StructField stringField = rowInspector.getStructFieldRef("t_string");
+        StructField stringField = rowInspector.getStructFieldRef("comment");
         int fieldIndex = allStructFieldRefs.indexOf(stringField);
         PrimitiveObjectInspector stringFieldInspector = (PrimitiveObjectInspector) stringField.getFieldObjectInspector();
 
@@ -1669,13 +2120,13 @@ public final class HiveInputFormatBenchmark
         return stringLengthSum;
     }
 
-    private static <K, V extends Writable> long benchmarkReadStringText(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
+    private static <K, V extends Writable> long benchmarkReadCommentText(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
 
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
-        StructField stringField = rowInspector.getStructFieldRef("t_string");
+        StructField stringField = rowInspector.getStructFieldRef("comment");
         int fieldIndex = allStructFieldRefs.indexOf(stringField);
 
         int[] startPosition = new int[13];
@@ -1706,13 +2157,13 @@ public final class HiveInputFormatBenchmark
         return stringSum;
     }
 
-    private static <K, V extends Writable> long benchmarkReadStringColumnarText(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
+    private static <K, V extends Writable> long benchmarkReadCommentColumnarText(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
 
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
-        StructField stringField = rowInspector.getStructFieldRef("t_string");
+        StructField stringField = rowInspector.getStructFieldRef("comment");
         int fieldIndex = allStructFieldRefs.indexOf(stringField);
 
         ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
@@ -1742,13 +2193,13 @@ public final class HiveInputFormatBenchmark
         return stringSum;
     }
 
-    private static <K, V extends Writable> long benchmarkReadStringColumnarBinary(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
+    private static <K, V extends Writable> long benchmarkReadCommentColumnarBinary(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
 
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
-        StructField stringField = rowInspector.getStructFieldRef("t_string");
+        StructField stringField = rowInspector.getStructFieldRef("comment");
         int fieldIndex = allStructFieldRefs.indexOf(stringField);
 
         ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
@@ -1778,13 +2229,13 @@ public final class HiveInputFormatBenchmark
         return stringSum;
     }
 
-    private static <K, V extends Writable> long benchmarkReadStringDwrf(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
+    private static <K, V extends Writable> long benchmarkReadCommentDwrf(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
 
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
-        StructField stringField = rowInspector.getStructFieldRef("t_string");
+        StructField stringField = rowInspector.getStructFieldRef("comment");
         int fieldIndex = allStructFieldRefs.indexOf(stringField);
 
         ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
@@ -2184,7 +2635,7 @@ public final class HiveInputFormatBenchmark
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
 
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
-        StructField bigintField = rowInspector.getStructFieldRef("t_bigint");
+        StructField bigintField = rowInspector.getStructFieldRef("custkey");
         int fieldIndex = allStructFieldRefs.indexOf(bigintField);
         PrimitiveObjectInspector bigintFieldInspector = (PrimitiveObjectInspector) bigintField.getFieldObjectInspector();
 
@@ -2218,7 +2669,7 @@ public final class HiveInputFormatBenchmark
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
 
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
-        StructField bigintField = rowInspector.getStructFieldRef("t_bigint");
+        StructField bigintField = rowInspector.getStructFieldRef("custkey");
         int fieldIndex = allStructFieldRefs.indexOf(bigintField);
 
         int[] startPosition = new int[13];
@@ -2255,7 +2706,7 @@ public final class HiveInputFormatBenchmark
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
 
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
-        StructField bigintField = rowInspector.getStructFieldRef("t_bigint");
+        StructField bigintField = rowInspector.getStructFieldRef("custkey");
         int fieldIndex = allStructFieldRefs.indexOf(bigintField);
 
         ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
@@ -2291,7 +2742,7 @@ public final class HiveInputFormatBenchmark
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
 
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
-        StructField bigintField = rowInspector.getStructFieldRef("t_bigint");
+        StructField bigintField = rowInspector.getStructFieldRef("custkey");
         int fieldIndex = allStructFieldRefs.indexOf(bigintField);
 
         ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
@@ -2341,7 +2792,7 @@ public final class HiveInputFormatBenchmark
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
 
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
-        StructField bigintField = rowInspector.getStructFieldRef("t_bigint");
+        StructField bigintField = rowInspector.getStructFieldRef("custkey");
         int fieldIndex = allStructFieldRefs.indexOf(bigintField);
 
         ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
@@ -3184,41 +3635,44 @@ public final class HiveInputFormatBenchmark
     {
         private final String name;
         private final InputFormat<?, ? extends Writable> inputFormat;
-        private final Deserializer deserializer;
-        private final FileSplit fileSplit;
+        private final Deserializer orderDeserializer;
+        private final FileSplit orderFileSplit;
+        private final Deserializer lineItemDeserializer;
+        private final FileSplit lineItemFileSplit;
 
         public BenchmarkFile(
                 String name,
-                File file,
+                String fileExtension,
                 InputFormat<?, ? extends Writable> inputFormat,
                 HiveOutputFormat<?, ?> outputFormat,
-                SerDe serDe,
+                SerDe orderSerDe,
+                SerDe lineitemSerDe,
                 String compressionCodec,
                 boolean verifyChecksum)
                 throws Exception
         {
             this.name = name;
             this.inputFormat = inputFormat;
+            this.orderDeserializer = orderSerDe;
+            this.lineItemDeserializer = lineitemSerDe;
 
-            file.getParentFile().mkdirs();
-
-            Properties tableProperties = new Properties();
-            tableProperties.setProperty(
-                    "columns",
-                    "t_string,t_tinyint,t_smallint,t_int,t_bigint,t_float,t_double,t_map,t_boolean,t_timestamp,t_binary,t_array_string,t_complex");
-            tableProperties.setProperty(
-                    "columns.types",
-                    "string:tinyint:smallint:int:bigint:float:double:map<string,string>:boolean:timestamp:binary:array<string>:map<int,array<struct<s_string:string,s_double:double>>>");
-            serDe.initialize(new Configuration(), tableProperties);
-
-            if (!file.exists()) {
-                writeFile(tableProperties, file, outputFormat, serDe, compressionCodec);
+            File orderFile = new File(DATA_DIR, "order." + fileExtension);
+            orderSerDe.initialize(new Configuration(), createTableProperties(ORDER_COLUMNS));
+            if (!orderFile.exists()) {
+                writeOrders(orderFile, outputFormat, orderSerDe, compressionCodec);
             }
+            Path orderPath = new Path(orderFile.toURI());
+            orderPath.getFileSystem(new Configuration()).setVerifyChecksum(verifyChecksum);
+            this.orderFileSplit = new FileSplit(orderPath, 0, orderFile.length(), new String[0]);
 
-            this.deserializer = serDe;
-            Path path = new Path(file.toURI());
-            path.getFileSystem(new Configuration()).setVerifyChecksum(verifyChecksum);
-            this.fileSplit = new FileSplit(path, 0, file.length(), new String[0]);
+            File lineItemFile = new File(DATA_DIR, "line_item." + fileExtension);
+            lineitemSerDe.initialize(new Configuration(), createTableProperties(LINE_ITEM_COLUMNS));
+            if (!lineItemFile.exists()) {
+                writeLineItems(lineItemFile, outputFormat, lineitemSerDe, compressionCodec);
+            }
+            Path lineitemPath = new Path(lineItemFile.toURI());
+            lineitemPath.getFileSystem(new Configuration()).setVerifyChecksum(verifyChecksum);
+            this.lineItemFileSplit = new FileSplit(lineitemPath, 0, lineItemFile.length(), new String[0]);
         }
 
         private String getName()
@@ -3231,18 +3685,103 @@ public final class HiveInputFormatBenchmark
             return inputFormat;
         }
 
-        private Deserializer getDeserializer()
+        private Deserializer getOrderDeserializer()
         {
-            return deserializer;
+            return orderDeserializer;
         }
 
-        private FileSplit getFileSplit()
+        private FileSplit getOrderFileSplit()
         {
-            return fileSplit;
+            return orderFileSplit;
+        }
+
+        public Deserializer getLineItemDeserializer()
+        {
+            return lineItemDeserializer;
+        }
+
+        public FileSplit getLineItemFileSplit()
+        {
+            return lineItemFileSplit;
         }
     }
 
-    public static void writeFile(Properties tableProperties, File outputFile, HiveOutputFormat<?, ?> outputFormat, SerDe serDe, String compressionCodec)
+    public static Properties createTableProperties(List<HiveColumn> columns)
+    {
+        Properties orderTableProperties = new Properties();
+        orderTableProperties.setProperty(
+                "columns",
+                Joiner.on(',').join(Iterables.transform(columns, nameGetter())));
+        orderTableProperties.setProperty(
+                "columns.types",
+                Joiner.on(':').join(Iterables.transform(columns, typeNameGetter())));
+        return orderTableProperties;
+    }
+
+    public static void writeOrders(File outputFile, HiveOutputFormat<?, ?> outputFormat, SerDe serDe, String compressionCodec)
+            throws Exception
+    {
+        RecordWriter recordWriter = createRecordReader(ORDER_COLUMNS, outputFile, outputFormat, serDe, compressionCodec);
+
+        SettableStructObjectInspector objectInspector = createSettableStructObjectInspector(ORDER_COLUMNS);
+        Object row = objectInspector.create();
+
+        List<StructField> fields = ImmutableList.copyOf(objectInspector.getAllStructFieldRefs());
+
+        for (Order order : new OrderGenerator(1, 1, 1)) {
+            objectInspector.setStructFieldData(row, fields.get(0), order.getOrderKey());
+            objectInspector.setStructFieldData(row, fields.get(1), order.getCustomerKey());
+            objectInspector.setStructFieldData(row, fields.get(2), String.valueOf(order.getOrderStatus()));
+            objectInspector.setStructFieldData(row, fields.get(3), order.getTotalPrice());
+            objectInspector.setStructFieldData(row, fields.get(4), order.getOrderDate());
+            objectInspector.setStructFieldData(row, fields.get(5), order.getOrderPriority());
+            objectInspector.setStructFieldData(row, fields.get(6), order.getClerk());
+            objectInspector.setStructFieldData(row, fields.get(7), order.getShipPriority());
+            objectInspector.setStructFieldData(row, fields.get(8), order.getComment());
+
+            Writable record = serDe.serialize(row, objectInspector);
+            recordWriter.write(record);
+        }
+
+        recordWriter.close(false);
+    }
+
+    public static void writeLineItems(File outputFile, HiveOutputFormat<?, ?> outputFormat, SerDe serDe, String compressionCodec)
+            throws Exception
+    {
+        RecordWriter recordWriter = createRecordReader(LINE_ITEM_COLUMNS, outputFile, outputFormat, serDe, compressionCodec);
+
+        SettableStructObjectInspector objectInspector = createSettableStructObjectInspector(LINE_ITEM_COLUMNS);
+        Object row = objectInspector.create();
+
+        List<StructField> fields = ImmutableList.copyOf(objectInspector.getAllStructFieldRefs());
+
+        for (LineItem lineItem : new LineItemGenerator(1, 1, 1)) {
+            objectInspector.setStructFieldData(row, fields.get(0), lineItem.getOrderKey());
+            objectInspector.setStructFieldData(row, fields.get(1), lineItem.getPartKey());
+            objectInspector.setStructFieldData(row, fields.get(2), lineItem.getSupplierKey());
+            objectInspector.setStructFieldData(row, fields.get(3), lineItem.getLineNumber());
+            objectInspector.setStructFieldData(row, fields.get(4), lineItem.getQuantity());
+            objectInspector.setStructFieldData(row, fields.get(5), lineItem.getExtendedPrice());
+            objectInspector.setStructFieldData(row, fields.get(6), lineItem.getDiscount());
+            objectInspector.setStructFieldData(row, fields.get(7), lineItem.getTax());
+            objectInspector.setStructFieldData(row, fields.get(8), lineItem.getReturnFlag());
+            objectInspector.setStructFieldData(row, fields.get(9), lineItem.getStatus());
+            objectInspector.setStructFieldData(row, fields.get(10), lineItem.getShipDate());
+            objectInspector.setStructFieldData(row, fields.get(11), lineItem.getCommitDate());
+            objectInspector.setStructFieldData(row, fields.get(12), lineItem.getReceiptDate());
+            objectInspector.setStructFieldData(row, fields.get(13), lineItem.getShipInstructions());
+            objectInspector.setStructFieldData(row, fields.get(14), lineItem.getShipMode());
+            objectInspector.setStructFieldData(row, fields.get(15), lineItem.getComment());
+
+            Writable record = serDe.serialize(row, objectInspector);
+            recordWriter.write(record);
+        }
+
+        recordWriter.close(false);
+    }
+
+    public static RecordWriter createRecordReader(List<HiveColumn> columns, File outputFile, HiveOutputFormat<?, ?> outputFormat, SerDe serDe, String compressionCodec)
             throws Exception
     {
         JobConf jobConf = new JobConf();
@@ -3257,121 +3796,87 @@ public final class HiveInputFormatBenchmark
                 new Path(outputFile.toURI()),
                 Text.class,
                 compressionCodec != null,
-                tableProperties,
+                createTableProperties(columns),
                 new Progressable()
+                {
+                    @Override
+                    public void progress()
                     {
-                        @Override
-                        public void progress()
-                        {
-                        }
                     }
+                }
         );
 
-        serDe.initialize(new Configuration(), tableProperties);
-
-        // Deserialize
-        List<String> fieldNames = ImmutableList.of("t_string",
-                "t_tinyint",
-                "t_smallint",
-                "t_int",
-                "t_bigint",
-                "t_float",
-                "t_double",
-                "t_map",
-                "t_boolean",
-                "t_timestamp",
-                "t_binary",
-                "t_array_string",
-                "t_complex");
-
-        List<ObjectInspector> fieldInspectors = ImmutableList.of(
-                javaStringObjectInspector,
-                javaByteObjectInspector,
-                javaShortObjectInspector,
-                javaIntObjectInspector,
-                javaLongObjectInspector,
-                javaFloatObjectInspector,
-                javaDoubleObjectInspector,
-                getStandardMapObjectInspector(javaStringObjectInspector, javaStringObjectInspector),
-                javaBooleanObjectInspector,
-                javaTimestampObjectInspector,
-                javaByteArrayObjectInspector,
-                getStandardListObjectInspector(javaStringObjectInspector),
-                getStandardMapObjectInspector(
-                        javaStringObjectInspector,
-                        getStandardListObjectInspector(
-                                getStandardStructObjectInspector(
-                                        ImmutableList.of("s_string", "s_double"),
-                                        ImmutableList.<ObjectInspector>of(javaStringObjectInspector, javaDoubleObjectInspector)
-                                )
-                        )
-                )
-        );
-
-        SettableStructObjectInspector settableStructObjectInspector = getStandardStructObjectInspector(fieldNames, fieldInspectors);
-        writeData(recordWriter, serDe, "file", 7, settableStructObjectInspector);
+        return recordWriter;
     }
 
-    private static void writeData(RecordWriter recordWriter, SerDe serDe, String fileType, int baseValue, SettableStructObjectInspector objectInspector)
-            throws Exception
+    public static SettableStructObjectInspector createSettableStructObjectInspector(List<HiveColumn> columns)
     {
-        Object row = objectInspector.create();
+        return getStandardStructObjectInspector(
+                Lists.transform(columns, nameGetter()),
+                Lists.transform(columns, objectInspectorGetter()));
+    }
 
-        List<StructField> fields = ImmutableList.copyOf(objectInspector.getAllStructFieldRefs());
+    public static final class HiveColumn
+    {
+        private final String name;
+        private final ObjectInspector objectInspector;
 
-        for (int rowNumber = 0; rowNumber < 1_000_000; rowNumber++) {
-            if (rowNumber % 19 == 0) {
-                objectInspector.setStructFieldData(row, fields.get(0), null);
-            }
-            else {
-                objectInspector.setStructFieldData(row, fields.get(0), fileType + " test");
-            }
-
-            objectInspector.setStructFieldData(row, fields.get(1), ((byte) (baseValue + 1 + rowNumber)));
-            objectInspector.setStructFieldData(row, fields.get(2), (short) (baseValue + 2 + rowNumber));
-            objectInspector.setStructFieldData(row, fields.get(3), baseValue + 3 + rowNumber);
-
-            if (rowNumber % 13 == 0) {
-                objectInspector.setStructFieldData(row, fields.get(4), null);
-            }
-            else {
-                objectInspector.setStructFieldData(row, fields.get(4), (long) baseValue + 4 + rowNumber);
-            }
-
-            objectInspector.setStructFieldData(row, fields.get(5), (float) (baseValue + 5.1 + rowNumber));
-            objectInspector.setStructFieldData(row, fields.get(6), baseValue + 6.2 + rowNumber);
-
-            objectInspector.setStructFieldData(row, fields.get(7), null);
-
-            if (rowNumber % 3 == 2) {
-                objectInspector.setStructFieldData(row, fields.get(8), null);
-            }
-            else {
-                objectInspector.setStructFieldData(row, fields.get(8), rowNumber % 3 != 0);
-            }
-
-            if (rowNumber % 17 == 0) {
-                objectInspector.setStructFieldData(row, fields.get(9), null);
-            }
-            else {
-                long seconds = MILLISECONDS.toSeconds(new DateTime(2011, 5, 6, 7, 8, 9, 123).getMillis());
-                objectInspector.setStructFieldData(row, fields.get(9), new Timestamp(seconds * 1000));
-            }
-
-            if (rowNumber % 23 == 0) {
-                objectInspector.setStructFieldData(row, fields.get(10), null);
-            }
-            else {
-                objectInspector.setStructFieldData(row, fields.get(10), (fileType + " test").getBytes(Charsets.UTF_8));
-            }
-
-            objectInspector.setStructFieldData(row, fields.get(11), null);
-            objectInspector.setStructFieldData(row, fields.get(12), null);
-
-            Writable record = serDe.serialize(row, objectInspector);
-            recordWriter.write(record);
+        private HiveColumn(String name, ObjectInspector objectInspector)
+        {
+            this.name = checkNotNull(name, "name is null");
+            this.objectInspector = checkNotNull(objectInspector, "objectInspector is null");
         }
-        recordWriter.close(false);
+
+        public String getName()
+        {
+            return name;
+        }
+
+        public String getTypeName()
+        {
+            return objectInspector.getTypeName();
+        }
+
+        public ObjectInspector getObjectInspector()
+        {
+            return objectInspector;
+        }
+
+        public static Function<HiveColumn, String> nameGetter()
+        {
+            return new Function<HiveColumn, String>()
+            {
+                @Override
+                public String apply(HiveColumn hiveColumn)
+                {
+                    return hiveColumn.getName();
+                }
+            };
+        }
+
+        public static Function<HiveColumn, String> typeNameGetter()
+        {
+            return new Function<HiveColumn, String>()
+            {
+                @Override
+                public String apply(HiveColumn hiveColumn)
+                {
+                    return hiveColumn.getTypeName();
+                }
+            };
+        }
+
+        public static Function<HiveColumn, ObjectInspector> objectInspectorGetter()
+        {
+            return new Function<HiveColumn, ObjectInspector>()
+            {
+                @Override
+                public ObjectInspector apply(HiveColumn hiveColumn)
+                {
+                    return hiveColumn.getObjectInspector();
+                }
+            };
+        }
     }
 
     private static final Unsafe unsafe;
