@@ -337,7 +337,6 @@ public final class HiveInputFormatBenchmark
         }
         logDuration("p_smallint", start, loopCount, value);
 
-
         //
         // int
         //
@@ -375,7 +374,6 @@ public final class HiveInputFormatBenchmark
             throw new UnsupportedOperationException("Unsupported serde " + benchmarkFile.getDeserializer().getClass().getName());
         }
         logDuration("p_int", start, loopCount, value);
-
 
         //
         // bigint
@@ -415,7 +413,6 @@ public final class HiveInputFormatBenchmark
         }
         logDuration("p_bigint", start, loopCount, value);
 
-
         //
         // float
         //
@@ -453,7 +450,6 @@ public final class HiveInputFormatBenchmark
             throw new UnsupportedOperationException("Unsupported serde " + benchmarkFile.getDeserializer().getClass().getName());
         }
         logDuration("p_float", start, loopCount, value);
-
 
         //
         // double
@@ -493,7 +489,6 @@ public final class HiveInputFormatBenchmark
         }
         logDuration("p_double", start, loopCount, value);
 
-
         //
         // boolean
         //
@@ -531,8 +526,6 @@ public final class HiveInputFormatBenchmark
             throw new UnsupportedOperationException("Unsupported serde " + benchmarkFile.getDeserializer().getClass().getName());
         }
         logDuration("p_boolean", start, loopCount, value);
-
-
 
         //
         // binary
@@ -572,8 +565,6 @@ public final class HiveInputFormatBenchmark
         }
         logDuration("p_binary", start, loopCount, value);
 
-
-
         //
         // three columns
         //
@@ -611,8 +602,6 @@ public final class HiveInputFormatBenchmark
             throw new UnsupportedOperationException("Unsupported serde " + benchmarkFile.getDeserializer().getClass().getName());
         }
         logDuration("p_three", start, loopCount, value);
-
-
 
         //
         // all columns
@@ -1664,7 +1653,6 @@ public final class HiveInputFormatBenchmark
             K key = recordReader.createKey();
             V value = recordReader.createValue();
 
-
             while (recordReader.next(key, value)) {
                 Object rowData = deserializer.deserialize(value);
 
@@ -1772,7 +1760,6 @@ public final class HiveInputFormatBenchmark
             RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
             K key = recordReader.createKey();
             V value = recordReader.createValue();
-
 
             while (recordReader.next(key, value)) {
                 BytesRefArrayWritable row = (BytesRefArrayWritable) value;
@@ -1950,7 +1937,6 @@ public final class HiveInputFormatBenchmark
             K key = recordReader.createKey();
             V value = recordReader.createValue();
 
-
             while (recordReader.next(key, value)) {
                 BytesRefArrayWritable row = (BytesRefArrayWritable) value;
                 BytesRefWritable bytesRefWritable = row.unCheckedGet(fieldIndex);
@@ -1988,7 +1974,6 @@ public final class HiveInputFormatBenchmark
             K key = recordReader.createKey();
             V value = recordReader.createValue();
 
-
             while (recordReader.next(key, value)) {
                 OrcLazyRow row = (OrcLazyRow) value;
                 OrcLazyObject orcLazyObject = row.getFieldValue(fieldIndex);
@@ -2021,7 +2006,6 @@ public final class HiveInputFormatBenchmark
             RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
             K key = recordReader.createKey();
             V value = recordReader.createValue();
-
 
             while (recordReader.next(key, value)) {
                 Object rowData = deserializer.deserialize(value);
@@ -2094,7 +2078,6 @@ public final class HiveInputFormatBenchmark
             K key = recordReader.createKey();
             V value = recordReader.createValue();
 
-
             while (recordReader.next(key, value)) {
                 BytesRefArrayWritable row = (BytesRefArrayWritable) value;
                 BytesRefWritable bytesRefWritable = row.unCheckedGet(fieldIndex);
@@ -2130,7 +2113,6 @@ public final class HiveInputFormatBenchmark
             RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
             K key = recordReader.createKey();
             V value = recordReader.createValue();
-
 
             while (recordReader.next(key, value)) {
                 BytesRefArrayWritable row = (BytesRefArrayWritable) value;
@@ -2183,7 +2165,6 @@ public final class HiveInputFormatBenchmark
             K key = recordReader.createKey();
             V value = recordReader.createValue();
 
-
             while (recordReader.next(key, value)) {
                 OrcLazyRow row = (OrcLazyRow) value;
                 OrcLazyObject orcLazyObject = row.getFieldValue(fieldIndex);
@@ -2215,7 +2196,6 @@ public final class HiveInputFormatBenchmark
             RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
             K key = recordReader.createKey();
             V value = recordReader.createValue();
-
 
             while (recordReader.next(key, value)) {
                 Object rowData = deserializer.deserialize(value);
@@ -2324,7 +2304,6 @@ public final class HiveInputFormatBenchmark
             K key = recordReader.createKey();
             V value = recordReader.createValue();
 
-
             while (recordReader.next(key, value)) {
                 BytesRefArrayWritable row = (BytesRefArrayWritable) value;
                 BytesRefWritable bytesRefWritable = row.unCheckedGet(fieldIndex);
@@ -2375,7 +2354,6 @@ public final class HiveInputFormatBenchmark
             K key = recordReader.createKey();
             V value = recordReader.createValue();
 
-
             while (recordReader.next(key, value)) {
                 OrcLazyRow row = (OrcLazyRow) value;
                 OrcLazyObject orcLazyObject = row.getFieldValue(fieldIndex);
@@ -2407,7 +2385,6 @@ public final class HiveInputFormatBenchmark
             RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
             K key = recordReader.createKey();
             V value = recordReader.createValue();
-
 
             while (recordReader.next(key, value)) {
                 Object rowData = deserializer.deserialize(value);
@@ -2526,7 +2503,6 @@ public final class HiveInputFormatBenchmark
             K key = recordReader.createKey();
             V value = recordReader.createValue();
 
-
             while (recordReader.next(key, value)) {
                 BytesRefArrayWritable row = (BytesRefArrayWritable) value;
                 BytesRefWritable bytesRefWritable = row.unCheckedGet(fieldIndex);
@@ -2564,7 +2540,6 @@ public final class HiveInputFormatBenchmark
             K key = recordReader.createKey();
             V value = recordReader.createValue();
 
-
             while (recordReader.next(key, value)) {
                 OrcLazyRow row = (OrcLazyRow) value;
                 OrcLazyObject orcLazyObject = row.getFieldValue(fieldIndex);
@@ -2596,7 +2571,6 @@ public final class HiveInputFormatBenchmark
             RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
             K key = recordReader.createKey();
             V value = recordReader.createValue();
-
 
             while (recordReader.next(key, value)) {
                 Object rowData = deserializer.deserialize(value);
@@ -2705,7 +2679,6 @@ public final class HiveInputFormatBenchmark
             K key = recordReader.createKey();
             V value = recordReader.createValue();
 
-
             while (recordReader.next(key, value)) {
                 BytesRefArrayWritable row = (BytesRefArrayWritable) value;
                 BytesRefWritable bytesRefWritable = row.unCheckedGet(fieldIndex);
@@ -2743,7 +2716,6 @@ public final class HiveInputFormatBenchmark
             K key = recordReader.createKey();
             V value = recordReader.createValue();
 
-
             while (recordReader.next(key, value)) {
                 OrcLazyRow row = (OrcLazyRow) value;
                 OrcLazyObject orcLazyObject = row.getFieldValue(fieldIndex);
@@ -2775,7 +2747,6 @@ public final class HiveInputFormatBenchmark
             RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
             K key = recordReader.createKey();
             V value = recordReader.createValue();
-
 
             while (recordReader.next(key, value)) {
                 Object rowData = deserializer.deserialize(value);
@@ -2894,7 +2865,6 @@ public final class HiveInputFormatBenchmark
             K key = recordReader.createKey();
             V value = recordReader.createValue();
 
-
             while (recordReader.next(key, value)) {
                 BytesRefArrayWritable row = (BytesRefArrayWritable) value;
                 BytesRefWritable bytesRefWritable = row.unCheckedGet(fieldIndex);
@@ -2931,7 +2901,6 @@ public final class HiveInputFormatBenchmark
             K key = recordReader.createKey();
             V value = recordReader.createValue();
 
-
             while (recordReader.next(key, value)) {
                 OrcLazyRow row = (OrcLazyRow) value;
                 OrcLazyObject orcLazyObject = row.getFieldValue(fieldIndex);
@@ -2963,7 +2932,6 @@ public final class HiveInputFormatBenchmark
             RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
             K key = recordReader.createKey();
             V value = recordReader.createValue();
-
 
             while (recordReader.next(key, value)) {
                 Object rowData = deserializer.deserialize(value);
@@ -3074,7 +3042,6 @@ public final class HiveInputFormatBenchmark
             K key = recordReader.createKey();
             V value = recordReader.createValue();
 
-
             while (recordReader.next(key, value)) {
                 BytesRefArrayWritable row = (BytesRefArrayWritable) value;
                 BytesRefWritable bytesRefWritable = row.unCheckedGet(fieldIndex);
@@ -3110,7 +3077,6 @@ public final class HiveInputFormatBenchmark
             RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
             K key = recordReader.createKey();
             V value = recordReader.createValue();
-
 
             while (recordReader.next(key, value)) {
                 OrcLazyRow row = (OrcLazyRow) value;
@@ -3275,7 +3241,6 @@ public final class HiveInputFormatBenchmark
             return fileSplit;
         }
     }
-
 
     public static void writeFile(Properties tableProperties, File outputFile, HiveOutputFormat<?, ?> outputFormat, SerDe serDe, String compressionCodec)
             throws Exception
