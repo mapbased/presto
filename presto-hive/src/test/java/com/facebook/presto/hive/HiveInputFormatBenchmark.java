@@ -179,6 +179,20 @@ public final class HiveInputFormatBenchmark
 //                        true),
 
                 new BenchmarkFile(
+                        "rc binary gzip",
+                        "rc-binary.gz",
+                        new RCFileInputFormat<>(),
+                        new RCFileOutputFormat(),
+                        new LazyBinaryColumnarSerDe(),
+                        new LazyBinaryColumnarSerDe(),
+                        "gzip",
+                        true,
+                        ImmutableList.of(
+                                new BenchmarkLineItemRCBinaryVectorized(),
+                                new BenchmarkLineItemGeneric(),
+                                new BenchmarkLineItemRCBinary())),
+
+                new BenchmarkFile(
                         "orc",
                         "orc",
                         new org.apache.hadoop.hive.ql.io.orc.OrcInputFormat(),
@@ -187,7 +201,7 @@ public final class HiveInputFormatBenchmark
                         new org.apache.hadoop.hive.ql.io.orc.OrcSerde(),
                         null,
                         true,
-                        ImmutableList.of(new BenchmarkLineItemGeneric())),
+                        ImmutableList.of(new BenchmarkLineItemGeneric()))
 
 //                new BenchmarkFile(
 //                        "dwrf",
@@ -199,16 +213,6 @@ public final class HiveInputFormatBenchmark
 //                        null,
 //                        true),
 
-                new BenchmarkFile(
-                        "rc binary gzip",
-                        "rc-binary.gz",
-                        new RCFileInputFormat<>(),
-                        new RCFileOutputFormat(),
-                        new LazyBinaryColumnarSerDe(),
-                        new LazyBinaryColumnarSerDe(),
-                        "gzip",
-                        true,
-                        ImmutableList.of(new BenchmarkLineItemGeneric(), new BenchmarkLineItemRCBinary()))
 //
 //                new BenchmarkFile(
 //                        "rc text gzip",
@@ -315,7 +319,7 @@ public final class HiveInputFormatBenchmark
         JobConf jobConf = new JobConf();
         System.out.println("============ WARM UP ============");
         for (BenchmarkFile benchmarkFile : benchmarkFiles) {
-            benchmarkLineItem(jobConf, benchmarkFile, 1);
+            benchmarkLineItem(jobConf, benchmarkFile, 5);
         }
 
         System.out.println();
@@ -462,6 +466,32 @@ public final class HiveInputFormatBenchmark
         Object value = null;
 
         long start;
+              //
+        // tpchQuery6
+        //
+        start = System.nanoTime();
+        for (int loops = 0; loops < loopCount; loops++) {
+            value = benchmarkLineItem.tpchQuery6(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
+        }
+        logDuration("tpchQuery6", start, loopCount, value);
+
+        //
+        // tpchQuery1
+        //
+        start = System.nanoTime();
+        for (int loops = 0; loops < loopCount; loops++) {
+            value = benchmarkLineItem.tpchQuery1(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
+        }
+        logDuration("tpchQuery1", start, loopCount, value);
+
+        //
+        // all
+        //
+        start = System.nanoTime();
+        for (int loops = 0; loops < loopCount; loops++) {
+            value = benchmarkLineItem.all(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
+        }
+        logDuration("all", start, loopCount, value);
 
         //
         // orderKey
@@ -607,32 +637,6 @@ public final class HiveInputFormatBenchmark
         }
         logDuration("comment", start, loopCount, value);
 
-        //
-        // tpchQuery6
-        //
-        start = System.nanoTime();
-        for (int loops = 0; loops < loopCount; loops++) {
-            value = benchmarkLineItem.tpchQuery6(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
-        }
-        logDuration("tpchQuery6", start, loopCount, value);
-
-        //
-        // tpchQuery1
-        //
-        start = System.nanoTime();
-        for (int loops = 0; loops < loopCount; loops++) {
-            value = benchmarkLineItem.tpchQuery1(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
-        }
-        logDuration("tpchQuery1", start, loopCount, value);
-
-        //
-        // all
-        //
-        start = System.nanoTime();
-        for (int loops = 0; loops < loopCount; loops++) {
-            value = benchmarkLineItem.all(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
-        }
-        logDuration("all", start, loopCount, value);
     }
 
     private static void benchmarkOld(JobConf jobConf, BenchmarkFile benchmarkFile, int loopCount)
