@@ -201,10 +201,10 @@ public final class HiveInputFormatBenchmark
                         "gzip",
                         true,
                         ImmutableList.of(
-                                new BenchmarkLineItemGeneric(),
-//                                new BenchmarkLineItemRCBinaryVectorized(),
-                                new BenchmarkLineItemRCBinaryVectorizedCustom(),
-                                new BenchmarkLineItemRCBinary()
+//                                new BenchmarkLineItemGeneric(),
+                                new BenchmarkLineItemRCBinary(),
+//                                new BenchmarkLineItemRCBinaryVectorized(), // super slow
+                                new BenchmarkLineItemRCBinaryVectorizedCustom()
                         ))
 
 //                new BenchmarkFile(

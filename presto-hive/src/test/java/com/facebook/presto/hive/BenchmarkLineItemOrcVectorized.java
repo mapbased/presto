@@ -356,10 +356,13 @@ public final class BenchmarkLineItemOrcVectorized
                 BytesColumnVector columnVector = (BytesColumnVector) batch.cols[fieldIndex];
 
                 byte[][] vector = columnVector.vector;
+                int[] start = columnVector.start;
+                int[] length = columnVector.length;
                 boolean[] isNull = columnVector.isNull;
                 for (int i = 0; i < batch.size; i++) {
                     if (!isNull[i]) {
-                        stringLengthSum += vector[i].length;
+                        byte[] commentValue = Arrays.copyOfRange(vector[i], start[i], start[i] + length[i]);
+                        stringLengthSum += commentValue.length;
                     }
                 }
             }
@@ -1167,6 +1170,6 @@ public final class BenchmarkLineItemOrcVectorized
             throws IOException
     {
         Reader reader = OrcFile.createReader(fileSplit.getPath(), OrcFile.readerOptions(jobConf));
-        return reader.rows(include);
+        return reader.rows(fileSplit.getStart(), fileSplit.getLength(), include);
     }
 }

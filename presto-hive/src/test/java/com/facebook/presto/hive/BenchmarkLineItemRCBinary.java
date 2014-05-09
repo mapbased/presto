@@ -534,6 +534,8 @@ public class BenchmarkLineItemRCBinary
         StructField stringField = rowInspector.getStructFieldRef("shipinstruct");
         int fieldIndex = allStructFieldRefs.indexOf(stringField);
 
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
+
         long stringSum = 0;
         for (int i = 0; i < LOOPS; i++) {
             stringSum = 0;
@@ -569,6 +571,8 @@ public class BenchmarkLineItemRCBinary
         StructField stringField = rowInspector.getStructFieldRef("shipmode");
         int fieldIndex = allStructFieldRefs.indexOf(stringField);
 
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
+
         long stringSum = 0;
         for (int i = 0; i < LOOPS; i++) {
             stringSum = 0;
@@ -603,6 +607,8 @@ public class BenchmarkLineItemRCBinary
 
         StructField stringField = rowInspector.getStructFieldRef("comment");
         int fieldIndex = allStructFieldRefs.indexOf(stringField);
+
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
 
         long stringSum = 0;
         for (int i = 0; i < LOOPS; i++) {
@@ -695,8 +701,7 @@ public class BenchmarkLineItemRCBinary
                 int quantityStart = quantityBytesRefWritable.getStart();
                 int quantityLength = quantityBytesRefWritable.getLength();
                 if (quantityLength != 0) {
-                    long longBits = unsafe.getLong(quantityBytes, (long) Unsafe.ARRAY_BYTE_BASE_OFFSET + quantityStart);
-                    double quantityValue = Double.longBitsToDouble(Long.reverseBytes(longBits));
+                    long quantityValue = readVBigint(quantityBytes, quantityStart, quantityLength);
                     quantitySum += quantityValue;
                 }
 
@@ -810,8 +815,7 @@ public class BenchmarkLineItemRCBinary
                 int quantityStart = quantityBytesRefWritable.getStart();
                 int quantityLength = quantityBytesRefWritable.getLength();
                 if (quantityLength != 0) {
-                    long longBits = unsafe.getLong(quantityBytes, (long) Unsafe.ARRAY_BYTE_BASE_OFFSET + quantityStart);
-                    double quantityValue = Double.longBitsToDouble(Long.reverseBytes(longBits));
+                    long quantityValue = readVBigint(quantityBytes, quantityStart, quantityLength);
                     quantitySum += quantityValue;
                 }
 
@@ -1005,8 +1009,7 @@ public class BenchmarkLineItemRCBinary
                 int quantityStart = quantityBytesRefWritable.getStart();
                 int quantityLength = quantityBytesRefWritable.getLength();
                 if (quantityLength != 0) {
-                    long longBits = unsafe.getLong(quantityBytes, (long) Unsafe.ARRAY_BYTE_BASE_OFFSET + quantityStart);
-                    double quantityValue = Double.longBitsToDouble(Long.reverseBytes(longBits));
+                    long quantityValue = readVBigint(quantityBytes, quantityStart, quantityLength);
                     quantitySum += quantityValue;
                 }
 
