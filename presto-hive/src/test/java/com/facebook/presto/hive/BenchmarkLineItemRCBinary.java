@@ -16,27 +16,32 @@ package com.facebook.presto.hive;
 import com.google.common.collect.ImmutableList;
 import org.apache.hadoop.hive.serde2.ColumnProjectionUtils;
 import org.apache.hadoop.hive.serde2.Deserializer;
-import org.apache.hadoop.hive.serde2.objectinspector.PrimitiveObjectInspector;
+import org.apache.hadoop.hive.serde2.columnar.BytesRefArrayWritable;
+import org.apache.hadoop.hive.serde2.columnar.BytesRefWritable;
 import org.apache.hadoop.hive.serde2.objectinspector.StructField;
 import org.apache.hadoop.hive.serde2.objectinspector.StructObjectInspector;
 import org.apache.hadoop.io.Writable;
+import org.apache.hadoop.io.WritableUtils;
 import org.apache.hadoop.mapred.FileSplit;
 import org.apache.hadoop.mapred.InputFormat;
 import org.apache.hadoop.mapred.JobConf;
 import org.apache.hadoop.mapred.RecordReader;
 import org.apache.hadoop.mapred.Reporter;
+import sun.misc.Unsafe;
 
+import java.lang.reflect.Field;
+import java.util.Arrays;
 import java.util.List;
 
 import static com.facebook.presto.hive.HiveInputFormatBenchmark.LOOPS;
 
-public final class BenchmarkLineItemGeneric
-        implements BenchmarkLineItem
+public class BenchmarkLineItemRCBinary
+    implements BenchmarkLineItem
 {
     @Override
     public String getName()
     {
-        return "generic";
+        return "RCBinary Custom";
     }
 
     @Override
@@ -48,7 +53,6 @@ public final class BenchmarkLineItemGeneric
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
         StructField bigintField = rowInspector.getStructFieldRef("orderkey");
         int fieldIndex = allStructFieldRefs.indexOf(bigintField);
-        PrimitiveObjectInspector bigintFieldInspector = (PrimitiveObjectInspector) bigintField.getFieldObjectInspector();
 
         ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
 
@@ -60,12 +64,14 @@ public final class BenchmarkLineItemGeneric
             V value = recordReader.createValue();
 
             while (recordReader.next(key, value)) {
-                Object rowData = deserializer.deserialize(value);
+                BytesRefArrayWritable row = (BytesRefArrayWritable) value;
+                BytesRefWritable bytesRefWritable = row.unCheckedGet(fieldIndex);
+                byte[] bytes = bytesRefWritable.getData();
+                int start = bytesRefWritable.getStart();
+                int length = bytesRefWritable.getLength();
 
-                Object bigintData = rowInspector.getStructFieldData(rowData, bigintField);
-                if (bigintData != null) {
-                    Object bigintPrimitive = bigintFieldInspector.getPrimitiveJavaObject(bigintData);
-                    long bigintValue = ((Number) bigintPrimitive).longValue();
+                if (length != 0) {
+                    long bigintValue = readVBigint(bytes, start, length);
                     bigintSum += bigintValue;
                 }
             }
@@ -83,7 +89,6 @@ public final class BenchmarkLineItemGeneric
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
         StructField bigintField = rowInspector.getStructFieldRef("partkey");
         int fieldIndex = allStructFieldRefs.indexOf(bigintField);
-        PrimitiveObjectInspector bigintFieldInspector = (PrimitiveObjectInspector) bigintField.getFieldObjectInspector();
 
         ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
 
@@ -95,12 +100,14 @@ public final class BenchmarkLineItemGeneric
             V value = recordReader.createValue();
 
             while (recordReader.next(key, value)) {
-                Object rowData = deserializer.deserialize(value);
+                BytesRefArrayWritable row = (BytesRefArrayWritable) value;
+                BytesRefWritable bytesRefWritable = row.unCheckedGet(fieldIndex);
+                byte[] bytes = bytesRefWritable.getData();
+                int start = bytesRefWritable.getStart();
+                int length = bytesRefWritable.getLength();
 
-                Object bigintData = rowInspector.getStructFieldData(rowData, bigintField);
-                if (bigintData != null) {
-                    Object bigintPrimitive = bigintFieldInspector.getPrimitiveJavaObject(bigintData);
-                    long bigintValue = ((Number) bigintPrimitive).longValue();
+                if (length != 0) {
+                    long bigintValue = readVBigint(bytes, start, length);
                     bigintSum += bigintValue;
                 }
             }
@@ -118,7 +125,6 @@ public final class BenchmarkLineItemGeneric
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
         StructField bigintField = rowInspector.getStructFieldRef("suppkey");
         int fieldIndex = allStructFieldRefs.indexOf(bigintField);
-        PrimitiveObjectInspector bigintFieldInspector = (PrimitiveObjectInspector) bigintField.getFieldObjectInspector();
 
         ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
 
@@ -130,12 +136,14 @@ public final class BenchmarkLineItemGeneric
             V value = recordReader.createValue();
 
             while (recordReader.next(key, value)) {
-                Object rowData = deserializer.deserialize(value);
+                BytesRefArrayWritable row = (BytesRefArrayWritable) value;
+                BytesRefWritable bytesRefWritable = row.unCheckedGet(fieldIndex);
+                byte[] bytes = bytesRefWritable.getData();
+                int start = bytesRefWritable.getStart();
+                int length = bytesRefWritable.getLength();
 
-                Object bigintData = rowInspector.getStructFieldData(rowData, bigintField);
-                if (bigintData != null) {
-                    Object bigintPrimitive = bigintFieldInspector.getPrimitiveJavaObject(bigintData);
-                    long bigintValue = ((Number) bigintPrimitive).longValue();
+                if (length != 0) {
+                    long bigintValue = readVBigint(bytes, start, length);
                     bigintSum += bigintValue;
                 }
             }
@@ -153,7 +161,6 @@ public final class BenchmarkLineItemGeneric
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
         StructField bigintField = rowInspector.getStructFieldRef("linenumber");
         int fieldIndex = allStructFieldRefs.indexOf(bigintField);
-        PrimitiveObjectInspector bigintFieldInspector = (PrimitiveObjectInspector) bigintField.getFieldObjectInspector();
 
         ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
 
@@ -165,12 +172,14 @@ public final class BenchmarkLineItemGeneric
             V value = recordReader.createValue();
 
             while (recordReader.next(key, value)) {
-                Object rowData = deserializer.deserialize(value);
+                BytesRefArrayWritable row = (BytesRefArrayWritable) value;
+                BytesRefWritable bytesRefWritable = row.unCheckedGet(fieldIndex);
+                byte[] bytes = bytesRefWritable.getData();
+                int start = bytesRefWritable.getStart();
+                int length = bytesRefWritable.getLength();
 
-                Object bigintData = rowInspector.getStructFieldData(rowData, bigintField);
-                if (bigintData != null) {
-                    Object bigintPrimitive = bigintFieldInspector.getPrimitiveJavaObject(bigintData);
-                    long bigintValue = ((Number) bigintPrimitive).longValue();
+                if (length != 0) {
+                    long bigintValue = readVBigint(bytes, start, length);
                     bigintSum += bigintValue;
                 }
             }
@@ -188,7 +197,6 @@ public final class BenchmarkLineItemGeneric
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
         StructField bigintField = rowInspector.getStructFieldRef("quantity");
         int fieldIndex = allStructFieldRefs.indexOf(bigintField);
-        PrimitiveObjectInspector bigintFieldInspector = (PrimitiveObjectInspector) bigintField.getFieldObjectInspector();
 
         ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
 
@@ -200,12 +208,14 @@ public final class BenchmarkLineItemGeneric
             V value = recordReader.createValue();
 
             while (recordReader.next(key, value)) {
-                Object rowData = deserializer.deserialize(value);
+                BytesRefArrayWritable row = (BytesRefArrayWritable) value;
+                BytesRefWritable bytesRefWritable = row.unCheckedGet(fieldIndex);
+                byte[] bytes = bytesRefWritable.getData();
+                int start = bytesRefWritable.getStart();
+                int length = bytesRefWritable.getLength();
 
-                Object bigintData = rowInspector.getStructFieldData(rowData, bigintField);
-                if (bigintData != null) {
-                    Object bigintPrimitive = bigintFieldInspector.getPrimitiveJavaObject(bigintData);
-                    long bigintValue = ((Number) bigintPrimitive).longValue();
+                if (length != 0) {
+                    long bigintValue = readVBigint(bytes, start, length);
                     bigintSum += bigintValue;
                 }
             }
@@ -223,24 +233,27 @@ public final class BenchmarkLineItemGeneric
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
         StructField doubleField = rowInspector.getStructFieldRef("extendedprice");
         int fieldIndex = allStructFieldRefs.indexOf(doubleField);
-        PrimitiveObjectInspector doubleFieldInspector = (PrimitiveObjectInspector) doubleField.getFieldObjectInspector();
 
         ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
 
         double doubleSum = 0;
         for (int i = 0; i < LOOPS; i++) {
             doubleSum = 0;
+
             RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
             K key = recordReader.createKey();
             V value = recordReader.createValue();
 
             while (recordReader.next(key, value)) {
-                Object rowData = deserializer.deserialize(value);
+                BytesRefArrayWritable row = (BytesRefArrayWritable) value;
+                BytesRefWritable bytesRefWritable = row.unCheckedGet(fieldIndex);
+                byte[] bytes = bytesRefWritable.getData();
+                int start = bytesRefWritable.getStart();
+                int length = bytesRefWritable.getLength();
 
-                Object doubleData = rowInspector.getStructFieldData(rowData, doubleField);
-                if (doubleData != null) {
-                    Object doublePrimitive = doubleFieldInspector.getPrimitiveJavaObject(doubleData);
-                    double doubleValue = ((Number) doublePrimitive).doubleValue();
+                if (length != 0) {
+                    long longBits = unsafe.getLong(bytes, (long) Unsafe.ARRAY_BYTE_BASE_OFFSET + start);
+                    double doubleValue = Double.longBitsToDouble(Long.reverseBytes(longBits));
                     doubleSum += doubleValue;
                 }
             }
@@ -258,24 +271,27 @@ public final class BenchmarkLineItemGeneric
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
         StructField doubleField = rowInspector.getStructFieldRef("discount");
         int fieldIndex = allStructFieldRefs.indexOf(doubleField);
-        PrimitiveObjectInspector doubleFieldInspector = (PrimitiveObjectInspector) doubleField.getFieldObjectInspector();
 
         ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
 
         double doubleSum = 0;
         for (int i = 0; i < LOOPS; i++) {
             doubleSum = 0;
+
             RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
             K key = recordReader.createKey();
             V value = recordReader.createValue();
 
             while (recordReader.next(key, value)) {
-                Object rowData = deserializer.deserialize(value);
+                BytesRefArrayWritable row = (BytesRefArrayWritable) value;
+                BytesRefWritable bytesRefWritable = row.unCheckedGet(fieldIndex);
+                byte[] bytes = bytesRefWritable.getData();
+                int start = bytesRefWritable.getStart();
+                int length = bytesRefWritable.getLength();
 
-                Object doubleData = rowInspector.getStructFieldData(rowData, doubleField);
-                if (doubleData != null) {
-                    Object doublePrimitive = doubleFieldInspector.getPrimitiveJavaObject(doubleData);
-                    double doubleValue = ((Number) doublePrimitive).doubleValue();
+                if (length != 0) {
+                    long longBits = unsafe.getLong(bytes, (long) Unsafe.ARRAY_BYTE_BASE_OFFSET + start);
+                    double doubleValue = Double.longBitsToDouble(Long.reverseBytes(longBits));
                     doubleSum += doubleValue;
                 }
             }
@@ -293,24 +309,27 @@ public final class BenchmarkLineItemGeneric
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
         StructField doubleField = rowInspector.getStructFieldRef("tax");
         int fieldIndex = allStructFieldRefs.indexOf(doubleField);
-        PrimitiveObjectInspector doubleFieldInspector = (PrimitiveObjectInspector) doubleField.getFieldObjectInspector();
 
         ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
 
         double doubleSum = 0;
         for (int i = 0; i < LOOPS; i++) {
             doubleSum = 0;
+
             RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
             K key = recordReader.createKey();
             V value = recordReader.createValue();
 
             while (recordReader.next(key, value)) {
-                Object rowData = deserializer.deserialize(value);
+                BytesRefArrayWritable row = (BytesRefArrayWritable) value;
+                BytesRefWritable bytesRefWritable = row.unCheckedGet(fieldIndex);
+                byte[] bytes = bytesRefWritable.getData();
+                int start = bytesRefWritable.getStart();
+                int length = bytesRefWritable.getLength();
 
-                Object doubleData = rowInspector.getStructFieldData(rowData, doubleField);
-                if (doubleData != null) {
-                    Object doublePrimitive = doubleFieldInspector.getPrimitiveJavaObject(doubleData);
-                    double doubleValue = ((Number) doublePrimitive).doubleValue();
+                if (length != 0) {
+                    long longBits = unsafe.getLong(bytes, (long) Unsafe.ARRAY_BYTE_BASE_OFFSET + start);
+                    double doubleValue = Double.longBitsToDouble(Long.reverseBytes(longBits));
                     doubleSum += doubleValue;
                 }
             }
@@ -328,31 +347,32 @@ public final class BenchmarkLineItemGeneric
 
         StructField stringField = rowInspector.getStructFieldRef("returnflag");
         int fieldIndex = allStructFieldRefs.indexOf(stringField);
-        PrimitiveObjectInspector stringFieldInspector = (PrimitiveObjectInspector) stringField.getFieldObjectInspector();
 
         ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
 
-        long stringLengthSum = 0;
+        long stringSum = 0;
         for (int i = 0; i < LOOPS; i++) {
-            stringLengthSum = 0;
+            stringSum = 0;
+
             RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
             K key = recordReader.createKey();
             V value = recordReader.createValue();
 
             while (recordReader.next(key, value)) {
-                Object rowData = deserializer.deserialize(value);
+                BytesRefArrayWritable row = (BytesRefArrayWritable) value;
+                BytesRefWritable bytesRefWritable = row.unCheckedGet(fieldIndex);
+                byte[] bytes = bytesRefWritable.getData();
+                int start = bytesRefWritable.getStart();
+                int length = bytesRefWritable.getLength();
 
-                Object stringData = rowInspector.getStructFieldData(rowData, stringField);
-                if (stringData != null) {
-                    Object stringPrimitive = stringFieldInspector.getPrimitiveJavaObject(stringData);
-                    String stringValue = (String) stringPrimitive;
-                    stringLengthSum += stringValue.length();
+                if (!isNull(bytes, start, length)) {
+                    byte[] stringValue = Arrays.copyOfRange(bytes, start, start + length);
+                    stringSum += stringValue.length;
                 }
-
             }
             recordReader.close();
         }
-        return stringLengthSum;
+        return stringSum;
     }
 
     @Override
@@ -364,31 +384,32 @@ public final class BenchmarkLineItemGeneric
 
         StructField stringField = rowInspector.getStructFieldRef("linestatus");
         int fieldIndex = allStructFieldRefs.indexOf(stringField);
-        PrimitiveObjectInspector stringFieldInspector = (PrimitiveObjectInspector) stringField.getFieldObjectInspector();
 
         ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
 
-        long stringLengthSum = 0;
+        long stringSum = 0;
         for (int i = 0; i < LOOPS; i++) {
-            stringLengthSum = 0;
+            stringSum = 0;
+
             RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
             K key = recordReader.createKey();
             V value = recordReader.createValue();
 
             while (recordReader.next(key, value)) {
-                Object rowData = deserializer.deserialize(value);
+                BytesRefArrayWritable row = (BytesRefArrayWritable) value;
+                BytesRefWritable bytesRefWritable = row.unCheckedGet(fieldIndex);
+                byte[] bytes = bytesRefWritable.getData();
+                int start = bytesRefWritable.getStart();
+                int length = bytesRefWritable.getLength();
 
-                Object stringData = rowInspector.getStructFieldData(rowData, stringField);
-                if (stringData != null) {
-                    Object stringPrimitive = stringFieldInspector.getPrimitiveJavaObject(stringData);
-                    String stringValue = (String) stringPrimitive;
-                    stringLengthSum += stringValue.length();
+                if (!isNull(bytes, start, length)) {
+                    byte[] stringValue = Arrays.copyOfRange(bytes, start, start + length);
+                    stringSum += stringValue.length;
                 }
-
             }
             recordReader.close();
         }
-        return stringLengthSum;
+        return stringSum;
     }
 
 
@@ -401,31 +422,32 @@ public final class BenchmarkLineItemGeneric
 
         StructField stringField = rowInspector.getStructFieldRef("shipdate");
         int fieldIndex = allStructFieldRefs.indexOf(stringField);
-        PrimitiveObjectInspector stringFieldInspector = (PrimitiveObjectInspector) stringField.getFieldObjectInspector();
 
         ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
 
-        long stringLengthSum = 0;
+        long stringSum = 0;
         for (int i = 0; i < LOOPS; i++) {
-            stringLengthSum = 0;
+            stringSum = 0;
+
             RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
             K key = recordReader.createKey();
             V value = recordReader.createValue();
 
             while (recordReader.next(key, value)) {
-                Object rowData = deserializer.deserialize(value);
+                BytesRefArrayWritable row = (BytesRefArrayWritable) value;
+                BytesRefWritable bytesRefWritable = row.unCheckedGet(fieldIndex);
+                byte[] bytes = bytesRefWritable.getData();
+                int start = bytesRefWritable.getStart();
+                int length = bytesRefWritable.getLength();
 
-                Object stringData = rowInspector.getStructFieldData(rowData, stringField);
-                if (stringData != null) {
-                    Object stringPrimitive = stringFieldInspector.getPrimitiveJavaObject(stringData);
-                    String stringValue = (String) stringPrimitive;
-                    stringLengthSum += stringValue.length();
+                if (!isNull(bytes, start, length)) {
+                    byte[] stringValue = Arrays.copyOfRange(bytes, start, start + length);
+                    stringSum += stringValue.length;
                 }
-
             }
             recordReader.close();
         }
-        return stringLengthSum;
+        return stringSum;
     }
 
     @Override
@@ -437,31 +459,32 @@ public final class BenchmarkLineItemGeneric
 
         StructField stringField = rowInspector.getStructFieldRef("commitdate");
         int fieldIndex = allStructFieldRefs.indexOf(stringField);
-        PrimitiveObjectInspector stringFieldInspector = (PrimitiveObjectInspector) stringField.getFieldObjectInspector();
 
         ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
 
-        long stringLengthSum = 0;
+        long stringSum = 0;
         for (int i = 0; i < LOOPS; i++) {
-            stringLengthSum = 0;
+            stringSum = 0;
+
             RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
             K key = recordReader.createKey();
             V value = recordReader.createValue();
 
             while (recordReader.next(key, value)) {
-                Object rowData = deserializer.deserialize(value);
+                BytesRefArrayWritable row = (BytesRefArrayWritable) value;
+                BytesRefWritable bytesRefWritable = row.unCheckedGet(fieldIndex);
+                byte[] bytes = bytesRefWritable.getData();
+                int start = bytesRefWritable.getStart();
+                int length = bytesRefWritable.getLength();
 
-                Object stringData = rowInspector.getStructFieldData(rowData, stringField);
-                if (stringData != null) {
-                    Object stringPrimitive = stringFieldInspector.getPrimitiveJavaObject(stringData);
-                    String stringValue = (String) stringPrimitive;
-                    stringLengthSum += stringValue.length();
+                if (!isNull(bytes, start, length)) {
+                    byte[] stringValue = Arrays.copyOfRange(bytes, start, start + length);
+                    stringSum += stringValue.length;
                 }
-
             }
             recordReader.close();
         }
-        return stringLengthSum;
+        return stringSum;
     }
 
     @Override
@@ -473,31 +496,32 @@ public final class BenchmarkLineItemGeneric
 
         StructField stringField = rowInspector.getStructFieldRef("receiptdate");
         int fieldIndex = allStructFieldRefs.indexOf(stringField);
-        PrimitiveObjectInspector stringFieldInspector = (PrimitiveObjectInspector) stringField.getFieldObjectInspector();
 
         ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
 
-        long stringLengthSum = 0;
+        long stringSum = 0;
         for (int i = 0; i < LOOPS; i++) {
-            stringLengthSum = 0;
+            stringSum = 0;
+
             RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
             K key = recordReader.createKey();
             V value = recordReader.createValue();
 
             while (recordReader.next(key, value)) {
-                Object rowData = deserializer.deserialize(value);
+                BytesRefArrayWritable row = (BytesRefArrayWritable) value;
+                BytesRefWritable bytesRefWritable = row.unCheckedGet(fieldIndex);
+                byte[] bytes = bytesRefWritable.getData();
+                int start = bytesRefWritable.getStart();
+                int length = bytesRefWritable.getLength();
 
-                Object stringData = rowInspector.getStructFieldData(rowData, stringField);
-                if (stringData != null) {
-                    Object stringPrimitive = stringFieldInspector.getPrimitiveJavaObject(stringData);
-                    String stringValue = (String) stringPrimitive;
-                    stringLengthSum += stringValue.length();
+                if (!isNull(bytes, start, length)) {
+                    byte[] stringValue = Arrays.copyOfRange(bytes, start, start + length);
+                    stringSum += stringValue.length;
                 }
-
             }
             recordReader.close();
         }
-        return stringLengthSum;
+        return stringSum;
     }
 
     @Override
@@ -509,31 +533,30 @@ public final class BenchmarkLineItemGeneric
 
         StructField stringField = rowInspector.getStructFieldRef("shipinstruct");
         int fieldIndex = allStructFieldRefs.indexOf(stringField);
-        PrimitiveObjectInspector stringFieldInspector = (PrimitiveObjectInspector) stringField.getFieldObjectInspector();
 
-        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
-
-        long stringLengthSum = 0;
+        long stringSum = 0;
         for (int i = 0; i < LOOPS; i++) {
-            stringLengthSum = 0;
+            stringSum = 0;
+
             RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
             K key = recordReader.createKey();
             V value = recordReader.createValue();
 
             while (recordReader.next(key, value)) {
-                Object rowData = deserializer.deserialize(value);
+                BytesRefArrayWritable row = (BytesRefArrayWritable) value;
+                BytesRefWritable bytesRefWritable = row.unCheckedGet(fieldIndex);
+                byte[] bytes = bytesRefWritable.getData();
+                int start = bytesRefWritable.getStart();
+                int length = bytesRefWritable.getLength();
 
-                Object stringData = rowInspector.getStructFieldData(rowData, stringField);
-                if (stringData != null) {
-                    Object stringPrimitive = stringFieldInspector.getPrimitiveJavaObject(stringData);
-                    String stringValue = (String) stringPrimitive;
-                    stringLengthSum += stringValue.length();
+                if (!isNull(bytes, start, length)) {
+                    byte[] stringValue = Arrays.copyOfRange(bytes, start, start + length);
+                    stringSum += stringValue.length;
                 }
-
             }
             recordReader.close();
         }
-        return stringLengthSum;
+        return stringSum;
     }
 
     @Override
@@ -545,31 +568,30 @@ public final class BenchmarkLineItemGeneric
 
         StructField stringField = rowInspector.getStructFieldRef("shipmode");
         int fieldIndex = allStructFieldRefs.indexOf(stringField);
-        PrimitiveObjectInspector stringFieldInspector = (PrimitiveObjectInspector) stringField.getFieldObjectInspector();
 
-        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
-
-        long stringLengthSum = 0;
+        long stringSum = 0;
         for (int i = 0; i < LOOPS; i++) {
-            stringLengthSum = 0;
+            stringSum = 0;
+
             RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
             K key = recordReader.createKey();
             V value = recordReader.createValue();
 
             while (recordReader.next(key, value)) {
-                Object rowData = deserializer.deserialize(value);
+                BytesRefArrayWritable row = (BytesRefArrayWritable) value;
+                BytesRefWritable bytesRefWritable = row.unCheckedGet(fieldIndex);
+                byte[] bytes = bytesRefWritable.getData();
+                int start = bytesRefWritable.getStart();
+                int length = bytesRefWritable.getLength();
 
-                Object stringData = rowInspector.getStructFieldData(rowData, stringField);
-                if (stringData != null) {
-                    Object stringPrimitive = stringFieldInspector.getPrimitiveJavaObject(stringData);
-                    String stringValue = (String) stringPrimitive;
-                    stringLengthSum += stringValue.length();
+                if (!isNull(bytes, start, length)) {
+                    byte[] stringValue = Arrays.copyOfRange(bytes, start, start + length);
+                    stringSum += stringValue.length;
                 }
-
             }
             recordReader.close();
         }
-        return stringLengthSum;
+        return stringSum;
     }
 
     @Override
@@ -581,31 +603,30 @@ public final class BenchmarkLineItemGeneric
 
         StructField stringField = rowInspector.getStructFieldRef("comment");
         int fieldIndex = allStructFieldRefs.indexOf(stringField);
-        PrimitiveObjectInspector stringFieldInspector = (PrimitiveObjectInspector) stringField.getFieldObjectInspector();
 
-        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
-
-        long stringLengthSum = 0;
+        long stringSum = 0;
         for (int i = 0; i < LOOPS; i++) {
-            stringLengthSum = 0;
+            stringSum = 0;
+
             RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
             K key = recordReader.createKey();
             V value = recordReader.createValue();
 
             while (recordReader.next(key, value)) {
-                Object rowData = deserializer.deserialize(value);
+                BytesRefArrayWritable row = (BytesRefArrayWritable) value;
+                BytesRefWritable bytesRefWritable = row.unCheckedGet(fieldIndex);
+                byte[] bytes = bytesRefWritable.getData();
+                int start = bytesRefWritable.getStart();
+                int length = bytesRefWritable.getLength();
 
-                Object stringData = rowInspector.getStructFieldData(rowData, stringField);
-                if (stringData != null) {
-                    Object stringPrimitive = stringFieldInspector.getPrimitiveJavaObject(stringData);
-                    String stringValue = (String) stringPrimitive;
-                    stringLengthSum += stringValue.length();
+                if (!isNull(bytes, start, length)) {
+                    byte[] stringValue = Arrays.copyOfRange(bytes, start, start + length);
+                    stringSum += stringValue.length;
                 }
-
             }
             recordReader.close();
         }
-        return stringLengthSum;
+        return stringSum;
     }
 
     @Override
@@ -617,31 +638,24 @@ public final class BenchmarkLineItemGeneric
 
         StructField quantityField = rowInspector.getStructFieldRef("quantity");
         int quantityFieldIndex = allStructFieldRefs.indexOf(quantityField);
-        PrimitiveObjectInspector quantityFieldInspector = (PrimitiveObjectInspector) quantityField.getFieldObjectInspector();
 
         StructField extendedPriceField = rowInspector.getStructFieldRef("extendedprice");
         int extendedPriceFieldIndex = allStructFieldRefs.indexOf(extendedPriceField);
-        PrimitiveObjectInspector extendedPriceFieldInspector = (PrimitiveObjectInspector) extendedPriceField.getFieldObjectInspector();
 
         StructField discountField = rowInspector.getStructFieldRef("discount");
         int discountFieldIndex = allStructFieldRefs.indexOf(discountField);
-        PrimitiveObjectInspector discountFieldInspector = (PrimitiveObjectInspector) discountField.getFieldObjectInspector();
 
         StructField taxField = rowInspector.getStructFieldRef("tax");
         int taxFieldIndex = allStructFieldRefs.indexOf(taxField);
-        PrimitiveObjectInspector taxFieldInspector = (PrimitiveObjectInspector) taxField.getFieldObjectInspector();
 
         StructField returnFlagField = rowInspector.getStructFieldRef("returnflag");
         int returnFlagFieldIndex = allStructFieldRefs.indexOf(returnFlagField);
-        PrimitiveObjectInspector returnFlagFieldInspector = (PrimitiveObjectInspector) returnFlagField.getFieldObjectInspector();
 
         StructField lineStatusField = rowInspector.getStructFieldRef("linestatus");
         int lineStatusFieldIndex = allStructFieldRefs.indexOf(lineStatusField);
-        PrimitiveObjectInspector lineStatusFieldInspector = (PrimitiveObjectInspector) lineStatusField.getFieldObjectInspector();
 
         StructField shipDateField = rowInspector.getStructFieldRef("shipdate");
         int shipDateFieldIndex = allStructFieldRefs.indexOf(shipDateField);
-        PrimitiveObjectInspector shipDateFieldInspector = (PrimitiveObjectInspector) shipDateField.getFieldObjectInspector();
 
         ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(
                 quantityFieldIndex,
@@ -674,55 +688,73 @@ public final class BenchmarkLineItemGeneric
             V value = recordReader.createValue();
 
             while (recordReader.next(key, value)) {
-                Object rowData = deserializer.deserialize(value);
+                BytesRefArrayWritable row = (BytesRefArrayWritable) value;
 
-                Object quantity = rowInspector.getStructFieldData(rowData, quantityField);
-                if (quantity != null) {
-                    Object quantityPrimitive = quantityFieldInspector.getPrimitiveJavaObject(quantity);
-                    double quantityValue = ((Number) quantityPrimitive).doubleValue();
+                BytesRefWritable quantityBytesRefWritable = row.unCheckedGet(quantityFieldIndex);
+                byte[] quantityBytes = quantityBytesRefWritable.getData();
+                int quantityStart = quantityBytesRefWritable.getStart();
+                int quantityLength = quantityBytesRefWritable.getLength();
+                if (quantityLength != 0) {
+                    long longBits = unsafe.getLong(quantityBytes, (long) Unsafe.ARRAY_BYTE_BASE_OFFSET + quantityStart);
+                    double quantityValue = Double.longBitsToDouble(Long.reverseBytes(longBits));
                     quantitySum += quantityValue;
                 }
 
-                Object extendedPrice = rowInspector.getStructFieldData(rowData, extendedPriceField);
-                if (extendedPrice != null) {
-                    Object extendedPricePrimitive = extendedPriceFieldInspector.getPrimitiveJavaObject(extendedPrice);
-                    double extendedPriceValue = ((Number) extendedPricePrimitive).doubleValue();
+                BytesRefWritable extendedPriceBytesRefWritable = row.unCheckedGet(extendedPriceFieldIndex);
+                byte[] extendedPriceBytes = extendedPriceBytesRefWritable.getData();
+                int extendedPriceStart = extendedPriceBytesRefWritable.getStart();
+                int extendedPriceLength = extendedPriceBytesRefWritable.getLength();
+                if (extendedPriceLength != 0) {
+                    long longBits = unsafe.getLong(extendedPriceBytes, (long) Unsafe.ARRAY_BYTE_BASE_OFFSET + extendedPriceStart);
+                    double extendedPriceValue = Double.longBitsToDouble(Long.reverseBytes(longBits));
                     extendedPriceSum += extendedPriceValue;
                 }
 
-                Object discount = rowInspector.getStructFieldData(rowData, discountField);
-                if (discount != null) {
-                    Object discountPrimitive = discountFieldInspector.getPrimitiveJavaObject(discount);
-                    double discountValue = ((Number) discountPrimitive).doubleValue();
+                BytesRefWritable discountBytesRefWritable = row.unCheckedGet(discountFieldIndex);
+                byte[] discountBytes = discountBytesRefWritable.getData();
+                int discountStart = discountBytesRefWritable.getStart();
+                int discountLength = discountBytesRefWritable.getLength();
+                if (discountLength != 0) {
+                    long longBits = unsafe.getLong(discountBytes, (long) Unsafe.ARRAY_BYTE_BASE_OFFSET + discountStart);
+                    double discountValue = Double.longBitsToDouble(Long.reverseBytes(longBits));
                     discountSum += discountValue;
                 }
 
-                Object tax = rowInspector.getStructFieldData(rowData, taxField);
-                if (tax != null) {
-                    Object taxPrimitive = taxFieldInspector.getPrimitiveJavaObject(tax);
-                    double taxValue = ((Number) taxPrimitive).doubleValue();
+                BytesRefWritable taxBytesRefWritable = row.unCheckedGet(taxFieldIndex);
+                byte[] taxBytes = taxBytesRefWritable.getData();
+                int taxStart = taxBytesRefWritable.getStart();
+                int taxLength = taxBytesRefWritable.getLength();
+                if (taxLength != 0) {
+                    long longBits = unsafe.getLong(taxBytes, (long) Unsafe.ARRAY_BYTE_BASE_OFFSET + taxStart);
+                    double taxValue = Double.longBitsToDouble(Long.reverseBytes(longBits));
                     taxSum += taxValue;
                 }
 
-                Object returnFlagData = rowInspector.getStructFieldData(rowData, returnFlagField);
-                if (returnFlagData != null) {
-                    Object returnFlagPrimitive = returnFlagFieldInspector.getPrimitiveJavaObject(returnFlagData);
-                    String returnFlagValue = (String) returnFlagPrimitive;
-                    returnFlagSum += returnFlagValue.length();
+                BytesRefWritable returnFlagBytesRefWritable = row.unCheckedGet(returnFlagFieldIndex);
+                byte[] returnFlagBytes = returnFlagBytesRefWritable.getData();
+                int returnFlagStart = returnFlagBytesRefWritable.getStart();
+                int returnFlagLength = returnFlagBytesRefWritable.getLength();
+                if (!isNull(returnFlagBytes, returnFlagStart, returnFlagLength)) {
+                    byte[] returnFlagValue = Arrays.copyOfRange(returnFlagBytes, returnFlagStart, returnFlagStart + returnFlagLength);
+                    returnFlagSum += returnFlagValue.length;
                 }
 
-                Object lineStatusData = rowInspector.getStructFieldData(rowData, lineStatusField);
-                if (lineStatusData != null) {
-                    Object lineStatusPrimitive = lineStatusFieldInspector.getPrimitiveJavaObject(lineStatusData);
-                    String lineStatusValue = (String) lineStatusPrimitive;
-                    lineStatusSum += lineStatusValue.length();
+                BytesRefWritable lineStatusBytesRefWritable = row.unCheckedGet(lineStatusFieldIndex);
+                byte[] lineStatusBytes = lineStatusBytesRefWritable.getData();
+                int lineStatusStart = lineStatusBytesRefWritable.getStart();
+                int lineStatusLength = lineStatusBytesRefWritable.getLength();
+                if (!isNull(lineStatusBytes, lineStatusStart, lineStatusLength)) {
+                    byte[] lineStatusValue = Arrays.copyOfRange(lineStatusBytes, lineStatusStart, lineStatusStart + lineStatusLength);
+                    lineStatusSum += lineStatusValue.length;
                 }
 
-                Object shipDateData = rowInspector.getStructFieldData(rowData, shipDateField);
-                if (shipDateData != null) {
-                    Object shipDatePrimitive = shipDateFieldInspector.getPrimitiveJavaObject(shipDateData);
-                    String shipDateValue = (String) shipDatePrimitive;
-                    shipDateSum += shipDateValue.length();
+                BytesRefWritable shipDateBytesRefWritable = row.unCheckedGet(shipDateFieldIndex);
+                byte[] shipDateBytes = shipDateBytesRefWritable.getData();
+                int shipDateStart = shipDateBytesRefWritable.getStart();
+                int shipDateLength = shipDateBytesRefWritable.getLength();
+                if (!isNull(shipDateBytes, shipDateStart, shipDateLength)) {
+                    byte[] shipDateValue = Arrays.copyOfRange(shipDateBytes, shipDateStart, shipDateStart + shipDateLength);
+                    shipDateSum += shipDateValue.length;
                 }
             }
             recordReader.close();
@@ -739,19 +771,15 @@ public final class BenchmarkLineItemGeneric
 
         StructField quantityField = rowInspector.getStructFieldRef("quantity");
         int quantityFieldIndex = allStructFieldRefs.indexOf(quantityField);
-        PrimitiveObjectInspector quantityFieldInspector = (PrimitiveObjectInspector) quantityField.getFieldObjectInspector();
 
         StructField extendedPriceField = rowInspector.getStructFieldRef("extendedprice");
         int extendedPriceFieldIndex = allStructFieldRefs.indexOf(extendedPriceField);
-        PrimitiveObjectInspector extendedPriceFieldInspector = (PrimitiveObjectInspector) extendedPriceField.getFieldObjectInspector();
 
         StructField discountField = rowInspector.getStructFieldRef("discount");
         int discountFieldIndex = allStructFieldRefs.indexOf(discountField);
-        PrimitiveObjectInspector discountFieldInspector = (PrimitiveObjectInspector) discountField.getFieldObjectInspector();
 
         StructField shipDateField = rowInspector.getStructFieldRef("shipdate");
         int shipDateFieldIndex = allStructFieldRefs.indexOf(shipDateField);
-        PrimitiveObjectInspector shipDateFieldInspector = (PrimitiveObjectInspector) shipDateField.getFieldObjectInspector();
 
         ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(
                 quantityFieldIndex,
@@ -775,34 +803,45 @@ public final class BenchmarkLineItemGeneric
             V value = recordReader.createValue();
 
             while (recordReader.next(key, value)) {
-                Object rowData = deserializer.deserialize(value);
+                BytesRefArrayWritable row = (BytesRefArrayWritable) value;
 
-                Object quantity = rowInspector.getStructFieldData(rowData, quantityField);
-                if (quantity != null) {
-                    Object quantityPrimitive = quantityFieldInspector.getPrimitiveJavaObject(quantity);
-                    double quantityValue = ((Number) quantityPrimitive).doubleValue();
+                BytesRefWritable quantityBytesRefWritable = row.unCheckedGet(quantityFieldIndex);
+                byte[] quantityBytes = quantityBytesRefWritable.getData();
+                int quantityStart = quantityBytesRefWritable.getStart();
+                int quantityLength = quantityBytesRefWritable.getLength();
+                if (quantityLength != 0) {
+                    long longBits = unsafe.getLong(quantityBytes, (long) Unsafe.ARRAY_BYTE_BASE_OFFSET + quantityStart);
+                    double quantityValue = Double.longBitsToDouble(Long.reverseBytes(longBits));
                     quantitySum += quantityValue;
                 }
 
-                Object extendedPrice = rowInspector.getStructFieldData(rowData, extendedPriceField);
-                if (extendedPrice != null) {
-                    Object extendedPricePrimitive = extendedPriceFieldInspector.getPrimitiveJavaObject(extendedPrice);
-                    double extendedPriceValue = ((Number) extendedPricePrimitive).doubleValue();
+                BytesRefWritable extendedPriceBytesRefWritable = row.unCheckedGet(extendedPriceFieldIndex);
+                byte[] extendedPriceBytes = extendedPriceBytesRefWritable.getData();
+                int extendedPriceStart = extendedPriceBytesRefWritable.getStart();
+                int extendedPriceLength = extendedPriceBytesRefWritable.getLength();
+                if (extendedPriceLength != 0) {
+                    long longBits = unsafe.getLong(extendedPriceBytes, (long) Unsafe.ARRAY_BYTE_BASE_OFFSET + extendedPriceStart);
+                    double extendedPriceValue = Double.longBitsToDouble(Long.reverseBytes(longBits));
                     extendedPriceSum += extendedPriceValue;
                 }
 
-                Object discount = rowInspector.getStructFieldData(rowData, discountField);
-                if (discount != null) {
-                    Object discountPrimitive = discountFieldInspector.getPrimitiveJavaObject(discount);
-                    double discountValue = ((Number) discountPrimitive).doubleValue();
+                BytesRefWritable discountBytesRefWritable = row.unCheckedGet(discountFieldIndex);
+                byte[] discountBytes = discountBytesRefWritable.getData();
+                int discountStart = discountBytesRefWritable.getStart();
+                int discountLength = discountBytesRefWritable.getLength();
+                if (discountLength != 0) {
+                    long longBits = unsafe.getLong(discountBytes, (long) Unsafe.ARRAY_BYTE_BASE_OFFSET + discountStart);
+                    double discountValue = Double.longBitsToDouble(Long.reverseBytes(longBits));
                     discountSum += discountValue;
                 }
 
-                Object shipDateData = rowInspector.getStructFieldData(rowData, shipDateField);
-                if (shipDateData != null) {
-                    Object shipDatePrimitive = shipDateFieldInspector.getPrimitiveJavaObject(shipDateData);
-                    String shipDateValue = (String) shipDatePrimitive;
-                    shipDateSum += shipDateValue.length();
+                BytesRefWritable shipDateBytesRefWritable = row.unCheckedGet(shipDateFieldIndex);
+                byte[] shipDateBytes = shipDateBytesRefWritable.getData();
+                int shipDateStart = shipDateBytesRefWritable.getStart();
+                int shipDateLength = shipDateBytesRefWritable.getLength();
+                if (!isNull(shipDateBytes, shipDateStart, shipDateLength)) {
+                    byte[] shipDateValue = Arrays.copyOfRange(shipDateBytes, shipDateStart, shipDateStart + shipDateLength);
+                    shipDateSum += shipDateValue.length;
                 }
             }
             recordReader.close();
@@ -819,67 +858,51 @@ public final class BenchmarkLineItemGeneric
 
         StructField orderKeyField = rowInspector.getStructFieldRef("orderkey");
         int orderKeyFieldIndex = allStructFieldRefs.indexOf(orderKeyField);
-        PrimitiveObjectInspector orderKeyFieldInspector = (PrimitiveObjectInspector) orderKeyField.getFieldObjectInspector();
 
         StructField partKeyField = rowInspector.getStructFieldRef("partkey");
         int partKeyFieldIndex = allStructFieldRefs.indexOf(partKeyField);
-        PrimitiveObjectInspector partKeyFieldInspector = (PrimitiveObjectInspector) partKeyField.getFieldObjectInspector();
 
         StructField supplierKeyField = rowInspector.getStructFieldRef("suppkey");
         int supplierKeyFieldIndex = allStructFieldRefs.indexOf(supplierKeyField);
-        PrimitiveObjectInspector supplierKeyFieldInspector = (PrimitiveObjectInspector) supplierKeyField.getFieldObjectInspector();
 
         StructField lineNumberField = rowInspector.getStructFieldRef("linenumber");
         int lineNumberFieldIndex = allStructFieldRefs.indexOf(lineNumberField);
-        PrimitiveObjectInspector lineNumberFieldInspector = (PrimitiveObjectInspector) lineNumberField.getFieldObjectInspector();
 
         StructField quantityField = rowInspector.getStructFieldRef("quantity");
         int quantityFieldIndex = allStructFieldRefs.indexOf(quantityField);
-        PrimitiveObjectInspector quantityFieldInspector = (PrimitiveObjectInspector) quantityField.getFieldObjectInspector();
 
         StructField extendedPriceField = rowInspector.getStructFieldRef("extendedprice");
         int extendedPriceFieldIndex = allStructFieldRefs.indexOf(extendedPriceField);
-        PrimitiveObjectInspector extendedPriceFieldInspector = (PrimitiveObjectInspector) extendedPriceField.getFieldObjectInspector();
 
         StructField discountField = rowInspector.getStructFieldRef("discount");
         int discountFieldIndex = allStructFieldRefs.indexOf(discountField);
-        PrimitiveObjectInspector discountFieldInspector = (PrimitiveObjectInspector) discountField.getFieldObjectInspector();
 
         StructField taxField = rowInspector.getStructFieldRef("tax");
         int taxFieldIndex = allStructFieldRefs.indexOf(taxField);
-        PrimitiveObjectInspector taxFieldInspector = (PrimitiveObjectInspector) taxField.getFieldObjectInspector();
 
         StructField returnFlagField = rowInspector.getStructFieldRef("returnflag");
         int returnFlagFieldIndex = allStructFieldRefs.indexOf(returnFlagField);
-        PrimitiveObjectInspector returnFlagFieldInspector = (PrimitiveObjectInspector) returnFlagField.getFieldObjectInspector();
 
         StructField lineStatusField = rowInspector.getStructFieldRef("linestatus");
         int lineStatusFieldIndex = allStructFieldRefs.indexOf(lineStatusField);
-        PrimitiveObjectInspector lineStatusFieldInspector = (PrimitiveObjectInspector) lineStatusField.getFieldObjectInspector();
 
         StructField shipDateField = rowInspector.getStructFieldRef("shipdate");
         int shipDateFieldIndex = allStructFieldRefs.indexOf(shipDateField);
-        PrimitiveObjectInspector shipDateFieldInspector = (PrimitiveObjectInspector) shipDateField.getFieldObjectInspector();
 
         StructField commitDateField = rowInspector.getStructFieldRef("commitdate");
         int commitDateFieldIndex = allStructFieldRefs.indexOf(commitDateField);
-        PrimitiveObjectInspector commitDateFieldInspector = (PrimitiveObjectInspector) commitDateField.getFieldObjectInspector();
 
         StructField receiptDateField = rowInspector.getStructFieldRef("receiptdate");
         int receiptDateFieldIndex = allStructFieldRefs.indexOf(receiptDateField);
-        PrimitiveObjectInspector receiptDateFieldInspector = (PrimitiveObjectInspector) receiptDateField.getFieldObjectInspector();
 
         StructField shipInstructionsField = rowInspector.getStructFieldRef("shipinstruct");
         int shipInstructionsFieldIndex = allStructFieldRefs.indexOf(shipInstructionsField);
-        PrimitiveObjectInspector shipInstructionsFieldInspector = (PrimitiveObjectInspector) shipInstructionsField.getFieldObjectInspector();
 
         StructField shipModeField = rowInspector.getStructFieldRef("shipmode");
         int shipModeFieldIndex = allStructFieldRefs.indexOf(shipModeField);
-        PrimitiveObjectInspector shipModeFieldInspector = (PrimitiveObjectInspector) shipModeField.getFieldObjectInspector();
 
         StructField commentField = rowInspector.getStructFieldRef("comment");
         int commentFieldIndex = allStructFieldRefs.indexOf(commentField);
-        PrimitiveObjectInspector commentFieldInspector = (PrimitiveObjectInspector) commentField.getFieldObjectInspector();
 
         ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(
                 orderKeyFieldIndex,
@@ -939,118 +962,154 @@ public final class BenchmarkLineItemGeneric
             V value = recordReader.createValue();
 
             while (recordReader.next(key, value)) {
-                Object rowData = deserializer.deserialize(value);
+                BytesRefArrayWritable row = (BytesRefArrayWritable) value;
 
-                Object orderKeyData = rowInspector.getStructFieldData(rowData, orderKeyField);
-                if (orderKeyData != null) {
-                    Object orderKeyPrimitive = orderKeyFieldInspector.getPrimitiveJavaObject(orderKeyData);
-                    long orderKeyValue = ((Number) orderKeyPrimitive).longValue();
+                BytesRefWritable orderKeyBytesRefWritable = row.unCheckedGet(orderKeyFieldIndex);
+                byte[] orderKeyBytes = orderKeyBytesRefWritable.getData();
+                int orderKeyStart = orderKeyBytesRefWritable.getStart();
+                int orderKeyLength = orderKeyBytesRefWritable.getLength();
+                if (orderKeyLength != 0) {
+                    long orderKeyValue = readVBigint(orderKeyBytes, orderKeyStart, orderKeyLength);
                     orderKeySum += orderKeyValue;
                 }
 
-                Object partKeyData = rowInspector.getStructFieldData(rowData, partKeyField);
-                if (partKeyData != null) {
-                    Object partKeyPrimitive = partKeyFieldInspector.getPrimitiveJavaObject(partKeyData);
-                    long partKeyValue = ((Number) partKeyPrimitive).longValue();
+                BytesRefWritable partKeyBytesRefWritable = row.unCheckedGet(partKeyFieldIndex);
+                byte[] partKeyBytes = partKeyBytesRefWritable.getData();
+                int partKeyStart = partKeyBytesRefWritable.getStart();
+                int partKeyLength = partKeyBytesRefWritable.getLength();
+                if (partKeyLength != 0) {
+                    long partKeyValue = readVBigint(partKeyBytes, partKeyStart, partKeyLength);
                     partKeySum += partKeyValue;
                 }
-                
-                Object supplierKeyData = rowInspector.getStructFieldData(rowData, supplierKeyField);
-                if (supplierKeyData != null) {
-                    Object supplierKeyPrimitive = supplierKeyFieldInspector.getPrimitiveJavaObject(supplierKeyData);
-                    long supplierKeyValue = ((Number) supplierKeyPrimitive).longValue();
+
+                BytesRefWritable supplierKeyBytesRefWritable = row.unCheckedGet(supplierKeyFieldIndex);
+                byte[] supplierKeyBytes = supplierKeyBytesRefWritable.getData();
+                int supplierKeyStart = supplierKeyBytesRefWritable.getStart();
+                int supplierKeyLength = supplierKeyBytesRefWritable.getLength();
+                if (supplierKeyLength != 0) {
+                    long supplierKeyValue = readVBigint(supplierKeyBytes, supplierKeyStart, supplierKeyLength);
                     supplierKeySum += supplierKeyValue;
                 }
-                
-                Object lineNumberData = rowInspector.getStructFieldData(rowData, lineNumberField);
-                if (lineNumberData != null) {
-                    Object lineNumberPrimitive = lineNumberFieldInspector.getPrimitiveJavaObject(lineNumberData);
-                    long lineNumberValue = ((Number) lineNumberPrimitive).longValue();
+
+                BytesRefWritable lineNumberBytesRefWritable = row.unCheckedGet(lineNumberFieldIndex);
+                byte[] lineNumberBytes = lineNumberBytesRefWritable.getData();
+                int lineNumberStart = lineNumberBytesRefWritable.getStart();
+                int lineNumberLength = lineNumberBytesRefWritable.getLength();
+                if (lineNumberLength != 0) {
+                    long lineNumberValue = readVBigint(lineNumberBytes, lineNumberStart, lineNumberLength);
                     lineNumberSum += lineNumberValue;
                 }
 
-                Object quantity = rowInspector.getStructFieldData(rowData, quantityField);
-                if (quantity != null) {
-                    Object quantityPrimitive = quantityFieldInspector.getPrimitiveJavaObject(quantity);
-                    double quantityValue = ((Number) quantityPrimitive).doubleValue();
+                BytesRefWritable quantityBytesRefWritable = row.unCheckedGet(quantityFieldIndex);
+                byte[] quantityBytes = quantityBytesRefWritable.getData();
+                int quantityStart = quantityBytesRefWritable.getStart();
+                int quantityLength = quantityBytesRefWritable.getLength();
+                if (quantityLength != 0) {
+                    long longBits = unsafe.getLong(quantityBytes, (long) Unsafe.ARRAY_BYTE_BASE_OFFSET + quantityStart);
+                    double quantityValue = Double.longBitsToDouble(Long.reverseBytes(longBits));
                     quantitySum += quantityValue;
                 }
 
-                Object extendedPrice = rowInspector.getStructFieldData(rowData, extendedPriceField);
-                if (extendedPrice != null) {
-                    Object extendedPricePrimitive = extendedPriceFieldInspector.getPrimitiveJavaObject(extendedPrice);
-                    double extendedPriceValue = ((Number) extendedPricePrimitive).doubleValue();
+                BytesRefWritable extendedPriceBytesRefWritable = row.unCheckedGet(extendedPriceFieldIndex);
+                byte[] extendedPriceBytes = extendedPriceBytesRefWritable.getData();
+                int extendedPriceStart = extendedPriceBytesRefWritable.getStart();
+                int extendedPriceLength = extendedPriceBytesRefWritable.getLength();
+                if (extendedPriceLength != 0) {
+                    long longBits = unsafe.getLong(extendedPriceBytes, (long) Unsafe.ARRAY_BYTE_BASE_OFFSET + extendedPriceStart);
+                    double extendedPriceValue = Double.longBitsToDouble(Long.reverseBytes(longBits));
                     extendedPriceSum += extendedPriceValue;
                 }
 
-                Object discount = rowInspector.getStructFieldData(rowData, discountField);
-                if (discount != null) {
-                    Object discountPrimitive = discountFieldInspector.getPrimitiveJavaObject(discount);
-                    double discountValue = ((Number) discountPrimitive).doubleValue();
+                BytesRefWritable discountBytesRefWritable = row.unCheckedGet(discountFieldIndex);
+                byte[] discountBytes = discountBytesRefWritable.getData();
+                int discountStart = discountBytesRefWritable.getStart();
+                int discountLength = discountBytesRefWritable.getLength();
+                if (discountLength != 0) {
+                    long longBits = unsafe.getLong(discountBytes, (long) Unsafe.ARRAY_BYTE_BASE_OFFSET + discountStart);
+                    double discountValue = Double.longBitsToDouble(Long.reverseBytes(longBits));
                     discountSum += discountValue;
                 }
 
-                Object tax = rowInspector.getStructFieldData(rowData, taxField);
-                if (tax != null) {
-                    Object taxPrimitive = taxFieldInspector.getPrimitiveJavaObject(tax);
-                    double taxValue = ((Number) taxPrimitive).doubleValue();
+                BytesRefWritable taxBytesRefWritable = row.unCheckedGet(taxFieldIndex);
+                byte[] taxBytes = taxBytesRefWritable.getData();
+                int taxStart = taxBytesRefWritable.getStart();
+                int taxLength = taxBytesRefWritable.getLength();
+                if (taxLength != 0) {
+                    long longBits = unsafe.getLong(taxBytes, (long) Unsafe.ARRAY_BYTE_BASE_OFFSET + taxStart);
+                    double taxValue = Double.longBitsToDouble(Long.reverseBytes(longBits));
                     taxSum += taxValue;
                 }
 
-                Object returnFlagData = rowInspector.getStructFieldData(rowData, returnFlagField);
-                if (returnFlagData != null) {
-                    Object returnFlagPrimitive = returnFlagFieldInspector.getPrimitiveJavaObject(returnFlagData);
-                    String returnFlagValue = (String) returnFlagPrimitive;
-                    returnFlagSum += returnFlagValue.length();
+                BytesRefWritable returnFlagBytesRefWritable = row.unCheckedGet(returnFlagFieldIndex);
+                byte[] returnFlagBytes = returnFlagBytesRefWritable.getData();
+                int returnFlagStart = returnFlagBytesRefWritable.getStart();
+                int returnFlagLength = returnFlagBytesRefWritable.getLength();
+                if (!isNull(returnFlagBytes, returnFlagStart, returnFlagLength)) {
+                    byte[] returnFlagValue = Arrays.copyOfRange(returnFlagBytes, returnFlagStart, returnFlagStart + returnFlagLength);
+                    returnFlagSum += returnFlagValue.length;
                 }
 
-                Object lineStatusData = rowInspector.getStructFieldData(rowData, lineStatusField);
-                if (lineStatusData != null) {
-                    Object lineStatusPrimitive = lineStatusFieldInspector.getPrimitiveJavaObject(lineStatusData);
-                    String lineStatusValue = (String) lineStatusPrimitive;
-                    lineStatusSum += lineStatusValue.length();
+                BytesRefWritable lineStatusBytesRefWritable = row.unCheckedGet(lineStatusFieldIndex);
+                byte[] lineStatusBytes = lineStatusBytesRefWritable.getData();
+                int lineStatusStart = lineStatusBytesRefWritable.getStart();
+                int lineStatusLength = lineStatusBytesRefWritable.getLength();
+                if (!isNull(lineStatusBytes, lineStatusStart, lineStatusLength)) {
+                    byte[] lineStatusValue = Arrays.copyOfRange(lineStatusBytes, lineStatusStart, lineStatusStart + lineStatusLength);
+                    lineStatusSum += lineStatusValue.length;
                 }
 
-                Object shipDateData = rowInspector.getStructFieldData(rowData, shipDateField);
-                if (shipDateData != null) {
-                    Object shipDatePrimitive = shipDateFieldInspector.getPrimitiveJavaObject(shipDateData);
-                    String shipDateValue = (String) shipDatePrimitive;
-                    shipDateSum += shipDateValue.length();
+                BytesRefWritable shipDateBytesRefWritable = row.unCheckedGet(shipDateFieldIndex);
+                byte[] shipDateBytes = shipDateBytesRefWritable.getData();
+                int shipDateStart = shipDateBytesRefWritable.getStart();
+                int shipDateLength = shipDateBytesRefWritable.getLength();
+                if (!isNull(shipDateBytes, shipDateStart, shipDateLength)) {
+                    byte[] shipDateValue = Arrays.copyOfRange(shipDateBytes, shipDateStart, shipDateStart + shipDateLength);
+                    shipDateSum += shipDateValue.length;
                 }
 
-                Object commitDateData = rowInspector.getStructFieldData(rowData, commitDateField);
-                if (commitDateData != null) {
-                    Object commitDatePrimitive = commitDateFieldInspector.getPrimitiveJavaObject(commitDateData);
-                    String commitDateValue = (String) commitDatePrimitive;
-                    commitDateSum += commitDateValue.length();
+                BytesRefWritable commitDateBytesRefWritable = row.unCheckedGet(commitDateFieldIndex);
+                byte[] commitDateBytes = commitDateBytesRefWritable.getData();
+                int commitDateStart = commitDateBytesRefWritable.getStart();
+                int commitDateLength = commitDateBytesRefWritable.getLength();
+                if (!isNull(commitDateBytes, commitDateStart, commitDateLength)) {
+                    byte[] commitDateValue = Arrays.copyOfRange(commitDateBytes, commitDateStart, commitDateStart + commitDateLength);
+                    commitDateSum += commitDateValue.length;
                 }
 
-                Object receiptDateData = rowInspector.getStructFieldData(rowData, receiptDateField);
-                if (receiptDateData != null) {
-                    Object receiptDatePrimitive = receiptDateFieldInspector.getPrimitiveJavaObject(receiptDateData);
-                    String receiptDateValue = (String) receiptDatePrimitive;
-                    receiptDateSum += receiptDateValue.length();
+                BytesRefWritable receiptDateBytesRefWritable = row.unCheckedGet(receiptDateFieldIndex);
+                byte[] receiptDateBytes = receiptDateBytesRefWritable.getData();
+                int receiptDateStart = receiptDateBytesRefWritable.getStart();
+                int receiptDateLength = receiptDateBytesRefWritable.getLength();
+                if (!isNull(receiptDateBytes, receiptDateStart, receiptDateLength)) {
+                    byte[] receiptDateValue = Arrays.copyOfRange(receiptDateBytes, receiptDateStart, receiptDateStart + receiptDateLength);
+                    receiptDateSum += receiptDateValue.length;
                 }
 
-                Object shipInstructionsData = rowInspector.getStructFieldData(rowData, shipInstructionsField);
-                if (shipInstructionsData != null) {
-                    Object shipInstructionsPrimitive = shipInstructionsFieldInspector.getPrimitiveJavaObject(shipInstructionsData);
-                    String shipInstructionsValue = (String) shipInstructionsPrimitive;
-                    shipInstructionsSum += shipInstructionsValue.length();
+                BytesRefWritable shipInstructionsBytesRefWritable = row.unCheckedGet(shipInstructionsFieldIndex);
+                byte[] shipInstructionsBytes = shipInstructionsBytesRefWritable.getData();
+                int shipInstructionsStart = shipInstructionsBytesRefWritable.getStart();
+                int shipInstructionsLength = shipInstructionsBytesRefWritable.getLength();
+                if (!isNull(shipInstructionsBytes, shipInstructionsStart, shipInstructionsLength)) {
+                    byte[] shipInstructionsValue = Arrays.copyOfRange(shipInstructionsBytes, shipInstructionsStart, shipInstructionsStart + shipInstructionsLength);
+                    shipInstructionsSum += shipInstructionsValue.length;
                 }
 
-                Object shipModeData = rowInspector.getStructFieldData(rowData, shipModeField);
-                if (shipModeData != null) {
-                    Object shipModePrimitive = shipModeFieldInspector.getPrimitiveJavaObject(shipModeData);
-                    String shipModeValue = (String) shipModePrimitive;
-                    shipModeSum += shipModeValue.length();
+                BytesRefWritable shipModeBytesRefWritable = row.unCheckedGet(shipModeFieldIndex);
+                byte[] shipModeBytes = shipModeBytesRefWritable.getData();
+                int shipModeStart = shipModeBytesRefWritable.getStart();
+                int shipModeLength = shipModeBytesRefWritable.getLength();
+                if (!isNull(shipModeBytes, shipModeStart, shipModeLength)) {
+                    byte[] shipModeValue = Arrays.copyOfRange(shipModeBytes, shipModeStart, shipModeStart + shipModeLength);
+                    shipModeSum += shipModeValue.length;
                 }
 
-                Object commentData = rowInspector.getStructFieldData(rowData, commentField);
-                if (commentData != null) {
-                    Object commentPrimitive = commentFieldInspector.getPrimitiveJavaObject(commentData);
-                    String commentValue = (String) commentPrimitive;
-                    commentSum += commentValue.length();
+                BytesRefWritable commentBytesRefWritable = row.unCheckedGet(commentFieldIndex);
+                byte[] commentBytes = commentBytesRefWritable.getData();
+                int commentStart = commentBytesRefWritable.getStart();
+                int commentLength = commentBytesRefWritable.getLength();
+                if (!isNull(commentBytes, commentStart, commentLength)) {
+                    byte[] commentValue = Arrays.copyOfRange(commentBytes, commentStart, commentStart + commentLength);
+                    commentSum += commentValue.length;
                 }
             }
             recordReader.close();
@@ -1073,5 +1132,47 @@ public final class BenchmarkLineItemGeneric
                 shipInstructionsSum,
                 shipModeSum,
                 commentSum);
+    }
+
+    public long readVBigint(byte[] bytes, int offset, int length)
+    {
+        if (length == 1) {
+            return bytes[offset];
+        }
+
+        long i = 0;
+        for (int idx = 0; idx < length - 1; idx++) {
+            byte b = bytes[offset + 1 + idx];
+            i = i << 8;
+            i = i | (b & 0xFF);
+        }
+        return WritableUtils.isNegativeVInt(bytes[offset]) ? ~i : i;
+    }
+
+    private static boolean isNull(byte[] bytes, int start, int length)
+    {
+        return length == 2 && bytes[start] == '\\' && bytes[start + 1] == 'N';
+    }
+
+    private static final Unsafe unsafe;
+
+    static {
+        try {
+            // fetch theUnsafe object
+            Field field = Unsafe.class.getDeclaredField("theUnsafe");
+            field.setAccessible(true);
+            unsafe = (Unsafe) field.get(null);
+            if (unsafe == null) {
+                throw new RuntimeException("Unsafe access not available");
+            }
+
+            // make sure the VM thinks bytes are only one byte wide
+            if (Unsafe.ARRAY_BYTE_INDEX_SCALE != 1) {
+                throw new IllegalStateException("Byte array index scale must be 1, but is " + Unsafe.ARRAY_BYTE_INDEX_SCALE);
+            }
+        }
+        catch (Exception e) {
+            throw new RuntimeException(e);
+        }
     }
 }

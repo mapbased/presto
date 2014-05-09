@@ -35,6 +35,8 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hive.ql.io.FSRecordWriter;
 import org.apache.hadoop.hive.ql.io.HiveOutputFormat;
+import org.apache.hadoop.hive.ql.io.RCFileInputFormat;
+import org.apache.hadoop.hive.ql.io.RCFileOutputFormat;
 import org.apache.hadoop.hive.serde2.ColumnProjectionUtils;
 import org.apache.hadoop.hive.serde2.Deserializer;
 import org.apache.hadoop.hive.serde2.SerDe;
@@ -184,7 +186,8 @@ public final class HiveInputFormatBenchmark
                         new org.apache.hadoop.hive.ql.io.orc.OrcSerde(),
                         new org.apache.hadoop.hive.ql.io.orc.OrcSerde(),
                         null,
-                        true)
+                        true,
+                        ImmutableList.of(new BenchmarkLineItemGeneric())),
 
 //                new BenchmarkFile(
 //                        "dwrf",
@@ -196,15 +199,16 @@ public final class HiveInputFormatBenchmark
 //                        null,
 //                        true),
 
-//                new BenchmarkFile(
-//                        "rc binary gzip",
-//                        "rc-binary.gz",
-//                        new RCFileInputFormat<>(),
-//                        new RCFileOutputFormat(),
-//                        new LazyBinaryColumnarSerDe(),
-//                        new LazyBinaryColumnarSerDe(),
-//                        "gzip",
-//                        true),
+                new BenchmarkFile(
+                        "rc binary gzip",
+                        "rc-binary.gz",
+                        new RCFileInputFormat<>(),
+                        new RCFileOutputFormat(),
+                        new LazyBinaryColumnarSerDe(),
+                        new LazyBinaryColumnarSerDe(),
+                        "gzip",
+                        true,
+                        ImmutableList.of(new BenchmarkLineItemGeneric(), new BenchmarkLineItemRCBinary()))
 //
 //                new BenchmarkFile(
 //                        "rc text gzip",
@@ -311,7 +315,7 @@ public final class HiveInputFormatBenchmark
         JobConf jobConf = new JobConf();
         System.out.println("============ WARM UP ============");
         for (BenchmarkFile benchmarkFile : benchmarkFiles) {
-            benchmarkLineItem(jobConf, benchmarkFile, 5);
+            benchmarkLineItem(jobConf, benchmarkFile, 1);
         }
 
         System.out.println();
@@ -444,8 +448,16 @@ public final class HiveInputFormatBenchmark
     private static void benchmarkLineItem(JobConf jobConf, BenchmarkFile benchmarkFile, int loopCount)
             throws Exception
     {
+        for (BenchmarkLineItem benchmarkLineItem : benchmarkFile.getLineItemBenchmarks()) {
+            benchmarkLineItem(jobConf, benchmarkFile, loopCount, benchmarkLineItem);
+        }
+    }
+
+    private static void benchmarkLineItem(JobConf jobConf, BenchmarkFile benchmarkFile, int loopCount, BenchmarkLineItem benchmarkLineItem)
+            throws Exception
+    {
         System.out.println();
-        System.out.println(benchmarkFile.getName());
+        System.out.println(benchmarkFile.getName() + " " + benchmarkLineItem.getName());
 
         Object value = null;
 
@@ -456,7 +468,7 @@ public final class HiveInputFormatBenchmark
         //
         start = System.nanoTime();
         for (int loops = 0; loops < loopCount; loops++) {
-            value = BenchmarkLineItemGeneric.orderKey(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
+            value = benchmarkLineItem.orderKey(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
         }
         logDuration("orderKey", start, loopCount, value);
 
@@ -465,7 +477,7 @@ public final class HiveInputFormatBenchmark
         //
         start = System.nanoTime();
         for (int loops = 0; loops < loopCount; loops++) {
-            value = BenchmarkLineItemGeneric.partKey(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
+            value = benchmarkLineItem.partKey(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
         }
         logDuration("partKey", start, loopCount, value);
 
@@ -474,7 +486,7 @@ public final class HiveInputFormatBenchmark
         //
         start = System.nanoTime();
         for (int loops = 0; loops < loopCount; loops++) {
-            value = BenchmarkLineItemGeneric.supplierKey(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
+            value = benchmarkLineItem.supplierKey(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
         }
         logDuration("supplierKey", start, loopCount, value);
 
@@ -483,7 +495,7 @@ public final class HiveInputFormatBenchmark
         //
         start = System.nanoTime();
         for (int loops = 0; loops < loopCount; loops++) {
-            value = BenchmarkLineItemGeneric.lineNumber(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
+            value = benchmarkLineItem.lineNumber(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
         }
         logDuration("lineNumber", start, loopCount, value);
 
@@ -492,7 +504,7 @@ public final class HiveInputFormatBenchmark
         //
         start = System.nanoTime();
         for (int loops = 0; loops < loopCount; loops++) {
-            value = BenchmarkLineItemGeneric.quantity(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
+            value = benchmarkLineItem.quantity(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
         }
         logDuration("quantity", start, loopCount, value);
 
@@ -501,7 +513,7 @@ public final class HiveInputFormatBenchmark
         //
         start = System.nanoTime();
         for (int loops = 0; loops < loopCount; loops++) {
-            value = BenchmarkLineItemGeneric.extendedPrice(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
+            value = benchmarkLineItem.extendedPrice(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
         }
         logDuration("extendedPrice", start, loopCount, value);
 
@@ -510,7 +522,7 @@ public final class HiveInputFormatBenchmark
         //
         start = System.nanoTime();
         for (int loops = 0; loops < loopCount; loops++) {
-            value = BenchmarkLineItemGeneric.discount(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
+            value = benchmarkLineItem.discount(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
         }
         logDuration("discount", start, loopCount, value);
 
@@ -519,7 +531,7 @@ public final class HiveInputFormatBenchmark
         //
         start = System.nanoTime();
         for (int loops = 0; loops < loopCount; loops++) {
-            value = BenchmarkLineItemGeneric.tax(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
+            value = benchmarkLineItem.tax(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
         }
         logDuration("tax", start, loopCount, value);
 
@@ -528,7 +540,7 @@ public final class HiveInputFormatBenchmark
         //
         start = System.nanoTime();
         for (int loops = 0; loops < loopCount; loops++) {
-            value = BenchmarkLineItemGeneric.returnFlag(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
+            value = benchmarkLineItem.returnFlag(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
         }
         logDuration("returnFlag", start, loopCount, value);
 
@@ -537,7 +549,7 @@ public final class HiveInputFormatBenchmark
         //
         start = System.nanoTime();
         for (int loops = 0; loops < loopCount; loops++) {
-            value = BenchmarkLineItemGeneric.status(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
+            value = benchmarkLineItem.status(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
         }
         logDuration("status", start, loopCount, value);
 
@@ -546,7 +558,7 @@ public final class HiveInputFormatBenchmark
         //
         start = System.nanoTime();
         for (int loops = 0; loops < loopCount; loops++) {
-            value = BenchmarkLineItemGeneric.shipDate(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
+            value = benchmarkLineItem.shipDate(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
         }
         logDuration("shipDate", start, loopCount, value);
 
@@ -555,7 +567,7 @@ public final class HiveInputFormatBenchmark
         //
         start = System.nanoTime();
         for (int loops = 0; loops < loopCount; loops++) {
-            value = BenchmarkLineItemGeneric.commitDate(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
+            value = benchmarkLineItem.commitDate(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
         }
         logDuration("commitDate", start, loopCount, value);
 
@@ -564,7 +576,7 @@ public final class HiveInputFormatBenchmark
         //
         start = System.nanoTime();
         for (int loops = 0; loops < loopCount; loops++) {
-            value = BenchmarkLineItemGeneric.receiptDate(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
+            value = benchmarkLineItem.receiptDate(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
         }
         logDuration("receiptDate", start, loopCount, value);
 
@@ -573,7 +585,7 @@ public final class HiveInputFormatBenchmark
         //
         start = System.nanoTime();
         for (int loops = 0; loops < loopCount; loops++) {
-            value = BenchmarkLineItemGeneric.shipInstructions(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
+            value = benchmarkLineItem.shipInstructions(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
         }
         logDuration("shipInstructions", start, loopCount, value);
 
@@ -582,7 +594,7 @@ public final class HiveInputFormatBenchmark
         //
         start = System.nanoTime();
         for (int loops = 0; loops < loopCount; loops++) {
-            value = BenchmarkLineItemGeneric.shipMode(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
+            value = benchmarkLineItem.shipMode(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
         }
         logDuration("shipMode", start, loopCount, value);
 
@@ -591,7 +603,7 @@ public final class HiveInputFormatBenchmark
         //
         start = System.nanoTime();
         for (int loops = 0; loops < loopCount; loops++) {
-            value = BenchmarkLineItemGeneric.comment(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
+            value = benchmarkLineItem.comment(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
         }
         logDuration("comment", start, loopCount, value);
 
@@ -600,7 +612,7 @@ public final class HiveInputFormatBenchmark
         //
         start = System.nanoTime();
         for (int loops = 0; loops < loopCount; loops++) {
-            value = BenchmarkLineItemGeneric.tpchQuery6(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
+            value = benchmarkLineItem.tpchQuery6(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
         }
         logDuration("tpchQuery6", start, loopCount, value);
 
@@ -609,7 +621,7 @@ public final class HiveInputFormatBenchmark
         //
         start = System.nanoTime();
         for (int loops = 0; loops < loopCount; loops++) {
-            value = BenchmarkLineItemGeneric.tpchQuery1(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
+            value = benchmarkLineItem.tpchQuery1(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
         }
         logDuration("tpchQuery1", start, loopCount, value);
 
@@ -618,7 +630,7 @@ public final class HiveInputFormatBenchmark
         //
         start = System.nanoTime();
         for (int loops = 0; loops < loopCount; loops++) {
-            value = BenchmarkLineItemGeneric.all(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
+            value = benchmarkLineItem.all(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemDeserializer());
         }
         logDuration("all", start, loopCount, value);
     }
@@ -3701,6 +3713,7 @@ public final class HiveInputFormatBenchmark
         private final FileSplit orderFileSplit;
         private final Deserializer lineItemDeserializer;
         private final FileSplit lineItemFileSplit;
+        private final List<BenchmarkLineItem> lineItemBenchmarks;
 
         public BenchmarkFile(
                 String name,
@@ -3710,13 +3723,15 @@ public final class HiveInputFormatBenchmark
                 SerDe orderSerDe,
                 SerDe lineitemSerDe,
                 String compressionCodec,
-                boolean verifyChecksum)
+                boolean verifyChecksum,
+                List<? extends BenchmarkLineItem> lineItemBenchmarks)
                 throws Exception
         {
             this.name = name;
             this.inputFormat = inputFormat;
             this.orderDeserializer = orderSerDe;
             this.lineItemDeserializer = lineitemSerDe;
+            this.lineItemBenchmarks = ImmutableList.copyOf(lineItemBenchmarks);
 
             File orderFile = new File(DATA_DIR, "order." + fileExtension);
             orderSerDe.initialize(new Configuration(), createTableProperties(ORDER_COLUMNS));
@@ -3765,6 +3780,11 @@ public final class HiveInputFormatBenchmark
         public FileSplit getLineItemFileSplit()
         {
             return lineItemFileSplit;
+        }
+
+        public List<BenchmarkLineItem> getLineItemBenchmarks()
+        {
+            return lineItemBenchmarks;
         }
     }
 
