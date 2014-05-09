@@ -27,7 +27,7 @@ import io.airlift.slice.Slices;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.hive.ql.exec.FileSinkOperator.RecordWriter;
+import org.apache.hadoop.hive.ql.io.FSRecordWriter;
 import org.apache.hadoop.hive.ql.io.HiveOutputFormat;
 import org.apache.hadoop.hive.serde2.SerDe;
 import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
@@ -235,7 +235,7 @@ public abstract class AbstractTestHiveFileFormats
             jobConf.set(COMPRESS_TYPE, SequenceFile.CompressionType.BLOCK.toString());
         }
 
-        RecordWriter recordWriter = outputFormat.getHiveRecordWriter(
+        FSRecordWriter recordWriter = outputFormat.getHiveRecordWriter(
                 jobConf,
                 new Path(filePath),
                 Text.class,
