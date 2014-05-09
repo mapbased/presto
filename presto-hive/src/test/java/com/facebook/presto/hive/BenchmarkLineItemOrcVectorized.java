@@ -14,6 +14,7 @@
 package com.facebook.presto.hive;
 
 import com.google.common.collect.ImmutableList;
+import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.hive.ql.exec.vector.BytesColumnVector;
 import org.apache.hadoop.hive.ql.exec.vector.DoubleColumnVector;
 import org.apache.hadoop.hive.ql.exec.vector.LongColumnVector;
@@ -48,6 +49,7 @@ public final class BenchmarkLineItemOrcVectorized
     public <K, V extends Writable> long orderKey(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
 
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
@@ -61,7 +63,7 @@ public final class BenchmarkLineItemOrcVectorized
         for (int loop = 0; loop < LOOPS; loop++) {
             bigintSum = 0;
 
-            RecordReader recordReader = createVectorizedRecordReader(jobConf, fileSplit, include);
+            RecordReader recordReader = createVectorizedRecordReader(fileSystem, fileSplit, include);
             VectorizedRowBatch batch = null;
             while (recordReader.hasNext()) {
                 batch = recordReader.nextBatch(batch);
@@ -84,6 +86,7 @@ public final class BenchmarkLineItemOrcVectorized
     public <K, V extends Writable> long partKey(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
 
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
@@ -97,7 +100,7 @@ public final class BenchmarkLineItemOrcVectorized
         for (int loop = 0; loop < LOOPS; loop++) {
             bigintSum = 0;
 
-            RecordReader recordReader = createVectorizedRecordReader(jobConf, fileSplit, include);
+            RecordReader recordReader = createVectorizedRecordReader(fileSystem, fileSplit, include);
             VectorizedRowBatch batch = null;
             while (recordReader.hasNext()) {
                 batch = recordReader.nextBatch(batch);
@@ -120,6 +123,7 @@ public final class BenchmarkLineItemOrcVectorized
     public <K, V extends Writable> long supplierKey(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
 
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
@@ -133,7 +137,7 @@ public final class BenchmarkLineItemOrcVectorized
         for (int loop = 0; loop < LOOPS; loop++) {
             bigintSum = 0;
 
-            RecordReader recordReader = createVectorizedRecordReader(jobConf, fileSplit, include);
+            RecordReader recordReader = createVectorizedRecordReader(fileSystem, fileSplit, include);
             VectorizedRowBatch batch = null;
             while (recordReader.hasNext()) {
                 batch = recordReader.nextBatch(batch);
@@ -156,6 +160,7 @@ public final class BenchmarkLineItemOrcVectorized
     public <K, V extends Writable> long lineNumber(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
 
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
@@ -169,7 +174,7 @@ public final class BenchmarkLineItemOrcVectorized
         for (int loop = 0; loop < LOOPS; loop++) {
             bigintSum = 0;
 
-            RecordReader recordReader = createVectorizedRecordReader(jobConf, fileSplit, include);
+            RecordReader recordReader = createVectorizedRecordReader(fileSystem, fileSplit, include);
             VectorizedRowBatch batch = null;
             while (recordReader.hasNext()) {
                 batch = recordReader.nextBatch(batch);
@@ -192,6 +197,7 @@ public final class BenchmarkLineItemOrcVectorized
     public <K, V extends Writable> long quantity(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
 
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
@@ -205,7 +211,7 @@ public final class BenchmarkLineItemOrcVectorized
         for (int loop = 0; loop < LOOPS; loop++) {
             bigintSum = 0;
 
-            RecordReader recordReader = createVectorizedRecordReader(jobConf, fileSplit, include);
+            RecordReader recordReader = createVectorizedRecordReader(fileSystem, fileSplit, include);
             VectorizedRowBatch batch = null;
             while (recordReader.hasNext()) {
                 batch = recordReader.nextBatch(batch);
@@ -228,6 +234,7 @@ public final class BenchmarkLineItemOrcVectorized
     public <K, V extends Writable> double extendedPrice(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
 
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
@@ -241,7 +248,7 @@ public final class BenchmarkLineItemOrcVectorized
         for (int loop = 0; loop < LOOPS; loop++) {
             doubleSum = 0;
 
-            RecordReader recordReader = createVectorizedRecordReader(jobConf, fileSplit, include);
+            RecordReader recordReader = createVectorizedRecordReader(fileSystem, fileSplit, include);
             VectorizedRowBatch batch = null;
             while (recordReader.hasNext()) {
                 batch = recordReader.nextBatch(batch);
@@ -264,6 +271,7 @@ public final class BenchmarkLineItemOrcVectorized
     public <K, V extends Writable> double discount(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
 
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
@@ -277,7 +285,7 @@ public final class BenchmarkLineItemOrcVectorized
         for (int loop = 0; loop < LOOPS; loop++) {
             doubleSum = 0;
 
-            RecordReader recordReader = createVectorizedRecordReader(jobConf, fileSplit, include);
+            RecordReader recordReader = createVectorizedRecordReader(fileSystem, fileSplit, include);
             VectorizedRowBatch batch = null;
             while (recordReader.hasNext()) {
                 batch = recordReader.nextBatch(batch);
@@ -300,6 +308,7 @@ public final class BenchmarkLineItemOrcVectorized
     public <K, V extends Writable> double tax(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
 
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
@@ -313,7 +322,7 @@ public final class BenchmarkLineItemOrcVectorized
         for (int loop = 0; loop < LOOPS; loop++) {
             doubleSum = 0;
 
-            RecordReader recordReader = createVectorizedRecordReader(jobConf, fileSplit, include);
+            RecordReader recordReader = createVectorizedRecordReader(fileSystem, fileSplit, include);
             VectorizedRowBatch batch = null;
             while (recordReader.hasNext()) {
                 batch = recordReader.nextBatch(batch);
@@ -336,6 +345,7 @@ public final class BenchmarkLineItemOrcVectorized
     public <K, V extends Writable> long returnFlag(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
 
@@ -349,7 +359,7 @@ public final class BenchmarkLineItemOrcVectorized
         for (int loop = 0; loop < LOOPS; loop++) {
             stringLengthSum = 0;
 
-            RecordReader recordReader = createVectorizedRecordReader(jobConf, fileSplit, include);
+            RecordReader recordReader = createVectorizedRecordReader(fileSystem, fileSplit, include);
             VectorizedRowBatch batch = null;
             while (recordReader.hasNext()) {
                 batch = recordReader.nextBatch(batch);
@@ -375,6 +385,7 @@ public final class BenchmarkLineItemOrcVectorized
     public <K, V extends Writable> long status(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
 
@@ -388,7 +399,7 @@ public final class BenchmarkLineItemOrcVectorized
         for (int loop = 0; loop < LOOPS; loop++) {
             stringLengthSum = 0;
 
-            RecordReader recordReader = createVectorizedRecordReader(jobConf, fileSplit, include);
+            RecordReader recordReader = createVectorizedRecordReader(fileSystem, fileSplit, include);
             VectorizedRowBatch batch = null;
             while (recordReader.hasNext()) {
                 batch = recordReader.nextBatch(batch);
@@ -415,6 +426,7 @@ public final class BenchmarkLineItemOrcVectorized
     public <K, V extends Writable> long shipDate(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
 
@@ -428,7 +440,7 @@ public final class BenchmarkLineItemOrcVectorized
         for (int loop = 0; loop < LOOPS; loop++) {
             stringLengthSum = 0;
 
-            RecordReader recordReader = createVectorizedRecordReader(jobConf, fileSplit, include);
+            RecordReader recordReader = createVectorizedRecordReader(fileSystem, fileSplit, include);
             VectorizedRowBatch batch = null;
             while (recordReader.hasNext()) {
                 batch = recordReader.nextBatch(batch);
@@ -454,6 +466,7 @@ public final class BenchmarkLineItemOrcVectorized
     public <K, V extends Writable> long commitDate(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
 
@@ -467,7 +480,7 @@ public final class BenchmarkLineItemOrcVectorized
         for (int loop = 0; loop < LOOPS; loop++) {
             stringLengthSum = 0;
 
-            RecordReader recordReader = createVectorizedRecordReader(jobConf, fileSplit, include);
+            RecordReader recordReader = createVectorizedRecordReader(fileSystem, fileSplit, include);
             VectorizedRowBatch batch = null;
             while (recordReader.hasNext()) {
                 batch = recordReader.nextBatch(batch);
@@ -493,6 +506,7 @@ public final class BenchmarkLineItemOrcVectorized
     public <K, V extends Writable> long receiptDate(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
 
@@ -506,7 +520,7 @@ public final class BenchmarkLineItemOrcVectorized
         for (int loop = 0; loop < LOOPS; loop++) {
             stringLengthSum = 0;
 
-            RecordReader recordReader = createVectorizedRecordReader(jobConf, fileSplit, include);
+            RecordReader recordReader = createVectorizedRecordReader(fileSystem, fileSplit, include);
             VectorizedRowBatch batch = null;
             while (recordReader.hasNext()) {
                 batch = recordReader.nextBatch(batch);
@@ -532,6 +546,7 @@ public final class BenchmarkLineItemOrcVectorized
     public <K, V extends Writable> long shipInstructions(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
 
@@ -545,7 +560,7 @@ public final class BenchmarkLineItemOrcVectorized
         for (int loop = 0; loop < LOOPS; loop++) {
             stringLengthSum = 0;
 
-            RecordReader recordReader = createVectorizedRecordReader(jobConf, fileSplit, include);
+            RecordReader recordReader = createVectorizedRecordReader(fileSystem, fileSplit, include);
             VectorizedRowBatch batch = null;
             while (recordReader.hasNext()) {
                 batch = recordReader.nextBatch(batch);
@@ -571,6 +586,7 @@ public final class BenchmarkLineItemOrcVectorized
     public <K, V extends Writable> long shipMode(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
 
@@ -584,7 +600,7 @@ public final class BenchmarkLineItemOrcVectorized
         for (int loop = 0; loop < LOOPS; loop++) {
             stringLengthSum = 0;
 
-            RecordReader recordReader = createVectorizedRecordReader(jobConf, fileSplit, include);
+            RecordReader recordReader = createVectorizedRecordReader(fileSystem, fileSplit, include);
             VectorizedRowBatch batch = null;
             while (recordReader.hasNext()) {
                 batch = recordReader.nextBatch(batch);
@@ -610,6 +626,7 @@ public final class BenchmarkLineItemOrcVectorized
     public <K, V extends Writable> long comment(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
 
@@ -623,7 +640,7 @@ public final class BenchmarkLineItemOrcVectorized
         for (int loop = 0; loop < LOOPS; loop++) {
             stringLengthSum = 0;
 
-            RecordReader recordReader = createVectorizedRecordReader(jobConf, fileSplit, include);
+            RecordReader recordReader = createVectorizedRecordReader(fileSystem, fileSplit, include);
             VectorizedRowBatch batch = null;
             while (recordReader.hasNext()) {
                 batch = recordReader.nextBatch(batch);
@@ -649,6 +666,7 @@ public final class BenchmarkLineItemOrcVectorized
     public <K, V extends Writable> List<Object> tpchQuery1(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
 
@@ -699,7 +717,7 @@ public final class BenchmarkLineItemOrcVectorized
             lineStatusSum = 0;
             shipDateSum = 0;
 
-            RecordReader recordReader = createVectorizedRecordReader(jobConf, fileSplit, include);
+            RecordReader recordReader = createVectorizedRecordReader(fileSystem, fileSplit, include);
             VectorizedRowBatch batch = null;
             while (recordReader.hasNext()) {
                 batch = recordReader.nextBatch(batch);
@@ -784,6 +802,7 @@ public final class BenchmarkLineItemOrcVectorized
     public <K, V extends Writable> List<Object> tpchQuery6(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
 
@@ -816,7 +835,7 @@ public final class BenchmarkLineItemOrcVectorized
             discountSum = 0;
             shipDateSum = 0;
 
-            RecordReader recordReader = createVectorizedRecordReader(jobConf, fileSplit, include);
+            RecordReader recordReader = createVectorizedRecordReader(fileSystem, fileSplit, include);
             VectorizedRowBatch batch = null;
             while (recordReader.hasNext()) {
                 batch = recordReader.nextBatch(batch);
@@ -868,6 +887,7 @@ public final class BenchmarkLineItemOrcVectorized
     public <K, V extends Writable> List<Object> all(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
 
@@ -972,7 +992,7 @@ public final class BenchmarkLineItemOrcVectorized
             shipModeSum = 0;
             commentSum = 0;
 
-            RecordReader recordReader = createVectorizedRecordReader(jobConf, fileSplit, include);
+            RecordReader recordReader = createVectorizedRecordReader(fileSystem, fileSplit, include);
             VectorizedRowBatch batch = null;
             while (recordReader.hasNext()) {
                 batch = recordReader.nextBatch(batch);
@@ -1166,10 +1186,10 @@ public final class BenchmarkLineItemOrcVectorized
                 commentSum);
     }
 
-    public RecordReader createVectorizedRecordReader(JobConf jobConf, FileSplit fileSplit, boolean[] include)
+    public RecordReader createVectorizedRecordReader(FileSystem fileSystem, FileSplit fileSplit, boolean[] include)
             throws IOException
     {
-        Reader reader = OrcFile.createReader(fileSplit.getPath(), OrcFile.readerOptions(jobConf));
+        Reader reader = OrcFile.createReader(fileSystem, fileSplit.getPath());
         return reader.rows(fileSplit.getStart(), fileSplit.getLength(), include);
     }
 }

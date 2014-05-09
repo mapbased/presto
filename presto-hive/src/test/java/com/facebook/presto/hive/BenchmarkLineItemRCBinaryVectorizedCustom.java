@@ -14,6 +14,7 @@
 package com.facebook.presto.hive;
 
 import com.google.common.collect.ImmutableList;
+import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.hive.ql.io.RCFile;
 import org.apache.hadoop.hive.serde2.ColumnProjectionUtils;
 import org.apache.hadoop.hive.serde2.Deserializer;
@@ -47,6 +48,7 @@ public class BenchmarkLineItemRCBinaryVectorizedCustom
     public <K, V extends Writable> long orderKey(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
 
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
@@ -59,7 +61,7 @@ public class BenchmarkLineItemRCBinaryVectorizedCustom
         for (int loop = 0; loop < LOOPS; loop++) {
             bigintSum = 0;
 
-            RCFile.Reader reader = new RCFile.Reader(fileSplit.getPath().getFileSystem(jobConf), fileSplit.getPath(), jobConf);
+            RCFile.Reader reader = new RCFile.Reader(fileSystem, fileSplit.getPath(), jobConf);
             BytesRefArrayWritable column = null;
             while (reader.nextColumnsBatch()) {
                 column = reader.getColumn(fieldIndex, column);
@@ -84,6 +86,7 @@ public class BenchmarkLineItemRCBinaryVectorizedCustom
     public <K, V extends Writable> long partKey(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
 
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
@@ -96,7 +99,7 @@ public class BenchmarkLineItemRCBinaryVectorizedCustom
         for (int loop = 0; loop < LOOPS; loop++) {
             bigintSum = 0;
 
-            RCFile.Reader reader = new RCFile.Reader(fileSplit.getPath().getFileSystem(jobConf), fileSplit.getPath(), jobConf);
+            RCFile.Reader reader = new RCFile.Reader(fileSystem, fileSplit.getPath(), jobConf);
             BytesRefArrayWritable column = null;
             while (reader.nextColumnsBatch()) {
                 column = reader.getColumn(fieldIndex, column);
@@ -121,6 +124,7 @@ public class BenchmarkLineItemRCBinaryVectorizedCustom
     public <K, V extends Writable> long supplierKey(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
 
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
@@ -133,7 +137,7 @@ public class BenchmarkLineItemRCBinaryVectorizedCustom
         for (int loop = 0; loop < LOOPS; loop++) {
             bigintSum = 0;
 
-            RCFile.Reader reader = new RCFile.Reader(fileSplit.getPath().getFileSystem(jobConf), fileSplit.getPath(), jobConf);
+            RCFile.Reader reader = new RCFile.Reader(fileSystem, fileSplit.getPath(), jobConf);
             BytesRefArrayWritable column = null;
             while (reader.nextColumnsBatch()) {
                 column = reader.getColumn(fieldIndex, column);
@@ -158,6 +162,7 @@ public class BenchmarkLineItemRCBinaryVectorizedCustom
     public <K, V extends Writable> long lineNumber(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
 
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
@@ -170,7 +175,7 @@ public class BenchmarkLineItemRCBinaryVectorizedCustom
         for (int loop = 0; loop < LOOPS; loop++) {
             bigintSum = 0;
 
-            RCFile.Reader reader = new RCFile.Reader(fileSplit.getPath().getFileSystem(jobConf), fileSplit.getPath(), jobConf);
+            RCFile.Reader reader = new RCFile.Reader(fileSystem, fileSplit.getPath(), jobConf);
             BytesRefArrayWritable column = null;
             while (reader.nextColumnsBatch()) {
                 column = reader.getColumn(fieldIndex, column);
@@ -195,6 +200,7 @@ public class BenchmarkLineItemRCBinaryVectorizedCustom
     public <K, V extends Writable> long quantity(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
 
@@ -207,7 +213,7 @@ public class BenchmarkLineItemRCBinaryVectorizedCustom
         for (int loop = 0; loop < LOOPS; loop++) {
             bigintSum = 0;
 
-            RCFile.Reader reader = new RCFile.Reader(fileSplit.getPath().getFileSystem(jobConf), fileSplit.getPath(), jobConf);
+            RCFile.Reader reader = new RCFile.Reader(fileSystem, fileSplit.getPath(), jobConf);
             BytesRefArrayWritable column = null;
             while (reader.nextColumnsBatch()) {
                 column = reader.getColumn(fieldIndex, column);
@@ -232,6 +238,7 @@ public class BenchmarkLineItemRCBinaryVectorizedCustom
     public <K, V extends Writable> double extendedPrice(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
 
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
@@ -244,7 +251,7 @@ public class BenchmarkLineItemRCBinaryVectorizedCustom
         for (int loop = 0; loop < LOOPS; loop++) {
             doubleSum = 0;
 
-            RCFile.Reader reader = new RCFile.Reader(fileSplit.getPath().getFileSystem(jobConf), fileSplit.getPath(), jobConf);
+            RCFile.Reader reader = new RCFile.Reader(fileSystem, fileSplit.getPath(), jobConf);
             BytesRefArrayWritable column = null;
             while (reader.nextColumnsBatch()) {
                 column = reader.getColumn(fieldIndex, column);
@@ -270,6 +277,7 @@ public class BenchmarkLineItemRCBinaryVectorizedCustom
     public <K, V extends Writable> double discount(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
 
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
@@ -282,7 +290,7 @@ public class BenchmarkLineItemRCBinaryVectorizedCustom
         for (int loop = 0; loop < LOOPS; loop++) {
             doubleSum = 0;
 
-            RCFile.Reader reader = new RCFile.Reader(fileSplit.getPath().getFileSystem(jobConf), fileSplit.getPath(), jobConf);
+            RCFile.Reader reader = new RCFile.Reader(fileSystem, fileSplit.getPath(), jobConf);
             BytesRefArrayWritable column = null;
             while (reader.nextColumnsBatch()) {
                 column = reader.getColumn(fieldIndex, column);
@@ -308,6 +316,7 @@ public class BenchmarkLineItemRCBinaryVectorizedCustom
     public <K, V extends Writable> double tax(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
 
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
@@ -320,7 +329,7 @@ public class BenchmarkLineItemRCBinaryVectorizedCustom
         for (int loop = 0; loop < LOOPS; loop++) {
             doubleSum = 0;
 
-            RCFile.Reader reader = new RCFile.Reader(fileSplit.getPath().getFileSystem(jobConf), fileSplit.getPath(), jobConf);
+            RCFile.Reader reader = new RCFile.Reader(fileSystem, fileSplit.getPath(), jobConf);
             BytesRefArrayWritable column = null;
             while (reader.nextColumnsBatch()) {
                 column = reader.getColumn(fieldIndex, column);
@@ -346,6 +355,7 @@ public class BenchmarkLineItemRCBinaryVectorizedCustom
     public <K, V extends Writable> long returnFlag(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
 
@@ -358,7 +368,7 @@ public class BenchmarkLineItemRCBinaryVectorizedCustom
         for (int loop = 0; loop < LOOPS; loop++) {
             stringSum = 0;
 
-            RCFile.Reader reader = new RCFile.Reader(fileSplit.getPath().getFileSystem(jobConf), fileSplit.getPath(), jobConf);
+            RCFile.Reader reader = new RCFile.Reader(fileSystem, fileSplit.getPath(), jobConf);
             BytesRefArrayWritable column = null;
             while (reader.nextColumnsBatch()) {
                 column = reader.getColumn(fieldIndex, column);
@@ -383,6 +393,7 @@ public class BenchmarkLineItemRCBinaryVectorizedCustom
     public <K, V extends Writable> long status(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
 
@@ -395,7 +406,7 @@ public class BenchmarkLineItemRCBinaryVectorizedCustom
         for (int loop = 0; loop < LOOPS; loop++) {
             stringSum = 0;
 
-            RCFile.Reader reader = new RCFile.Reader(fileSplit.getPath().getFileSystem(jobConf), fileSplit.getPath(), jobConf);
+            RCFile.Reader reader = new RCFile.Reader(fileSystem, fileSplit.getPath(), jobConf);
             BytesRefArrayWritable column = null;
             while (reader.nextColumnsBatch()) {
                 column = reader.getColumn(fieldIndex, column);
@@ -421,6 +432,7 @@ public class BenchmarkLineItemRCBinaryVectorizedCustom
     public <K, V extends Writable> long shipDate(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
 
@@ -433,7 +445,7 @@ public class BenchmarkLineItemRCBinaryVectorizedCustom
         for (int loop = 0; loop < LOOPS; loop++) {
             stringSum = 0;
 
-            RCFile.Reader reader = new RCFile.Reader(fileSplit.getPath().getFileSystem(jobConf), fileSplit.getPath(), jobConf);
+            RCFile.Reader reader = new RCFile.Reader(fileSystem, fileSplit.getPath(), jobConf);
             BytesRefArrayWritable column = null;
             while (reader.nextColumnsBatch()) {
                 column = reader.getColumn(fieldIndex, column);
@@ -458,6 +470,7 @@ public class BenchmarkLineItemRCBinaryVectorizedCustom
     public <K, V extends Writable> long commitDate(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
 
@@ -470,7 +483,7 @@ public class BenchmarkLineItemRCBinaryVectorizedCustom
         for (int loop = 0; loop < LOOPS; loop++) {
             stringSum = 0;
 
-            RCFile.Reader reader = new RCFile.Reader(fileSplit.getPath().getFileSystem(jobConf), fileSplit.getPath(), jobConf);
+            RCFile.Reader reader = new RCFile.Reader(fileSystem, fileSplit.getPath(), jobConf);
             BytesRefArrayWritable column = null;
             while (reader.nextColumnsBatch()) {
                 column = reader.getColumn(fieldIndex, column);
@@ -495,6 +508,7 @@ public class BenchmarkLineItemRCBinaryVectorizedCustom
     public <K, V extends Writable> long receiptDate(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
 
@@ -507,7 +521,7 @@ public class BenchmarkLineItemRCBinaryVectorizedCustom
         for (int loop = 0; loop < LOOPS; loop++) {
             stringSum = 0;
 
-            RCFile.Reader reader = new RCFile.Reader(fileSplit.getPath().getFileSystem(jobConf), fileSplit.getPath(), jobConf);
+            RCFile.Reader reader = new RCFile.Reader(fileSystem, fileSplit.getPath(), jobConf);
             BytesRefArrayWritable column = null;
             while (reader.nextColumnsBatch()) {
                 column = reader.getColumn(fieldIndex, column);
@@ -532,6 +546,7 @@ public class BenchmarkLineItemRCBinaryVectorizedCustom
     public <K, V extends Writable> long shipInstructions(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
 
@@ -544,7 +559,7 @@ public class BenchmarkLineItemRCBinaryVectorizedCustom
         for (int loop = 0; loop < LOOPS; loop++) {
             stringSum = 0;
 
-            RCFile.Reader reader = new RCFile.Reader(fileSplit.getPath().getFileSystem(jobConf), fileSplit.getPath(), jobConf);
+            RCFile.Reader reader = new RCFile.Reader(fileSystem, fileSplit.getPath(), jobConf);
             BytesRefArrayWritable column = null;
             while (reader.nextColumnsBatch()) {
                 column = reader.getColumn(fieldIndex, column);
@@ -569,6 +584,7 @@ public class BenchmarkLineItemRCBinaryVectorizedCustom
     public <K, V extends Writable> long shipMode(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
 
@@ -581,7 +597,7 @@ public class BenchmarkLineItemRCBinaryVectorizedCustom
         for (int loop = 0; loop < LOOPS; loop++) {
             stringSum = 0;
 
-            RCFile.Reader reader = new RCFile.Reader(fileSplit.getPath().getFileSystem(jobConf), fileSplit.getPath(), jobConf);
+            RCFile.Reader reader = new RCFile.Reader(fileSystem, fileSplit.getPath(), jobConf);
             BytesRefArrayWritable column = null;
             while (reader.nextColumnsBatch()) {
                 column = reader.getColumn(fieldIndex, column);
@@ -606,6 +622,7 @@ public class BenchmarkLineItemRCBinaryVectorizedCustom
     public <K, V extends Writable> long comment(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
 
@@ -618,7 +635,7 @@ public class BenchmarkLineItemRCBinaryVectorizedCustom
         for (int loop = 0; loop < LOOPS; loop++) {
             stringSum = 0;
 
-            RCFile.Reader reader = new RCFile.Reader(fileSplit.getPath().getFileSystem(jobConf), fileSplit.getPath(), jobConf);
+            RCFile.Reader reader = new RCFile.Reader(fileSystem, fileSplit.getPath(), jobConf);
             BytesRefArrayWritable column = null;
             while (reader.nextColumnsBatch()) {
                 column = reader.getColumn(fieldIndex, column);
@@ -643,6 +660,7 @@ public class BenchmarkLineItemRCBinaryVectorizedCustom
     public <K, V extends Writable> List<Object> tpchQuery1(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
 
@@ -693,7 +711,7 @@ public class BenchmarkLineItemRCBinaryVectorizedCustom
             lineStatusSum = 0;
             shipDateSum = 0;
 
-            RCFile.Reader reader = new RCFile.Reader(fileSplit.getPath().getFileSystem(jobConf), fileSplit.getPath(), jobConf);
+            RCFile.Reader reader = new RCFile.Reader(fileSystem, fileSplit.getPath(), jobConf);
             BytesRefArrayWritable quantityColumn = null;
             BytesRefArrayWritable extendedPriceColumn = null;
             BytesRefArrayWritable discountColumn = null;
@@ -788,6 +806,7 @@ public class BenchmarkLineItemRCBinaryVectorizedCustom
     public <K, V extends Writable> List<Object> tpchQuery6(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
 
@@ -820,7 +839,7 @@ public class BenchmarkLineItemRCBinaryVectorizedCustom
             discountSum = 0;
             shipDateSum = 0;
 
-            RCFile.Reader reader = new RCFile.Reader(fileSplit.getPath().getFileSystem(jobConf), fileSplit.getPath(), jobConf);
+            RCFile.Reader reader = new RCFile.Reader(fileSystem, fileSplit.getPath(), jobConf);
             BytesRefArrayWritable quantityColumn = null;
             BytesRefArrayWritable extendedPriceColumn = null;
             BytesRefArrayWritable discountColumn = null;
@@ -881,6 +900,7 @@ public class BenchmarkLineItemRCBinaryVectorizedCustom
     public <K, V extends Writable> List<Object> all(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
 
@@ -985,7 +1005,7 @@ public class BenchmarkLineItemRCBinaryVectorizedCustom
             shipModeSum = 0;
             commentSum = 0;
 
-            RCFile.Reader reader = new RCFile.Reader(fileSplit.getPath().getFileSystem(jobConf), fileSplit.getPath(), jobConf);
+            RCFile.Reader reader = new RCFile.Reader(fileSystem, fileSplit.getPath(), jobConf);
             BytesRefArrayWritable orderKeyColumn = null;
             BytesRefArrayWritable partKeyColumn = null;
             BytesRefArrayWritable supplierKeyColumn = null;
