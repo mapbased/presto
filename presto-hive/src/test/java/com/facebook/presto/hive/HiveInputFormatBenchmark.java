@@ -188,8 +188,8 @@ public final class HiveInputFormatBenchmark
                         null,
                         true,
                         ImmutableList.of(
-                                new BenchmarkLineItemOrcVectorized(),
-                                new BenchmarkLineItemGeneric())),
+                                new BenchmarkLineItemGeneric(),
+                                new BenchmarkLineItemOrcVectorized())),
 
                 new BenchmarkFile(
                         "rc binary gzip",
@@ -201,9 +201,11 @@ public final class HiveInputFormatBenchmark
                         "gzip",
                         true,
                         ImmutableList.of(
-//                                new BenchmarkLineItemRCBinaryVectorized(),
                                 new BenchmarkLineItemGeneric(),
-                                new BenchmarkLineItemRCBinary()))
+//                                new BenchmarkLineItemRCBinaryVectorized(),
+                                new BenchmarkLineItemRCBinaryVectorizedCustom(),
+                                new BenchmarkLineItemRCBinary()
+                        ))
 
 //                new BenchmarkFile(
 //                        "dwrf",

@@ -62,7 +62,9 @@ public final class BenchmarkLineItemOrcVectorized
             bigintSum = 0;
 
             RecordReader recordReader = createVectorizedRecordReader(jobConf, fileSplit, include);
-            for (VectorizedRowBatch batch = recordReader.nextBatch(null); recordReader.hasNext(); batch = recordReader.nextBatch(batch)) {
+            VectorizedRowBatch batch = null;
+            while (recordReader.hasNext()) {
+                batch = recordReader.nextBatch(batch);
                 LongColumnVector columnVector = (LongColumnVector) batch.cols[fieldIndex];
 
                 long[] vector = columnVector.vector;
@@ -96,7 +98,9 @@ public final class BenchmarkLineItemOrcVectorized
             bigintSum = 0;
 
             RecordReader recordReader = createVectorizedRecordReader(jobConf, fileSplit, include);
-            for (VectorizedRowBatch batch = recordReader.nextBatch(null); recordReader.hasNext(); batch = recordReader.nextBatch(batch)) {
+            VectorizedRowBatch batch = null;
+            while (recordReader.hasNext()) {
+                batch = recordReader.nextBatch(batch);
                 LongColumnVector columnVector = (LongColumnVector) batch.cols[fieldIndex];
 
                 long[] vector = columnVector.vector;
@@ -130,7 +134,9 @@ public final class BenchmarkLineItemOrcVectorized
             bigintSum = 0;
 
             RecordReader recordReader = createVectorizedRecordReader(jobConf, fileSplit, include);
-            for (VectorizedRowBatch batch = recordReader.nextBatch(null); recordReader.hasNext(); batch = recordReader.nextBatch(batch)) {
+            VectorizedRowBatch batch = null;
+            while (recordReader.hasNext()) {
+                batch = recordReader.nextBatch(batch);
                 LongColumnVector columnVector = (LongColumnVector) batch.cols[fieldIndex];
 
                 long[] vector = columnVector.vector;
@@ -164,7 +170,9 @@ public final class BenchmarkLineItemOrcVectorized
             bigintSum = 0;
 
             RecordReader recordReader = createVectorizedRecordReader(jobConf, fileSplit, include);
-            for (VectorizedRowBatch batch = recordReader.nextBatch(null); recordReader.hasNext(); batch = recordReader.nextBatch(batch)) {
+            VectorizedRowBatch batch = null;
+            while (recordReader.hasNext()) {
+                batch = recordReader.nextBatch(batch);
                 LongColumnVector columnVector = (LongColumnVector) batch.cols[fieldIndex];
 
                 long[] vector = columnVector.vector;
@@ -198,7 +206,9 @@ public final class BenchmarkLineItemOrcVectorized
             bigintSum = 0;
 
             RecordReader recordReader = createVectorizedRecordReader(jobConf, fileSplit, include);
-            for (VectorizedRowBatch batch = recordReader.nextBatch(null); recordReader.hasNext(); batch = recordReader.nextBatch(batch)) {
+            VectorizedRowBatch batch = null;
+            while (recordReader.hasNext()) {
+                batch = recordReader.nextBatch(batch);
                 LongColumnVector columnVector = (LongColumnVector) batch.cols[fieldIndex];
 
                 long[] vector = columnVector.vector;
@@ -232,7 +242,9 @@ public final class BenchmarkLineItemOrcVectorized
             doubleSum = 0;
 
             RecordReader recordReader = createVectorizedRecordReader(jobConf, fileSplit, include);
-            for (VectorizedRowBatch batch = recordReader.nextBatch(null); recordReader.hasNext(); batch = recordReader.nextBatch(batch)) {
+            VectorizedRowBatch batch = null;
+            while (recordReader.hasNext()) {
+                batch = recordReader.nextBatch(batch);
                 DoubleColumnVector columnVector = (DoubleColumnVector) batch.cols[fieldIndex];
 
                 double[] vector = columnVector.vector;
@@ -266,7 +278,9 @@ public final class BenchmarkLineItemOrcVectorized
             doubleSum = 0;
 
             RecordReader recordReader = createVectorizedRecordReader(jobConf, fileSplit, include);
-            for (VectorizedRowBatch batch = recordReader.nextBatch(null); recordReader.hasNext(); batch = recordReader.nextBatch(batch)) {
+            VectorizedRowBatch batch = null;
+            while (recordReader.hasNext()) {
+                batch = recordReader.nextBatch(batch);
                 DoubleColumnVector columnVector = (DoubleColumnVector) batch.cols[fieldIndex];
 
                 double[] vector = columnVector.vector;
@@ -300,7 +314,9 @@ public final class BenchmarkLineItemOrcVectorized
             doubleSum = 0;
 
             RecordReader recordReader = createVectorizedRecordReader(jobConf, fileSplit, include);
-            for (VectorizedRowBatch batch = recordReader.nextBatch(null); recordReader.hasNext(); batch = recordReader.nextBatch(batch)) {
+            VectorizedRowBatch batch = null;
+            while (recordReader.hasNext()) {
+                batch = recordReader.nextBatch(batch);
                 DoubleColumnVector columnVector = (DoubleColumnVector) batch.cols[fieldIndex];
 
                 double[] vector = columnVector.vector;
@@ -334,7 +350,9 @@ public final class BenchmarkLineItemOrcVectorized
             stringLengthSum = 0;
 
             RecordReader recordReader = createVectorizedRecordReader(jobConf, fileSplit, include);
-            for (VectorizedRowBatch batch = recordReader.nextBatch(null); recordReader.hasNext(); batch = recordReader.nextBatch(batch)) {
+            VectorizedRowBatch batch = null;
+            while (recordReader.hasNext()) {
+                batch = recordReader.nextBatch(batch);
                 BytesColumnVector columnVector = (BytesColumnVector) batch.cols[fieldIndex];
 
                 byte[][] vector = columnVector.vector;
@@ -368,7 +386,9 @@ public final class BenchmarkLineItemOrcVectorized
             stringLengthSum = 0;
 
             RecordReader recordReader = createVectorizedRecordReader(jobConf, fileSplit, include);
-            for (VectorizedRowBatch batch = recordReader.nextBatch(null); recordReader.hasNext(); batch = recordReader.nextBatch(batch)) {
+            VectorizedRowBatch batch = null;
+            while (recordReader.hasNext()) {
+                batch = recordReader.nextBatch(batch);
                 BytesColumnVector columnVector = (BytesColumnVector) batch.cols[fieldIndex];
 
                 byte[][] vector = columnVector.vector;
@@ -406,7 +426,9 @@ public final class BenchmarkLineItemOrcVectorized
             stringLengthSum = 0;
 
             RecordReader recordReader = createVectorizedRecordReader(jobConf, fileSplit, include);
-            for (VectorizedRowBatch batch = recordReader.nextBatch(null); recordReader.hasNext(); batch = recordReader.nextBatch(batch)) {
+            VectorizedRowBatch batch = null;
+            while (recordReader.hasNext()) {
+                batch = recordReader.nextBatch(batch);
                 BytesColumnVector columnVector = (BytesColumnVector) batch.cols[fieldIndex];
 
                 byte[][] vector = columnVector.vector;
@@ -443,7 +465,9 @@ public final class BenchmarkLineItemOrcVectorized
             stringLengthSum = 0;
 
             RecordReader recordReader = createVectorizedRecordReader(jobConf, fileSplit, include);
-            for (VectorizedRowBatch batch = recordReader.nextBatch(null); recordReader.hasNext(); batch = recordReader.nextBatch(batch)) {
+            VectorizedRowBatch batch = null;
+            while (recordReader.hasNext()) {
+                batch = recordReader.nextBatch(batch);
                 BytesColumnVector columnVector = (BytesColumnVector) batch.cols[fieldIndex];
 
                 byte[][] vector = columnVector.vector;
@@ -480,7 +504,9 @@ public final class BenchmarkLineItemOrcVectorized
             stringLengthSum = 0;
 
             RecordReader recordReader = createVectorizedRecordReader(jobConf, fileSplit, include);
-            for (VectorizedRowBatch batch = recordReader.nextBatch(null); recordReader.hasNext(); batch = recordReader.nextBatch(batch)) {
+            VectorizedRowBatch batch = null;
+            while (recordReader.hasNext()) {
+                batch = recordReader.nextBatch(batch);
                 BytesColumnVector columnVector = (BytesColumnVector) batch.cols[fieldIndex];
 
                 byte[][] vector = columnVector.vector;
@@ -517,7 +543,9 @@ public final class BenchmarkLineItemOrcVectorized
             stringLengthSum = 0;
 
             RecordReader recordReader = createVectorizedRecordReader(jobConf, fileSplit, include);
-            for (VectorizedRowBatch batch = recordReader.nextBatch(null); recordReader.hasNext(); batch = recordReader.nextBatch(batch)) {
+            VectorizedRowBatch batch = null;
+            while (recordReader.hasNext()) {
+                batch = recordReader.nextBatch(batch);
                 BytesColumnVector columnVector = (BytesColumnVector) batch.cols[fieldIndex];
 
                 byte[][] vector = columnVector.vector;
@@ -554,7 +582,9 @@ public final class BenchmarkLineItemOrcVectorized
             stringLengthSum = 0;
 
             RecordReader recordReader = createVectorizedRecordReader(jobConf, fileSplit, include);
-            for (VectorizedRowBatch batch = recordReader.nextBatch(null); recordReader.hasNext(); batch = recordReader.nextBatch(batch)) {
+            VectorizedRowBatch batch = null;
+            while (recordReader.hasNext()) {
+                batch = recordReader.nextBatch(batch);
                 BytesColumnVector columnVector = (BytesColumnVector) batch.cols[fieldIndex];
 
                 byte[][] vector = columnVector.vector;
@@ -591,7 +621,9 @@ public final class BenchmarkLineItemOrcVectorized
             stringLengthSum = 0;
 
             RecordReader recordReader = createVectorizedRecordReader(jobConf, fileSplit, include);
-            for (VectorizedRowBatch batch = recordReader.nextBatch(null); recordReader.hasNext(); batch = recordReader.nextBatch(batch)) {
+            VectorizedRowBatch batch = null;
+            while (recordReader.hasNext()) {
+                batch = recordReader.nextBatch(batch);
                 BytesColumnVector columnVector = (BytesColumnVector) batch.cols[fieldIndex];
 
                 byte[][] vector = columnVector.vector;
@@ -665,7 +697,9 @@ public final class BenchmarkLineItemOrcVectorized
             shipDateSum = 0;
 
             RecordReader recordReader = createVectorizedRecordReader(jobConf, fileSplit, include);
-            for (VectorizedRowBatch batch = recordReader.nextBatch(null); recordReader.hasNext(); batch = recordReader.nextBatch(batch)) {
+            VectorizedRowBatch batch = null;
+            while (recordReader.hasNext()) {
+                batch = recordReader.nextBatch(batch);
                 LongColumnVector quantityColumnVector = (LongColumnVector) batch.cols[quantityFieldIndex];
                 long[] quantityVector = quantityColumnVector.vector;
                 boolean[] quantityIsNull = quantityColumnVector.isNull;
@@ -780,7 +814,9 @@ public final class BenchmarkLineItemOrcVectorized
             shipDateSum = 0;
 
             RecordReader recordReader = createVectorizedRecordReader(jobConf, fileSplit, include);
-            for (VectorizedRowBatch batch = recordReader.nextBatch(null); recordReader.hasNext(); batch = recordReader.nextBatch(batch)) {
+            VectorizedRowBatch batch = null;
+            while (recordReader.hasNext()) {
+                batch = recordReader.nextBatch(batch);
                 LongColumnVector quantityColumnVector = (LongColumnVector) batch.cols[quantityFieldIndex];
                 long[] quantityVector = quantityColumnVector.vector;
                 boolean[] quantityIsNull = quantityColumnVector.isNull;
@@ -934,7 +970,9 @@ public final class BenchmarkLineItemOrcVectorized
             commentSum = 0;
 
             RecordReader recordReader = createVectorizedRecordReader(jobConf, fileSplit, include);
-            for (VectorizedRowBatch batch = recordReader.nextBatch(null); recordReader.hasNext(); batch = recordReader.nextBatch(batch)) {
+            VectorizedRowBatch batch = null;
+            while (recordReader.hasNext()) {
+                batch = recordReader.nextBatch(batch);
                 LongColumnVector orderKeyColumnVector = (LongColumnVector) batch.cols[orderKeyFieldIndex];
                 long[] orderKeyVector = orderKeyColumnVector.vector;
                 boolean[] orderKeyIsNull = orderKeyColumnVector.isNull;

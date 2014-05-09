@@ -44,7 +44,7 @@ public final class BenchmarkLineItemRCBinaryVectorized
     @Override
     public String getName()
     {
-        return "vector";
+        return "vector hive";
     }
 
     @Override
