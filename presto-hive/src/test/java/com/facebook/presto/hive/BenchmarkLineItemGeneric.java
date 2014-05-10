@@ -13,7 +13,9 @@
  */
 package com.facebook.presto.hive;
 
+import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
+import org.apache.hadoop.hive.ql.io.IOConstants;
 import org.apache.hadoop.hive.serde2.ColumnProjectionUtils;
 import org.apache.hadoop.hive.serde2.Deserializer;
 import org.apache.hadoop.hive.serde2.objectinspector.PrimitiveObjectInspector;
@@ -33,6 +35,25 @@ import static com.facebook.presto.hive.HiveInputFormatBenchmark.LOOPS;
 public final class BenchmarkLineItemGeneric
         implements BenchmarkLineItem
 {
+    private static final String[] COLUMN_NAMES = new String[] {
+            "orderkey",
+            "partkey",
+            "suppkey",
+            "linenumber",
+            "quantity",
+            "extendedprice",
+            "discount",
+            "tax",
+            "returnflag",
+            "linestatus",
+            "shipdate",
+            "commitdate",
+            "receiptdate",
+            "shipinstruct",
+            "shipmode",
+            "comment"
+    };
+
     @Override
     public String getName()
     {
@@ -51,6 +72,7 @@ public final class BenchmarkLineItemGeneric
         PrimitiveObjectInspector bigintFieldInspector = (PrimitiveObjectInspector) bigintField.getFieldObjectInspector();
 
         ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
+        jobConf.set(IOConstants.COLUMNS, Joiner.on(',').join(COLUMN_NAMES));
 
         long bigintSum = 0;
         for (int i = 0; i < LOOPS; i++) {

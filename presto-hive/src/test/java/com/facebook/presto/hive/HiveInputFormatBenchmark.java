@@ -27,6 +27,8 @@ import io.airlift.tpch.LineItem;
 import io.airlift.tpch.LineItemGenerator;
 import io.airlift.tpch.Order;
 import io.airlift.tpch.OrderGenerator;
+import io.airlift.units.DataSize;
+import io.airlift.units.DataSize.Unit;
 import io.airlift.units.Duration;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
@@ -34,6 +36,9 @@ import org.apache.hadoop.hive.ql.io.FSRecordWriter;
 import org.apache.hadoop.hive.ql.io.HiveOutputFormat;
 import org.apache.hadoop.hive.ql.io.RCFileInputFormat;
 import org.apache.hadoop.hive.ql.io.RCFileOutputFormat;
+import org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat;
+import org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat;
+import org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe;
 import org.apache.hadoop.hive.serde2.ColumnProjectionUtils;
 import org.apache.hadoop.hive.serde2.Deserializer;
 import org.apache.hadoop.hive.serde2.ReaderWriterProfiler;
@@ -146,36 +151,6 @@ public final class HiveInputFormatBenchmark
         DATA_DIR.mkdirs();
 
         List<BenchmarkFile> benchmarkFiles = ImmutableList.of(
-//                new BenchmarkFile(
-//                        "parquet",
-//                        "parquet",
-//                        new MapredParquetInputFormat(),
-//                        new MapredParquetOutputFormat(),
-//                        new ParquetHiveSerDe(),
-//                        new ParquetHiveSerDe(),
-//                        null,
-//                        true),
-//
-//                new BenchmarkFile(
-//                        "parquet gzip",
-//                        "parquet.gz",
-//                        new MapredParquetInputFormat(),
-//                        new MapredParquetOutputFormat(),
-//                        new ParquetHiveSerDe(),
-//                        new ParquetHiveSerDe(),
-//                        "gzip",
-//                        true),
-//
-//                new BenchmarkFile(
-//                        "parquet snappy",
-//                        "parquet.snappy",
-//                        new MapredParquetInputFormat(),
-//                        new MapredParquetOutputFormat(),
-//                        new ParquetHiveSerDe(),
-//                        new ParquetHiveSerDe(),
-//                        "snappy",
-//                        true),
-
                 new BenchmarkFile(
                         "dwrf",
                         "dwrf",
@@ -216,8 +191,46 @@ public final class HiveInputFormatBenchmark
 //                                new BenchmarkLineItemGeneric(),
                                 new BenchmarkLineItemRCBinary(),
 //                                new BenchmarkLineItemRCBinaryVectorized(), // super slow
-                                new BenchmarkLineItemRCBinaryVectorizedCustom()
-                        ))
+                                new BenchmarkLineItemRCBinaryVectorizedCustom())),
+
+                new BenchmarkFile(
+                        "parquet gzip",
+                        "parquet.gz",
+                        new MapredParquetInputFormat(),
+                        new MapredParquetOutputFormat(),
+                        new ParquetHiveSerDe(),
+                        new ParquetHiveSerDe(),
+                        "gzip",
+                        true,
+                        ImmutableList.of(
+                                new BenchmarkLineItemGeneric(),
+                                new BenchmarkLineItemParquet()))
+
+//                new BenchmarkFile(
+//                        "parquet snappy",
+//                        "parquet.snappy",
+//                        new MapredParquetInputFormat(),
+//                        new MapredParquetOutputFormat(),
+//                        new ParquetHiveSerDe(),
+//                        new ParquetHiveSerDe(),
+//                        "snappy",
+//                        true,
+//                        ImmutableList.of(
+//                                new BenchmarkLineItemGeneric(),
+//                                new BenchmarkLineItemParquet())),
+//
+//                new BenchmarkFile(
+//                        "parquet uncompressed",
+//                        "parquet uncompressed",
+//                        new MapredParquetInputFormat(),
+//                        new MapredParquetOutputFormat(),
+//                        new ParquetHiveSerDe(),
+//                        new ParquetHiveSerDe(),
+//                        null,
+//                        true,
+//                        ImmutableList.of(
+//                                new BenchmarkLineItemGeneric(),
+//                                new BenchmarkLineItemParquet())),
 
 //                new BenchmarkFile(
 //                        "rc text gzip",
@@ -3898,7 +3911,7 @@ public final class HiveInputFormatBenchmark
         logDuration("write lineItem", start, loopCount, value);
     }
 
-    public static void writeLineItems(File outputFile, HiveOutputFormat<?, ?> outputFormat, SerDe serDe, String compressionCodec)
+    public static DataSize writeLineItems(File outputFile, HiveOutputFormat<?, ?> outputFormat, SerDe serDe, String compressionCodec)
             throws Exception
     {
         FSRecordWriter recordWriter = createRecordReader(LINE_ITEM_COLUMNS, outputFile, outputFormat, compressionCodec);
@@ -3931,6 +3944,7 @@ public final class HiveInputFormatBenchmark
         }
 
         recordWriter.close(false);
+        return new DataSize(outputFile.length(), Unit.BYTE).convertToMostSuccinctDataSize();
     }
 
     public static FSRecordWriter createRecordReader(List<HiveColumn> columns, File outputFile, HiveOutputFormat<?, ?> outputFormat, String compressionCodec)
