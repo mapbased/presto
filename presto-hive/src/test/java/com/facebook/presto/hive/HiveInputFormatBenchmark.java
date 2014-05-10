@@ -645,6 +645,28 @@ public final class HiveInputFormatBenchmark
             value = benchmarkLineItem.all(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemSerDe());
         }
         logDuration("all", start, loopCount, value);
+
+        if (benchmarkLineItem instanceof BenchmarkLineItemOrcVectorized) {
+            BenchmarkLineItemOrcVectorized orcVectorized = (BenchmarkLineItemOrcVectorized) benchmarkLineItem;
+
+            //
+            // allNoMatch
+            //
+            start = System.nanoTime();
+            for (int loops = 0; loops < loopCount; loops++) {
+                value = orcVectorized.allNoMatch(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemSerDe());
+            }
+            logDuration("allNoMatch", start, loopCount, value);
+
+            //
+            // allSmallMatch
+            //
+            start = System.nanoTime();
+            for (int loops = 0; loops < loopCount; loops++) {
+                value = orcVectorized.allSmallMatch(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemSerDe());
+            }
+            logDuration("allSmallMatch", start, loopCount, value);
+        }
     }
 
     private static void benchmarkOld(JobConf jobConf, BenchmarkFile benchmarkFile, int loopCount)

@@ -22,6 +22,8 @@ import org.apache.hadoop.hive.ql.exec.vector.VectorizedRowBatch;
 import org.apache.hadoop.hive.ql.io.orc.OrcFile;
 import org.apache.hadoop.hive.ql.io.orc.Reader;
 import org.apache.hadoop.hive.ql.io.orc.RecordReader;
+import org.apache.hadoop.hive.ql.io.sarg.SearchArgument;
+import org.apache.hadoop.hive.ql.io.sarg.SearchArgument.Builder;
 import org.apache.hadoop.hive.serde2.Deserializer;
 import org.apache.hadoop.hive.serde2.objectinspector.StructField;
 import org.apache.hadoop.hive.serde2.objectinspector.StructObjectInspector;
@@ -39,6 +41,27 @@ import static com.facebook.presto.hive.HiveInputFormatBenchmark.LOOPS;
 public final class BenchmarkLineItemOrcVectorized
         implements BenchmarkLineItem
 {
+
+    private static final String[] COLUMN_NAMES = new String[] {
+            "bogus",
+            "orderkey",
+            "partkey",
+            "suppkey",
+            "linenumber",
+            "quantity",
+            "extendedprice",
+            "discount",
+            "tax",
+            "returnflag",
+            "linestatus",
+            "shipdate",
+            "commitdate",
+            "receiptdate",
+            "shipinstruct",
+            "shipmode",
+            "comment"
+    };
+
     @Override
     public String getName()
     {
@@ -707,6 +730,7 @@ public final class BenchmarkLineItemOrcVectorized
         long returnFlagSum = 0;
         long lineStatusSum = 0;
         long shipDateSum = 0;
+        long rowsProcessed = 0;
 
         for (int loop = 0; loop < LOOPS; loop++) {
             quantitySum = 0;
@@ -716,11 +740,14 @@ public final class BenchmarkLineItemOrcVectorized
             returnFlagSum = 0;
             lineStatusSum = 0;
             shipDateSum = 0;
+            rowsProcessed = 0;
 
             RecordReader recordReader = createVectorizedRecordReader(fileSystem, fileSplit, include);
             VectorizedRowBatch batch = null;
             while (recordReader.hasNext()) {
                 batch = recordReader.nextBatch(batch);
+                rowsProcessed += batch.size;
+
                 LongColumnVector quantityColumnVector = (LongColumnVector) batch.cols[quantityFieldIndex];
                 long[] quantityVector = quantityColumnVector.vector;
                 boolean[] quantityIsNull = quantityColumnVector.isNull;
@@ -795,7 +822,7 @@ public final class BenchmarkLineItemOrcVectorized
             }
             recordReader.close();
         }
-        return ImmutableList.<Object>of(quantitySum, extendedPriceSum, discountSum, taxSum, returnFlagSum, lineStatusSum, shipDateSum);
+        return ImmutableList.<Object>of(rowsProcessed, quantitySum, extendedPriceSum, discountSum, taxSum, returnFlagSum, lineStatusSum, shipDateSum);
     }
 
     @Override
@@ -885,6 +912,36 @@ public final class BenchmarkLineItemOrcVectorized
 
     @Override
     public <K, V extends Writable> List<Object> all(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
+            throws Exception
+    {
+        return all(jobConf, fileSplit, inputFormat, deserializer, null);
+    }
+
+    public <K, V extends Writable> List<Object> allNoMatch(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
+            throws Exception
+    {
+        Builder builder = SearchArgument.FACTORY.newBuilder();
+        builder.startAnd();
+        builder.equals("orderkey", -1L);
+        builder.end();
+        SearchArgument searchArgument = builder.build();
+
+        return all(jobConf, fileSplit, inputFormat, deserializer, searchArgument);
+    }
+
+    public <K, V extends Writable> List<Object> allSmallMatch(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
+            throws Exception
+    {
+        Builder builder = SearchArgument.FACTORY.newBuilder();
+        builder.startAnd();
+        builder.in("orderkey", 5L, 500L, 5_000L, 50_000L, 500_000L, 550_000L, 5_000_000L);
+        builder.end();
+        SearchArgument searchArgument = builder.build();
+
+        return all(jobConf, fileSplit, inputFormat, deserializer, searchArgument);
+    }
+
+    public <K, V extends Writable> List<Object> all(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer, SearchArgument searchArgument)
             throws Exception
     {
         FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
@@ -992,7 +1049,7 @@ public final class BenchmarkLineItemOrcVectorized
             shipModeSum = 0;
             commentSum = 0;
 
-            RecordReader recordReader = createVectorizedRecordReader(fileSystem, fileSplit, include);
+            RecordReader recordReader = createVectorizedRecordReader(fileSystem, fileSplit, include, searchArgument);
             VectorizedRowBatch batch = null;
             while (recordReader.hasNext()) {
                 batch = recordReader.nextBatch(batch);
@@ -1189,7 +1246,22 @@ public final class BenchmarkLineItemOrcVectorized
     public RecordReader createVectorizedRecordReader(FileSystem fileSystem, FileSplit fileSplit, boolean[] include)
             throws IOException
     {
+        return createVectorizedRecordReader(fileSystem, fileSplit, include, null);
+    }
+
+    public RecordReader createVectorizedRecordReader(FileSystem fileSystem,
+            FileSplit fileSplit,
+            boolean[] include,
+            SearchArgument searchArgument)
+            throws IOException
+    {
         Reader reader = OrcFile.createReader(fileSystem, fileSplit.getPath());
-        return reader.rows(fileSplit.getStart(), fileSplit.getLength(), include);
+
+        if (searchArgument == null) {
+            return reader.rows(fileSplit.getStart(), fileSplit.getLength(), include);
+        }
+        else {
+            return reader.rows(fileSplit.getStart(), fileSplit.getLength(), include, searchArgument, COLUMN_NAMES);
+        }
     }
 }
