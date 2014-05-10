@@ -15,16 +15,24 @@ package com.facebook.presto.hive;
 
 import com.facebook.presto.spi.ConnectorSession;
 import com.google.common.base.Optional;
+import com.google.common.base.Throwables;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.io.Writable;
-import org.apache.hadoop.mapred.RecordReader;
+import org.apache.hadoop.hive.ql.io.orc.OrcFile;
+import org.apache.hadoop.hive.ql.io.orc.OrcSerde;
+import org.apache.hadoop.hive.ql.io.orc.Reader;
+import org.apache.hadoop.hive.ql.io.orc.RecordReader;
+import org.apache.hadoop.hive.serde2.Deserializer;
+import org.apache.hadoop.hive.serde2.objectinspector.StructObjectInspector;
 import org.joda.time.DateTimeZone;
 
 import java.util.List;
 import java.util.Properties;
 
-public class GenericHiveRecordCursorProvider
+import static com.facebook.presto.hive.HiveUtil.getDeserializer;
+
+public class OrcVectorRecordCursorProvider
         implements HiveRecordCursorProvider
 {
     @Override
@@ -40,21 +48,34 @@ public class GenericHiveRecordCursorProvider
             List<HivePartitionKey> partitionKeys,
             DateTimeZone hiveStorageTimeZone)
     {
-        RecordReader<?, ?> recordReader = HiveUtil.createRecordReader(clientId, configuration, path, start, length, schema, columns);
+        @SuppressWarnings("deprecation")
+        Deserializer deserializer = getDeserializer(schema);
+        if (!(deserializer instanceof OrcSerde)) {
+            return Optional.absent();
+        }
 
-        return Optional.<HiveRecordCursor>of(new  GenericHiveRecordCursor<>(
-                genericRecordReader(recordReader),
+        RecordReader recordReader;
+        try {
+            StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
+            boolean[] include = new boolean[rowInspector.getAllStructFieldRefs().size() + 1];
+            for (HiveColumnHandle column : columns) {
+                include[column.getHiveColumnIndex() + 1] = true;
+            }
+
+            FileSystem fileSystem = path.getFileSystem(configuration);
+            Reader reader = OrcFile.createReader(fileSystem, path);
+            recordReader = reader.rows(start, length, include);
+        }
+        catch (Exception e) {
+            throw Throwables.propagate(e);
+        }
+
+        return Optional.<HiveRecordCursor>of(new OrcVectorHiveRecordCursor(
+                recordReader,
                 length,
                 schema,
                 partitionKeys,
                 columns,
-                hiveStorageTimeZone,
                 DateTimeZone.forID(session.getTimeZoneKey().getId())));
-    }
-
-    @SuppressWarnings("unchecked")
-    private static RecordReader<?, ? extends Writable> genericRecordReader(RecordReader<?, ?> recordReader)
-    {
-        return (RecordReader<?, ? extends Writable>) recordReader;
     }
 }
