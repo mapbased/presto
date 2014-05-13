@@ -111,6 +111,8 @@ public class TestStatementBuilder
 
         printStatement("values ('a', 1, 2.2), ('b', 2, 3.3)");
 
+        printStatement("select * from (values ('a', 1, 2.2), ('b', 2, 3.3))");
+
         printStatement("table foo");
         printStatement("table foo order by x limit 10");
         printStatement("(table foo)");
