@@ -199,7 +199,7 @@ public class TestHiveFileFormats
         file.delete();
         try {
             FileSplit split = createTestFile(file.getAbsolutePath(), outputFormat, serde, null, testColumns);
-            testCursorProvider(new OrcVectorRecordCursorProvider(), split, inputFormat, serde, testColumns);
+            testCursorProvider(new OrcVectorRecordCursorProvider(true), split, inputFormat, serde, testColumns);
         }
         finally {
             //noinspection ResultOfMethodCallIgnored

@@ -15,6 +15,7 @@ package com.facebook.presto.hive;
 
 import com.facebook.presto.spi.ConnectorSession;
 import com.google.common.base.Optional;
+import com.google.common.base.Predicate;
 import com.google.common.base.Throwables;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
@@ -31,10 +32,24 @@ import java.util.List;
 import java.util.Properties;
 
 import static com.facebook.presto.hive.HiveUtil.getDeserializer;
+import static com.google.common.collect.Iterables.all;
 
 public class OrcVectorRecordCursorProvider
         implements HiveRecordCursorProvider
 {
+    private final boolean allowStringColumns;
+
+    public OrcVectorRecordCursorProvider()
+    {
+        this(false);
+    }
+
+    // todo remove this when ORC fixes HIVE-7044
+    OrcVectorRecordCursorProvider(boolean allowStringColumns)
+    {
+        this.allowStringColumns = allowStringColumns;
+    }
+
     @Override
     public Optional<HiveRecordCursor> createHiveRecordCursor(
             String clientId,
@@ -51,6 +66,11 @@ public class OrcVectorRecordCursorProvider
         @SuppressWarnings("deprecation")
         Deserializer deserializer = getDeserializer(schema);
         if (!(deserializer instanceof OrcSerde)) {
+            return Optional.absent();
+        }
+
+        // are all columns supported by the Orc vector code
+        if (!all(columns, isOrcVectorSupportedType(allowStringColumns))) {
             return Optional.absent();
         }
 
@@ -77,5 +97,42 @@ public class OrcVectorRecordCursorProvider
                 partitionKeys,
                 columns,
                 DateTimeZone.forID(session.getTimeZoneKey().getId())));
+    }
+
+    private static Predicate<HiveColumnHandle> isOrcVectorSupportedType(final boolean allowStringColumns)
+    {
+        return new Predicate<HiveColumnHandle>()
+        {
+            @Override
+            public boolean apply(HiveColumnHandle columnHandle)
+            {
+                HiveType hiveType = columnHandle.getHiveType();
+                switch (hiveType) {
+                    case BOOLEAN:
+                    case BYTE:
+                    case SHORT:
+                    case INT:
+                    case LONG:
+                    case FLOAT:
+                    case DOUBLE:
+                    case TIMESTAMP:
+                    case DATE:
+                        return true;
+                    case STRING:
+                        // todo Orc code does not properly deserialize a column of empty strings HIVE-7044
+                        return allowStringColumns;
+                    case STRUCT:
+                        // not implemented in Presto
+                    case BINARY:
+                        // not supported in Orc for some reason
+                    case LIST:
+                        // not supported in Orc
+                    case MAP:
+                        // not supported in Orc
+                    default:
+                        return false;
+                }
+            }
+        };
     }
 }

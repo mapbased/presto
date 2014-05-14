@@ -24,6 +24,10 @@ public final class HiveRecordCursorProviders
     public static List<HiveRecordCursorProvider> getDefaultProviders()
     {
         return ImmutableList.of(
+                new OrcVectorRecordCursorProvider(),
+                new OrcRecordCursorProvider(),
+                new ParquetRecordCursorProvider(),
+                new DwrfRecordCursorProvider(),
                 new ColumnarTextHiveRecordCursorProvider(),
                 new ColumnarBinaryHiveRecordCursorProvider(),
                 new GenericHiveRecordCursorProvider());
