@@ -31,6 +31,7 @@ import org.apache.hadoop.hive.serde2.objectinspector.StructObjectInspector;
 import org.apache.hadoop.io.WritableUtils;
 import org.apache.hadoop.mapred.RecordReader;
 import org.joda.time.DateTimeZone;
+import org.joda.time.format.ISODateTimeFormat;
 import sun.misc.Unsafe;
 
 import java.io.IOException;
@@ -40,6 +41,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
 import static com.facebook.presto.hive.HiveBooleanParser.isFalse;
 import static com.facebook.presto.hive.HiveBooleanParser.isTrue;
@@ -49,6 +51,7 @@ import static com.facebook.presto.hive.NumberParser.parseDouble;
 import static com.facebook.presto.hive.NumberParser.parseLong;
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
 import static com.facebook.presto.spi.type.BooleanType.BOOLEAN;
+import static com.facebook.presto.spi.type.DateType.DATE;
 import static com.facebook.presto.spi.type.DoubleType.DOUBLE;
 import static com.facebook.presto.spi.type.TimestampType.TIMESTAMP;
 import static com.facebook.presto.spi.type.VarbinaryType.VARBINARY;
@@ -64,6 +67,8 @@ import static java.lang.Math.min;
 class ColumnarBinaryHiveRecordCursor<K>
         extends HiveRecordCursor
 {
+    private static final long MILLIS_IN_DAY = TimeUnit.DAYS.toMillis(1);
+
     private final RecordReader<K, BytesRefArrayWritable> recordReader;
     private final DateTimeZone sessionTimeZone;
     private final K key;
@@ -217,6 +222,9 @@ class ColumnarBinaryHiveRecordCursor<K>
                 else if (VARCHAR.equals(type)) {
                     slices[columnIndex] = Slices.wrappedBuffer(bytes);
                 }
+                else if (DATE.equals(type)) {
+                    longs[columnIndex] = ISODateTimeFormat.date().withZone(DateTimeZone.UTC).parseMillis(partitionKey.getValue());
+                }
                 else {
                     throw new UnsupportedOperationException("Unsupported column type: " + type);
                 }
@@ -338,9 +346,9 @@ class ColumnarBinaryHiveRecordCursor<K>
     {
         checkState(!closed, "Cursor is closed");
 
-        if (!types[fieldId].equals(BIGINT) && !types[fieldId].equals(TIMESTAMP)) {
+        if (!types[fieldId].equals(BIGINT) && !types[fieldId].equals(DATE) && !types[fieldId].equals(TIMESTAMP)) {
             // we don't use Preconditions.checkArgument because it requires boxing fieldId, which affects inner loop performance
-            throw new IllegalArgumentException(String.format("Expected field to be %s or %s , actual %s (field %s)", BIGINT, TIMESTAMP, types[fieldId], fieldId));
+            throw new IllegalArgumentException(String.format("Expected field to be %s, %s or %s , actual %s (field %s)", BIGINT, DATE, TIMESTAMP, types[fieldId], fieldId));
         }
         if (!loaded[fieldId]) {
             parseLongColumn(fieldId);
@@ -391,6 +399,11 @@ class ColumnarBinaryHiveRecordCursor<K>
                 short smallintValue = unsafe.getShort(bytes, (long) Unsafe.ARRAY_BYTE_BASE_OFFSET + start);
                 longs[column] = Short.reverseBytes(smallintValue);
                 break;
+            case DATE:
+                checkState(length >= 1, "Date should be at least 1 byte");
+                int daysSinceEpoch = readVInt(bytes, start, length);
+                longs[column] = daysSinceEpoch * MILLIS_IN_DAY;
+                break;
             case TIMESTAMP:
                 checkState(length >= 1, "Timestamp should be at least 1 byte");
                 long seconds = TimestampWritable.getSeconds(bytes, start);
@@ -407,12 +420,7 @@ class ColumnarBinaryHiveRecordCursor<K>
                     longs[column] = bytes[start];
                 }
                 else {
-                    int value = 0;
-                    for (int i = 1; i < length; i++) {
-                        value <<= 8;
-                        value |= (bytes[start + i] & 0xFF);
-                    }
-                    longs[column] = WritableUtils.isNegativeVInt(bytes[start]) ? ~value : value;
+                    longs[column] = readVInt(bytes, start, length);
                 }
                 break;
             case LONG:
@@ -432,6 +440,16 @@ class ColumnarBinaryHiveRecordCursor<K>
             default:
                 throw new RuntimeException(String.format("%s is not a valid LONG type", hiveTypes[column]));
         }
+    }
+
+    private int readVInt(byte[] bytes, int start, int length)
+    {
+        int value = 0;
+        for (int i = 1; i < length; i++) {
+            value <<= 8;
+            value |= (bytes[start + i] & 0xFF);
+        }
+        return WritableUtils.isNegativeVInt(bytes[start]) ? ~value : value;
     }
 
     @Override
@@ -600,6 +618,9 @@ class ColumnarBinaryHiveRecordCursor<K>
         }
         else if (VARCHAR.equals(type) || VARBINARY.equals(type)) {
             parseStringColumn(column);
+        }
+        else if (DATE.equals(type)) {
+            parseLongColumn(column);
         }
         else if (TIMESTAMP.equals(type)) {
             parseLongColumn(column);

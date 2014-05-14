@@ -26,12 +26,14 @@ import org.apache.hadoop.hive.ql.exec.vector.LongColumnVector;
 import org.apache.hadoop.hive.ql.exec.vector.VectorizedRowBatch;
 import org.apache.hadoop.hive.ql.io.orc.RecordReader;
 import org.joda.time.DateTimeZone;
+import org.joda.time.format.ISODateTimeFormat;
 
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.concurrent.TimeUnit;
 
 import static com.facebook.presto.hive.HiveBooleanParser.isFalse;
 import static com.facebook.presto.hive.HiveBooleanParser.isTrue;
@@ -40,6 +42,7 @@ import static com.facebook.presto.hive.NumberParser.parseDouble;
 import static com.facebook.presto.hive.NumberParser.parseLong;
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
 import static com.facebook.presto.spi.type.BooleanType.BOOLEAN;
+import static com.facebook.presto.spi.type.DateType.DATE;
 import static com.facebook.presto.spi.type.DoubleType.DOUBLE;
 import static com.facebook.presto.spi.type.VarcharType.VARCHAR;
 import static com.google.common.base.Preconditions.checkArgument;
@@ -52,6 +55,8 @@ import static java.lang.Math.min;
 class OrcVectorHiveRecordCursor
         extends HiveRecordCursor
 {
+    private static final long MILLIS_IN_DAY = TimeUnit.DAYS.toMillis(1);
+
     private final RecordReader recordReader;
 //    private final DateTimeZone sessionTimeZone;
 
@@ -159,6 +164,13 @@ class OrcVectorHiveRecordCursor
                     this.columns[columnIndex] = columnVector;
                     columnVector.fill(bytes);
                 }
+                else if (types[columnIndex].equals(DATE)) {
+                    LongColumnVector columnVector = new LongColumnVector();
+                    this.columns[columnIndex] = columnVector;
+                    long millis = ISODateTimeFormat.date().withZone(DateTimeZone.UTC).parseMillis(partitionKey.getValue());
+                    long days = millis / MILLIS_IN_DAY;
+                    columnVector.fill(days);
+                }
                 else {
                     throw new UnsupportedOperationException("Unsupported column type: " + types[columnIndex]);
                 }
@@ -251,6 +263,9 @@ class OrcVectorHiveRecordCursor
         long value = column.vector[valueIndex];
         if (hiveTypes[fieldId] == HiveType.TIMESTAMP) {
             value /= 1_000_000L;
+        }
+        if (hiveTypes[fieldId] == HiveType.DATE) {
+            value *= MILLIS_IN_DAY;
         }
         return value;
     }
