@@ -82,6 +82,7 @@ import java.io.PrintStream;
 import java.lang.reflect.Field;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Objects;
 import java.util.Properties;
 
 import static com.facebook.presto.hive.HiveBooleanParser.isFalse;
@@ -497,6 +498,8 @@ public final class HiveInputFormatBenchmark
             value = benchmarkLineItem.orderKey(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemSerDe());
         }
         logDuration("orderKey", start, loopCount, value);
+        checkResult(value, 18005322964949L, "orderKey");
+
 //      if (true) return;
         //
         // orderKey
@@ -506,6 +509,7 @@ public final class HiveInputFormatBenchmark
             value = benchmarkLineItem.partKey(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemSerDe());
         }
         logDuration("partKey", start, loopCount, value);
+        checkResult(value, 600229457837L, "partKey");
 
         //
         // supplierKey
@@ -515,6 +519,7 @@ public final class HiveInputFormatBenchmark
             value = benchmarkLineItem.supplierKey(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemSerDe());
         }
         logDuration("supplierKey", start, loopCount, value);
+        checkResult(value, 30009691369L, "supplierKey");
 
         //
         // lineNumber
@@ -524,6 +529,7 @@ public final class HiveInputFormatBenchmark
             value = benchmarkLineItem.lineNumber(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemSerDe());
         }
         logDuration("lineNumber", start, loopCount, value);
+        checkResult(value, 18007100L, "lineNumber");
 
         //
         // quantity
@@ -533,6 +539,7 @@ public final class HiveInputFormatBenchmark
             value = benchmarkLineItem.quantity(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemSerDe());
         }
         logDuration("quantity", start, loopCount, value);
+        checkResult(value, 153078795L, "quantity");
 
         //
         // extendedPrice
@@ -542,6 +549,7 @@ public final class HiveInputFormatBenchmark
             value = benchmarkLineItem.extendedPrice(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemSerDe());
         }
         logDuration("extendedPrice", start, loopCount, value);
+        checkResult(value, 2.2957731090119733E11, "extendedPrice");
 
         //
         // discount
@@ -551,6 +559,7 @@ public final class HiveInputFormatBenchmark
             value = benchmarkLineItem.discount(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemSerDe());
         }
         logDuration("discount", start, loopCount, value);
+        checkResult(value, 300057.33000053867, "discount");
 
         //
         // tax
@@ -560,6 +569,7 @@ public final class HiveInputFormatBenchmark
             value = benchmarkLineItem.tax(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemSerDe());
         }
         logDuration("tax", start, loopCount, value);
+        checkResult(value, 240129.66999598275, "tax");
 
         //
         // returnFlag
@@ -569,6 +579,7 @@ public final class HiveInputFormatBenchmark
             value = benchmarkLineItem.returnFlag(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemSerDe());
         }
         logDuration("returnFlag", start, loopCount, value);
+        checkResult(value, 6001215L, "returnFlag");
 
         //
         // status
@@ -578,6 +589,7 @@ public final class HiveInputFormatBenchmark
             value = benchmarkLineItem.status(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemSerDe());
         }
         logDuration("status", start, loopCount, value);
+        checkResult(value, 6001215L, "status");
 
         //
         // shipDate
@@ -587,6 +599,7 @@ public final class HiveInputFormatBenchmark
             value = benchmarkLineItem.shipDate(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemSerDe());
         }
         logDuration("shipDate", start, loopCount, value);
+        checkResult(value, 60012150L, "shipDate");
 
         //
         // commitDate
@@ -596,6 +609,7 @@ public final class HiveInputFormatBenchmark
             value = benchmarkLineItem.commitDate(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemSerDe());
         }
         logDuration("commitDate", start, loopCount, value);
+        checkResult(value, 60012150L, "commitDate");
 
         //
         // receiptDate
@@ -605,6 +619,7 @@ public final class HiveInputFormatBenchmark
             value = benchmarkLineItem.receiptDate(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemSerDe());
         }
         logDuration("receiptDate", start, loopCount, value);
+        checkResult(value, 60012150L, "receiptDate");
 
         //
         // shipInstructions
@@ -614,6 +629,7 @@ public final class HiveInputFormatBenchmark
             value = benchmarkLineItem.shipInstructions(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemSerDe());
         }
         logDuration("shipInstructions", start, loopCount, value);
+        checkResult(value, 72006409L, "shipInstructions");
 
         //
         // shipMode
@@ -623,6 +639,7 @@ public final class HiveInputFormatBenchmark
             value = benchmarkLineItem.shipMode(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemSerDe());
         }
         logDuration("shipMode", start, loopCount, value);
+        checkResult(value, 25717034L, "shipMode");
 
         //
         // comment
@@ -632,6 +649,7 @@ public final class HiveInputFormatBenchmark
             value = benchmarkLineItem.comment(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemSerDe());
         }
         logDuration("comment", start, loopCount, value);
+        checkResult(value, 158997209L, "comment");
 
         //
         // tpchQuery6
@@ -641,6 +659,7 @@ public final class HiveInputFormatBenchmark
             value = benchmarkLineItem.tpchQuery6(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemSerDe());
         }
         logDuration("tpchQuery6", start, loopCount, value);
+        checkResult(value, ImmutableList.of(1.53078795E8, 2.2957731090119733E11, 300057.33000053867, 60012150L), "tpchQuery6");
 
         //
         // tpchQuery1
@@ -650,6 +669,7 @@ public final class HiveInputFormatBenchmark
             value = benchmarkLineItem.tpchQuery1(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemSerDe());
         }
         logDuration("tpchQuery1", start, loopCount, value);
+        checkResult(value, ImmutableList.of(6001215L, 1.53078795E8, 2.2957731090119733E11, 300057.33000053867, 240129.66999598275, 6001215L, 6001215L, 60012150L), "tpchQuery1");
 
         //
         // all
@@ -659,6 +679,23 @@ public final class HiveInputFormatBenchmark
             value = benchmarkLineItem.all(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemSerDe());
         }
         logDuration("all", start, loopCount, value);
+        checkResult(value, ImmutableList.of(
+                18005322964949L,
+                600229457837L,
+                30009691369L,
+                18007100L,
+                1.53078795E8,
+                2.2957731090119733E11,
+                300057.33000053867,
+                240129.66999598275,
+                6001215L,
+                6001215L,
+                60012150L,
+                60012150L,
+                60012150L,
+                72006409L,
+                25717034L,
+                158997209L), "all");
 
         //
         // all read one
@@ -668,6 +705,7 @@ public final class HiveInputFormatBenchmark
             value = benchmarkLineItem.allReadOne(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemSerDe());
         }
         logDuration("all (read one)", start, loopCount, value);
+        checkResult(value, 18005322964949L, "orderKey");
 
         if (benchmarkLineItem instanceof BenchmarkLineItemOrcVectorized) {
             BenchmarkLineItemOrcVectorized orcVectorized = (BenchmarkLineItemOrcVectorized) benchmarkLineItem;
@@ -680,6 +718,7 @@ public final class HiveInputFormatBenchmark
                 value = orcVectorized.allNoMatch(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemSerDe());
             }
             logDuration("allNoMatch", start, loopCount, value);
+            checkResult(value, ImmutableList.of(0L, 0L, 0L, 0L, 0.0, 0.0, 0.0, 0.0, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L), "allNoMatch");
 
             //
             // allSmallMatch
@@ -689,6 +728,23 @@ public final class HiveInputFormatBenchmark
                 value = orcVectorized.allSmallMatch(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemSerDe());
             }
             logDuration("allSmallMatch", start, loopCount, value);
+            checkResult(value, ImmutableList.of(
+                    61178149794L,
+                    5027339647L,
+                    249984530L,
+                    149674L,
+                    1278052.0,
+                    1.9155952541800132E9,
+                    2503.379999999525,
+                    2005.1899999989437,
+                    50000L,
+                    50000L,
+                    500000L,
+                    500000L,
+                    500000L,
+                    601120L,
+                    213925L,
+                    1324433L), "allSmallMatch");
         }
     }
 
@@ -1082,6 +1138,8 @@ public final class HiveInputFormatBenchmark
         logDuration("p_all", start, loopCount, value);
     }
 
+    public static volatile Object result;
+
     private static void logDuration(String label, long start, int loopCount, Object value)
     {
         if (NOT_SUPPORTED.equals(value)) {
@@ -1091,7 +1149,8 @@ public final class HiveInputFormatBenchmark
         long end = System.nanoTime();
         long nanos = end - start;
         Duration duration = new Duration(1.0 * nanos / loopCount, NANOSECONDS).convertTo(SECONDS);
-        System.out.printf("%16s %6s %s\n", label, duration, value);
+        System.out.printf("%16s %6s\n", label, duration);
+        result = value;
     }
 
     private static <K, V extends Writable> List<Object> benchmarkReadAllColumns(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
@@ -4055,6 +4114,13 @@ public final class HiveInputFormatBenchmark
                     return hiveColumn.getObjectInspector();
                 }
             };
+        }
+    }
+
+    private static void checkResult(Object actual, Object expected, String name)
+    {
+        if (!Objects.equals(actual, expected)) {
+            throw new RuntimeException(String.format("Expected %s to be %s but was %s", name, expected, actual));
         }
     }
 

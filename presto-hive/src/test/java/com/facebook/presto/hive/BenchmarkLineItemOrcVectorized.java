@@ -95,8 +95,9 @@ public final class BenchmarkLineItemOrcVectorized
                 long[] vector = columnVector.vector;
                 boolean[] isNull = columnVector.isNull;
                 for (int i = 0; i < batch.size; i++) {
-                    if (!isNull[i]) {
-                        bigintSum += vector[i];
+                    int index = columnVector.isRepeating ? 0 : i;
+                    if (!isNull[index]) {
+                        bigintSum += vector[index];
                     }
                 }
             }
@@ -132,8 +133,9 @@ public final class BenchmarkLineItemOrcVectorized
                 long[] vector = columnVector.vector;
                 boolean[] isNull = columnVector.isNull;
                 for (int i = 0; i < batch.size; i++) {
-                    if (!isNull[i]) {
-                        bigintSum += vector[i];
+                    int index = columnVector.isRepeating ? 0 : i;
+                    if (!isNull[index]) {
+                        bigintSum += vector[index];
                     }
                 }
             }
@@ -169,8 +171,9 @@ public final class BenchmarkLineItemOrcVectorized
                 long[] vector = columnVector.vector;
                 boolean[] isNull = columnVector.isNull;
                 for (int i = 0; i < batch.size; i++) {
-                    if (!isNull[i]) {
-                        bigintSum += vector[i];
+                    int index = columnVector.isRepeating ? 0 : i;
+                    if (!isNull[index]) {
+                        bigintSum += vector[index];
                     }
                 }
             }
@@ -206,8 +209,9 @@ public final class BenchmarkLineItemOrcVectorized
                 long[] vector = columnVector.vector;
                 boolean[] isNull = columnVector.isNull;
                 for (int i = 0; i < batch.size; i++) {
-                    if (!isNull[i]) {
-                        bigintSum += vector[i];
+                    int index = columnVector.isRepeating ? 0 : i;
+                    if (!isNull[index]) {
+                        bigintSum += vector[index];
                     }
                 }
             }
@@ -243,8 +247,9 @@ public final class BenchmarkLineItemOrcVectorized
                 long[] vector = columnVector.vector;
                 boolean[] isNull = columnVector.isNull;
                 for (int i = 0; i < batch.size; i++) {
-                    if (!isNull[i]) {
-                        bigintSum += vector[i];
+                    int index = columnVector.isRepeating ? 0 : i;
+                    if (!isNull[index]) {
+                        bigintSum += vector[index];
                     }
                 }
             }
@@ -280,8 +285,9 @@ public final class BenchmarkLineItemOrcVectorized
                 double[] vector = columnVector.vector;
                 boolean[] isNull = columnVector.isNull;
                 for (int i = 0; i < batch.size; i++) {
-                    if (!isNull[i]) {
-                        doubleSum += vector[i];
+                    int index = columnVector.isRepeating ? 0 : i;
+                    if (!isNull[index]) {
+                        doubleSum += vector[index];
                     }
                 }
             }
@@ -317,8 +323,9 @@ public final class BenchmarkLineItemOrcVectorized
                 double[] vector = columnVector.vector;
                 boolean[] isNull = columnVector.isNull;
                 for (int i = 0; i < batch.size; i++) {
-                    if (!isNull[i]) {
-                        doubleSum += vector[i];
+                    int index = columnVector.isRepeating ? 0 : i;
+                    if (!isNull[index]) {
+                        doubleSum += vector[index];
                     }
                 }
             }
@@ -354,8 +361,9 @@ public final class BenchmarkLineItemOrcVectorized
                 double[] vector = columnVector.vector;
                 boolean[] isNull = columnVector.isNull;
                 for (int i = 0; i < batch.size; i++) {
-                    if (!isNull[i]) {
-                        doubleSum += vector[i];
+                    int index = columnVector.isRepeating ? 0 : i;
+                    if (!isNull[index]) {
+                        doubleSum += vector[index];
                     }
                 }
             }
@@ -393,8 +401,9 @@ public final class BenchmarkLineItemOrcVectorized
                 int[] length = columnVector.length;
                 boolean[] isNull = columnVector.isNull;
                 for (int i = 0; i < batch.size; i++) {
-                    if (!isNull[i]) {
-                        byte[] commentValue = Arrays.copyOfRange(vector[i], start[i], start[i] + length[i]);
+                    int index = columnVector.isRepeating ? 0 : i;
+                    if (!isNull[index]) {
+                        byte[] commentValue = Arrays.copyOfRange(vector[index], start[index], start[index] + length[index]);
                         stringLengthSum += commentValue.length;
                     }
                 }
@@ -433,8 +442,9 @@ public final class BenchmarkLineItemOrcVectorized
                 int[] length = columnVector.length;
                 boolean[] isNull = columnVector.isNull;
                 for (int i = 0; i < batch.size; i++) {
-                    if (!isNull[i]) {
-                        byte[] commentValue = Arrays.copyOfRange(vector[i], start[i], start[i] + length[i]);
+                    int index = columnVector.isRepeating ? 0 : i;
+                    if (!isNull[index]) {
+                        byte[] commentValue = Arrays.copyOfRange(vector[index], start[index], start[index] + length[index]);
                         stringLengthSum += commentValue.length;
                     }
                 }
@@ -474,8 +484,9 @@ public final class BenchmarkLineItemOrcVectorized
                 int[] length = columnVector.length;
                 boolean[] isNull = columnVector.isNull;
                 for (int i = 0; i < batch.size; i++) {
-                    if (!isNull[i]) {
-                        byte[] commentValue = Arrays.copyOfRange(vector[i], start[i], start[i] + length[i]);
+                    int index = columnVector.isRepeating ? 0 : i;
+                    if (!isNull[index]) {
+                        byte[] commentValue = Arrays.copyOfRange(vector[index], start[index], start[index] + length[index]);
                         stringLengthSum += commentValue.length;
                     }
                 }
@@ -514,8 +525,9 @@ public final class BenchmarkLineItemOrcVectorized
                 int[] length = columnVector.length;
                 boolean[] isNull = columnVector.isNull;
                 for (int i = 0; i < batch.size; i++) {
-                    if (!isNull[i]) {
-                        byte[] commentValue = Arrays.copyOfRange(vector[i], start[i], start[i] + length[i]);
+                    int index = columnVector.isRepeating ? 0 : i;
+                    if (!isNull[index]) {
+                        byte[] commentValue = Arrays.copyOfRange(vector[index], start[index], start[index] + length[index]);
                         stringLengthSum += commentValue.length;
                     }
                 }
@@ -554,8 +566,9 @@ public final class BenchmarkLineItemOrcVectorized
                 int[] length = columnVector.length;
                 boolean[] isNull = columnVector.isNull;
                 for (int i = 0; i < batch.size; i++) {
-                    if (!isNull[i]) {
-                        byte[] commentValue = Arrays.copyOfRange(vector[i], start[i], start[i] + length[i]);
+                    int index = columnVector.isRepeating ? 0 : i;
+                    if (!isNull[index]) {
+                        byte[] commentValue = Arrays.copyOfRange(vector[index], start[index], start[index] + length[index]);
                         stringLengthSum += commentValue.length;
                     }
                 }
@@ -594,8 +607,9 @@ public final class BenchmarkLineItemOrcVectorized
                 int[] length = columnVector.length;
                 boolean[] isNull = columnVector.isNull;
                 for (int i = 0; i < batch.size; i++) {
-                    if (!isNull[i]) {
-                        byte[] commentValue = Arrays.copyOfRange(vector[i], start[i], start[i] + length[i]);
+                    int index = columnVector.isRepeating ? 0 : i;
+                    if (!isNull[index]) {
+                        byte[] commentValue = Arrays.copyOfRange(vector[index], start[index], start[index] + length[index]);
                         stringLengthSum += commentValue.length;
                     }
                 }
@@ -634,8 +648,9 @@ public final class BenchmarkLineItemOrcVectorized
                 int[] length = columnVector.length;
                 boolean[] isNull = columnVector.isNull;
                 for (int i = 0; i < batch.size; i++) {
-                    if (!isNull[i]) {
-                        byte[] commentValue = Arrays.copyOfRange(vector[i], start[i], start[i] + length[i]);
+                    int index = columnVector.isRepeating ? 0 : i;
+                    if (!isNull[index]) {
+                        byte[] commentValue = Arrays.copyOfRange(vector[index], start[index], start[index] + length[index]);
                         stringLengthSum += commentValue.length;
                     }
                 }
@@ -674,8 +689,9 @@ public final class BenchmarkLineItemOrcVectorized
                 int[] length = columnVector.length;
                 boolean[] isNull = columnVector.isNull;
                 for (int i = 0; i < batch.size; i++) {
-                    if (!isNull[i]) {
-                        byte[] commentValue = Arrays.copyOfRange(vector[i], start[i], start[i] + length[i]);
+                    int index = columnVector.isRepeating ? 0 : i;
+                    if (!isNull[index]) {
+                        byte[] commentValue = Arrays.copyOfRange(vector[index], start[index], start[index] + length[index]);
                         stringLengthSum += commentValue.length;
                     }
                 }
@@ -783,34 +799,41 @@ public final class BenchmarkLineItemOrcVectorized
                 boolean[] shipDateIsNull = shipDateColumnVector.isNull;
 
                 for (int i = 0; i < batch.size; i++) {
-                    if (!quantityIsNull[i]) {
-                        quantitySum += quantityVector[i];
+                    int quantityIndex = quantityColumnVector.isRepeating ? 0 : i;
+                    if (!quantityIsNull[quantityIndex]) {
+                        quantitySum += quantityVector[quantityIndex];
                     }
 
-                    if (!extendedPriceIsNull[i]) {
-                        extendedPriceSum += extendedPriceVector[i];
+                    int extendedPriceIndex = extendedPriceColumnVector.isRepeating ? 0 : i;
+                    if (!extendedPriceIsNull[extendedPriceIndex]) {
+                        extendedPriceSum += extendedPriceVector[extendedPriceIndex];
                     }
 
-                    if (!discountIsNull[i]) {
-                        discountSum += discountVector[i];
+                    int discountIndex = discountColumnVector.isRepeating ? 0 : i;
+                    if (!discountIsNull[discountIndex]) {
+                        discountSum += discountVector[discountIndex];
                     }
 
-                    if (!taxIsNull[i]) {
-                        taxSum += taxVector[i];
+                    int taxIndex = taxColumnVector.isRepeating ? 0 : i;
+                    if (!taxIsNull[taxIndex]) {
+                        taxSum += taxVector[taxIndex];
                     }
 
-                    if (!returnFlagIsNull[i]) {
-                        byte[] returnFlagValue = Arrays.copyOfRange(returnFlagVector[i], returnFlagStartVector[i], returnFlagStartVector[i] + returnFlagLengthVector[i]);
+                    int returnFlagIndex = returnFlagColumnVector.isRepeating ? 0 : i;
+                    if (!returnFlagIsNull[returnFlagIndex]) {
+                        byte[] returnFlagValue = Arrays.copyOfRange(returnFlagVector[returnFlagIndex], returnFlagStartVector[returnFlagIndex], returnFlagStartVector[returnFlagIndex] + returnFlagLengthVector[returnFlagIndex]);
                         returnFlagSum += returnFlagValue.length;
                     }
 
-                    if (!lineStatusIsNull[i]) {
-                        byte[] lineStatusValue = Arrays.copyOfRange(lineStatusVector[i], lineStatusStartVector[i], lineStatusStartVector[i] + lineStatusLengthVector[i]);
+                    int lineStatusIndex = lineStatusColumnVector.isRepeating ? 0 : i;
+                    if (!lineStatusIsNull[lineStatusIndex]) {
+                        byte[] lineStatusValue = Arrays.copyOfRange(lineStatusVector[lineStatusIndex], lineStatusStartVector[lineStatusIndex], lineStatusStartVector[lineStatusIndex] + lineStatusLengthVector[lineStatusIndex]);
                         lineStatusSum += lineStatusValue.length;
                     }
 
-                    if (!shipDateIsNull[i]) {
-                        byte[] shipDateValue = Arrays.copyOfRange(shipDateVector[i], shipDateStartVector[i], shipDateStartVector[i] + shipDateLengthVector[i]);
+                    int shipDateIndex = shipDateColumnVector.isRepeating ? 0 : i;
+                    if (!shipDateIsNull[shipDateIndex]) {
+                        byte[] shipDateValue = Arrays.copyOfRange(shipDateVector[shipDateIndex], shipDateStartVector[shipDateIndex], shipDateStartVector[shipDateIndex ]+ shipDateLengthVector[shipDateIndex]);
                         shipDateSum += shipDateValue.length;
                     }
                 }
@@ -881,20 +904,24 @@ public final class BenchmarkLineItemOrcVectorized
                 boolean[] shipDateIsNull = shipDateColumnVector.isNull;
 
                 for (int i = 0; i < batch.size; i++) {
-                    if (!quantityIsNull[i]) {
-                        quantitySum += quantityVector[i];
+                    int quantityIndex = quantityColumnVector.isRepeating ? 0 : i;
+                    if (!quantityIsNull[quantityIndex]) {
+                        quantitySum += quantityVector[quantityIndex];
                     }
 
-                    if (!extendedPriceIsNull[i]) {
-                        extendedPriceSum += extendedPriceVector[i];
+                    int extendedPriceIndex = extendedPriceColumnVector.isRepeating ? 0 : i;
+                    if (!extendedPriceIsNull[extendedPriceIndex]) {
+                        extendedPriceSum += extendedPriceVector[extendedPriceIndex];
                     }
 
-                    if (!discountIsNull[i]) {
-                        discountSum += discountVector[i];
+                    int discountIndex = discountColumnVector.isRepeating ? 0 : i;
+                    if (!discountIsNull[discountIndex]) {
+                        discountSum += discountVector[discountIndex];
                     }
 
-                    if (!shipDateIsNull[i]) {
-                        byte[] shipDateValue = Arrays.copyOfRange(shipDateVector[i], shipDateStartVector[i], shipDateStartVector[i] + shipDateLengthVector[i]);
+                    int shipDateIndex = shipDateColumnVector.isRepeating ? 0 : i;
+                    if (!shipDateIsNull[shipDateIndex]) {
+                        byte[] shipDateValue = Arrays.copyOfRange(shipDateVector[shipDateIndex], shipDateStartVector[shipDateIndex], shipDateStartVector[shipDateIndex ]+ shipDateLengthVector[shipDateIndex]);
                         shipDateSum += shipDateValue.length;
                     }
                 }
@@ -1000,10 +1027,10 @@ public final class BenchmarkLineItemOrcVectorized
                     boolean[] orderKeyIsNull = orderKeyColumnVector.isNull;
 
                     for (int i = 0; i < batch.size; i++) {
-                        if (!orderKeyIsNull[i]) {
-                            orderKeySum += orderKeyVector[i];
+                        int orderKeyIndex = orderKeyColumnVector.isRepeating ? 0 : i;
+                        if (!orderKeyIsNull[orderKeyIndex]) {
+                            orderKeySum += orderKeyVector[orderKeyIndex];
                         }
-
                     }
                 }
                 recordReader.close();
@@ -1230,75 +1257,91 @@ public final class BenchmarkLineItemOrcVectorized
                 boolean[] commentIsNull = commentColumnVector.isNull;
 
                 for (int i = 0; i < batch.size; i++) {
-                    if (!orderKeyIsNull[i]) {
-                        orderKeySum += orderKeyVector[i];
+                    int orderKeyIndex = orderKeyColumnVector.isRepeating ? 0 : i;
+                    if (!orderKeyIsNull[orderKeyIndex]) {
+                        orderKeySum += orderKeyVector[orderKeyIndex];
                     }
 
-                    if (!partKeyIsNull[i]) {
-                        partKeySum += partKeyVector[i];
+                    int partKeyIndex = partKeyColumnVector.isRepeating ? 0 : i;
+                    if (!partKeyIsNull[partKeyIndex]) {
+                        partKeySum += partKeyVector[partKeyIndex];
                     }
 
-                    if (!supplierKeyIsNull[i]) {
-                        supplierKeySum += supplierKeyVector[i];
+                    int supplierKeyIndex = supplierKeyColumnVector.isRepeating ? 0 : i;
+                    if (!supplierKeyIsNull[supplierKeyIndex]) {
+                        supplierKeySum += supplierKeyVector[supplierKeyIndex];
                     }
 
-                    if (!lineNumberIsNull[i]) {
-                        lineNumberSum += lineNumberVector[i];
+                    int lineNumberIndex = lineNumberColumnVector.isRepeating ? 0 : i;
+                    if (!lineNumberIsNull[lineNumberIndex]) {
+                        lineNumberSum += lineNumberVector[lineNumberIndex];
                     }
 
-                    if (!quantityIsNull[i]) {
-                        quantitySum += quantityVector[i];
+                    int quantityIndex = quantityColumnVector.isRepeating ? 0 : i;
+                    if (!quantityIsNull[quantityIndex]) {
+                        quantitySum += quantityVector[quantityIndex];
                     }
 
-                    if (!extendedPriceIsNull[i]) {
-                        extendedPriceSum += extendedPriceVector[i];
+                    int extendedPriceIndex = extendedPriceColumnVector.isRepeating ? 0 : i;
+                    if (!extendedPriceIsNull[extendedPriceIndex]) {
+                        extendedPriceSum += extendedPriceVector[extendedPriceIndex];
                     }
 
-                    if (!discountIsNull[i]) {
-                        discountSum += discountVector[i];
+                    int discountIndex = discountColumnVector.isRepeating ? 0 : i;
+                    if (!discountIsNull[discountIndex]) {
+                        discountSum += discountVector[discountIndex];
                     }
 
-                    if (!taxIsNull[i]) {
-                        taxSum += taxVector[i];
+                    int taxIndex = taxColumnVector.isRepeating ? 0 : i;
+                    if (!taxIsNull[taxIndex]) {
+                        taxSum += taxVector[taxIndex];
                     }
 
-                    if (!returnFlagIsNull[i]) {
-                        byte[] returnFlagValue = Arrays.copyOfRange(returnFlagVector[i], returnFlagStartVector[i], returnFlagStartVector[i] + returnFlagLengthVector[i]);
+                    int returnFlagIndex = returnFlagColumnVector.isRepeating ? 0 : i;
+                    if (!returnFlagIsNull[returnFlagIndex]) {
+                        byte[] returnFlagValue = Arrays.copyOfRange(returnFlagVector[returnFlagIndex], returnFlagStartVector[returnFlagIndex], returnFlagStartVector[returnFlagIndex] + returnFlagLengthVector[returnFlagIndex]);
                         returnFlagSum += returnFlagValue.length;
                     }
 
-                    if (!lineStatusIsNull[i]) {
-                        byte[] lineStatusValue = Arrays.copyOfRange(lineStatusVector[i], lineStatusStartVector[i], lineStatusStartVector[i] + lineStatusLengthVector[i]);
+                    int lineStatusIndex = lineStatusColumnVector.isRepeating ? 0 : i;
+                    if (!lineStatusIsNull[lineStatusIndex]) {
+                        byte[] lineStatusValue = Arrays.copyOfRange(lineStatusVector[lineStatusIndex], lineStatusStartVector[lineStatusIndex], lineStatusStartVector[lineStatusIndex] + lineStatusLengthVector[lineStatusIndex]);
                         lineStatusSum += lineStatusValue.length;
                     }
 
-                    if (!shipDateIsNull[i]) {
-                        byte[] shipDateValue = Arrays.copyOfRange(shipDateVector[i], shipDateStartVector[i], shipDateStartVector[i] + shipDateLengthVector[i]);
+                    int shipDateIndex = shipDateColumnVector.isRepeating ? 0 : i;
+                    if (!shipDateIsNull[shipDateIndex]) {
+                        byte[] shipDateValue = Arrays.copyOfRange(shipDateVector[shipDateIndex], shipDateStartVector[shipDateIndex], shipDateStartVector[shipDateIndex ]+ shipDateLengthVector[shipDateIndex]);
                         shipDateSum += shipDateValue.length;
                     }
 
-                    if (!commitDateIsNull[i]) {
-                        byte[] commitDateValue = Arrays.copyOfRange(commitDateVector[i], commitDateStartVector[i], commitDateStartVector[i] + commitDateLengthVector[i]);
+                    int commitDateIndex = commitDateColumnVector.isRepeating ? 0 : i;
+                    if (!commitDateIsNull[commitDateIndex]) {
+                        byte[] commitDateValue = Arrays.copyOfRange(commitDateVector[commitDateIndex], commitDateStartVector[commitDateIndex], commitDateStartVector[commitDateIndex] + commitDateLengthVector[commitDateIndex]);
                         commitDateSum += commitDateValue.length;
                     }
 
-                    if (!receiptDateIsNull[i]) {
-                        byte[] receiptDateValue = Arrays.copyOfRange(receiptDateVector[i], receiptDateStartVector[i], receiptDateStartVector[i] + receiptDateLengthVector[i]);
+                    int receiptDateIndex = receiptDateColumnVector.isRepeating ? 0 : i;
+                    if (!receiptDateIsNull[receiptDateIndex]) {
+                        byte[] receiptDateValue = Arrays.copyOfRange(receiptDateVector[receiptDateIndex], receiptDateStartVector[receiptDateIndex], receiptDateStartVector[receiptDateIndex] + receiptDateLengthVector[receiptDateIndex]);
                         receiptDateSum += receiptDateValue.length;
                     }
 
-                    if (!shipInstructionsIsNull[i]) {
-                        byte[] shipInstructionsValue = Arrays.copyOfRange(shipInstructionsVector[i], shipInstructionsStartVector[i], shipInstructionsStartVector[i] + shipInstructionsLengthVector[i]);
+                    int shipInstructionsIndex = shipInstructionsColumnVector.isRepeating ? 0 : i;
+                    if (!shipInstructionsIsNull[shipInstructionsIndex]) {
+                        byte[] shipInstructionsValue = Arrays.copyOfRange(shipInstructionsVector[shipInstructionsIndex], shipInstructionsStartVector[shipInstructionsIndex], shipInstructionsStartVector[shipInstructionsIndex] + shipInstructionsLengthVector[shipInstructionsIndex]);
                         shipInstructionsSum += shipInstructionsValue.length;
                     }
 
-                    if (!shipModeIsNull[i]) {
-                        byte[] shipModeValue = Arrays.copyOfRange(shipModeVector[i], shipModeStartVector[i], shipModeStartVector[i] + shipModeLengthVector[i]);
+                    int shipModeIndex = shipModeColumnVector.isRepeating ? 0 : i;
+                    if (!shipModeIsNull[shipModeIndex]) {
+                        byte[] shipModeValue = Arrays.copyOfRange(shipModeVector[shipModeIndex], shipModeStartVector[shipModeIndex], shipModeStartVector[shipModeIndex] + shipModeLengthVector[shipModeIndex]);
                         shipModeSum += shipModeValue.length;
                     }
 
-                    if (!commentIsNull[i]) {
-                        byte[] commentValue = Arrays.copyOfRange(commentVector[i], commentStartVector[i], commentStartVector[i] + commentLengthVector[i]);
+                    int commentIndex = commentColumnVector.isRepeating ? 0 : i;
+                    if (!commentIsNull[commentIndex]) {
+                        byte[] commentValue = Arrays.copyOfRange(commentVector[commentIndex], commentStartVector[commentIndex], commentStartVector[commentIndex] + commentLengthVector[commentIndex]);
                         commentSum += commentValue.length;
                     }
                 }
