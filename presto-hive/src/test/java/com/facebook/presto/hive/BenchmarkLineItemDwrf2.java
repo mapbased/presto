@@ -1126,6 +1126,106 @@ public final class BenchmarkLineItemDwrf2
                 commentSum);
     }
 
+    @Override
+    public <K, V extends Writable> List<Object> allReadOne(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
+            throws Exception
+    {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
+        StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
+        List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
+
+        StructField orderKeyField = rowInspector.getStructFieldRef("orderkey");
+        int orderKeyFieldIndex = allStructFieldRefs.indexOf(orderKeyField);
+
+        StructField partKeyField = rowInspector.getStructFieldRef("partkey");
+        int partKeyFieldIndex = allStructFieldRefs.indexOf(partKeyField);
+
+        StructField supplierKeyField = rowInspector.getStructFieldRef("suppkey");
+        int supplierKeyFieldIndex = allStructFieldRefs.indexOf(supplierKeyField);
+
+        StructField lineNumberField = rowInspector.getStructFieldRef("linenumber");
+        int lineNumberFieldIndex = allStructFieldRefs.indexOf(lineNumberField);
+
+        StructField quantityField = rowInspector.getStructFieldRef("quantity");
+        int quantityFieldIndex = allStructFieldRefs.indexOf(quantityField);
+
+        StructField extendedPriceField = rowInspector.getStructFieldRef("extendedprice");
+        int extendedPriceFieldIndex = allStructFieldRefs.indexOf(extendedPriceField);
+
+        StructField discountField = rowInspector.getStructFieldRef("discount");
+        int discountFieldIndex = allStructFieldRefs.indexOf(discountField);
+
+        StructField taxField = rowInspector.getStructFieldRef("tax");
+        int taxFieldIndex = allStructFieldRefs.indexOf(taxField);
+
+        StructField returnFlagField = rowInspector.getStructFieldRef("returnflag");
+        int returnFlagFieldIndex = allStructFieldRefs.indexOf(returnFlagField);
+
+        StructField lineStatusField = rowInspector.getStructFieldRef("linestatus");
+        int lineStatusFieldIndex = allStructFieldRefs.indexOf(lineStatusField);
+
+        StructField shipDateField = rowInspector.getStructFieldRef("shipdate");
+        int shipDateFieldIndex = allStructFieldRefs.indexOf(shipDateField);
+
+        StructField commitDateField = rowInspector.getStructFieldRef("commitdate");
+        int commitDateFieldIndex = allStructFieldRefs.indexOf(commitDateField);
+
+        StructField receiptDateField = rowInspector.getStructFieldRef("receiptdate");
+        int receiptDateFieldIndex = allStructFieldRefs.indexOf(receiptDateField);
+
+        StructField shipInstructionsField = rowInspector.getStructFieldRef("shipinstruct");
+        int shipInstructionsFieldIndex = allStructFieldRefs.indexOf(shipInstructionsField);
+
+        StructField shipModeField = rowInspector.getStructFieldRef("shipmode");
+        int shipModeFieldIndex = allStructFieldRefs.indexOf(shipModeField);
+
+        StructField commentField = rowInspector.getStructFieldRef("comment");
+        int commentFieldIndex = allStructFieldRefs.indexOf(commentField);
+
+        boolean[] include = new boolean[rowInspector.getAllStructFieldRefs().size() + 1];
+        include[orderKeyFieldIndex + 1] = true;
+        include[partKeyFieldIndex + 1] = true;
+        include[supplierKeyFieldIndex + 1] = true;
+        include[lineNumberFieldIndex + 1] = true;
+        include[quantityFieldIndex + 1] = true;
+        include[extendedPriceFieldIndex + 1] = true;
+        include[discountFieldIndex + 1] = true;
+        include[taxFieldIndex + 1] = true;
+        include[returnFlagFieldIndex + 1] = true;
+        include[lineStatusFieldIndex + 1] = true;
+        include[shipDateFieldIndex + 1] = true;
+        include[commitDateFieldIndex + 1] = true;
+        include[receiptDateFieldIndex + 1] = true;
+        include[shipInstructionsFieldIndex + 1] = true;
+        include[shipModeFieldIndex + 1] = true;
+        include[commentFieldIndex + 1] = true;
+
+        long orderKeySum = 0;
+
+        for (int i = 0; i < LOOPS; i++) {
+            orderKeySum = 0;
+
+            RecordReader rows = createRecordReader(fileSystem, fileSplit, jobConf, include);
+
+            OrcLazyRow row = null;
+            while (rows.hasNext()) {
+                row = (OrcLazyRow) rows.next(row);
+
+                OrcLazyObject orderKeyData = row.getFieldValue(orderKeyFieldIndex);
+                if (orderKeyData != null) {
+                    LongWritable orderKeyValue = (LongWritable) orderKeyData.materialize();
+                    if (orderKeyValue != null) {
+                        orderKeySum += orderKeyValue.get();
+                    }
+                }
+
+            }
+            rows.close();
+        }
+
+        return ImmutableList.<Object>of(orderKeySum);
+    }
+
     private static RecordReader createRecordReader(FileSystem fileSystem, FileSplit fileSplit, JobConf jobConf, boolean[] include)
             throws IOException
     {

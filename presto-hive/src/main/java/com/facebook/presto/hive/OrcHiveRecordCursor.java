@@ -64,7 +64,7 @@ import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.collect.Maps.uniqueIndex;
 import static java.lang.Math.max;
 import static java.lang.Math.min;
-import static org.apache.hadoop.hive.ql.io.orc.OrcUtil.getFieldValue;
+import static org.apache.hadoop.hive.ql.io.orc.OrcStructUtil.getFieldValue;
 
 class OrcHiveRecordCursor
         extends HiveRecordCursor

@@ -176,6 +176,7 @@ public final class HiveInputFormatBenchmark
                         true,
                         ImmutableList.of(
 //                                new BenchmarkLineItemGeneric(),
+                                new BenchmarkLineItemOrcCustom(),
                                 new BenchmarkLineItemOrcVectorized())),
 
                 new BenchmarkFile(
@@ -203,7 +204,7 @@ public final class HiveInputFormatBenchmark
                         "gzip",
                         true,
                         ImmutableList.of(
-                                new BenchmarkLineItemGeneric(),
+//                                new BenchmarkLineItemGeneric(),
                                 new BenchmarkLineItemParquet()))
 
 //                new BenchmarkFile(
@@ -658,6 +659,15 @@ public final class HiveInputFormatBenchmark
             value = benchmarkLineItem.all(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemSerDe());
         }
         logDuration("all", start, loopCount, value);
+
+        //
+        // all read one
+        //
+        start = System.nanoTime();
+        for (int loops = 0; loops < loopCount; loops++) {
+            value = benchmarkLineItem.allReadOne(jobConf, benchmarkFile.getLineItemFileSplit(), benchmarkFile.getInputFormat(), benchmarkFile.getLineItemSerDe());
+        }
+        logDuration("all (read one)", start, loopCount, value);
 
         if (benchmarkLineItem instanceof BenchmarkLineItemOrcVectorized) {
             BenchmarkLineItemOrcVectorized orcVectorized = (BenchmarkLineItemOrcVectorized) benchmarkLineItem;

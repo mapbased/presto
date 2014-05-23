@@ -1137,6 +1137,107 @@ public class BenchmarkLineItemRCBinary
                 commentSum);
     }
 
+    @Override
+    public <K, V extends Writable> List<Object> allReadOne(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
+            throws Exception
+    {
+        StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
+        List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
+
+        StructField orderKeyField = rowInspector.getStructFieldRef("orderkey");
+        int orderKeyFieldIndex = allStructFieldRefs.indexOf(orderKeyField);
+
+        StructField partKeyField = rowInspector.getStructFieldRef("partkey");
+        int partKeyFieldIndex = allStructFieldRefs.indexOf(partKeyField);
+
+        StructField supplierKeyField = rowInspector.getStructFieldRef("suppkey");
+        int supplierKeyFieldIndex = allStructFieldRefs.indexOf(supplierKeyField);
+
+        StructField lineNumberField = rowInspector.getStructFieldRef("linenumber");
+        int lineNumberFieldIndex = allStructFieldRefs.indexOf(lineNumberField);
+
+        StructField quantityField = rowInspector.getStructFieldRef("quantity");
+        int quantityFieldIndex = allStructFieldRefs.indexOf(quantityField);
+
+        StructField extendedPriceField = rowInspector.getStructFieldRef("extendedprice");
+        int extendedPriceFieldIndex = allStructFieldRefs.indexOf(extendedPriceField);
+
+        StructField discountField = rowInspector.getStructFieldRef("discount");
+        int discountFieldIndex = allStructFieldRefs.indexOf(discountField);
+
+        StructField taxField = rowInspector.getStructFieldRef("tax");
+        int taxFieldIndex = allStructFieldRefs.indexOf(taxField);
+
+        StructField returnFlagField = rowInspector.getStructFieldRef("returnflag");
+        int returnFlagFieldIndex = allStructFieldRefs.indexOf(returnFlagField);
+
+        StructField lineStatusField = rowInspector.getStructFieldRef("linestatus");
+        int lineStatusFieldIndex = allStructFieldRefs.indexOf(lineStatusField);
+
+        StructField shipDateField = rowInspector.getStructFieldRef("shipdate");
+        int shipDateFieldIndex = allStructFieldRefs.indexOf(shipDateField);
+
+        StructField commitDateField = rowInspector.getStructFieldRef("commitdate");
+        int commitDateFieldIndex = allStructFieldRefs.indexOf(commitDateField);
+
+        StructField receiptDateField = rowInspector.getStructFieldRef("receiptdate");
+        int receiptDateFieldIndex = allStructFieldRefs.indexOf(receiptDateField);
+
+        StructField shipInstructionsField = rowInspector.getStructFieldRef("shipinstruct");
+        int shipInstructionsFieldIndex = allStructFieldRefs.indexOf(shipInstructionsField);
+
+        StructField shipModeField = rowInspector.getStructFieldRef("shipmode");
+        int shipModeFieldIndex = allStructFieldRefs.indexOf(shipModeField);
+
+        StructField commentField = rowInspector.getStructFieldRef("comment");
+        int commentFieldIndex = allStructFieldRefs.indexOf(commentField);
+
+        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(
+                orderKeyFieldIndex,
+                partKeyFieldIndex,
+                supplierKeyFieldIndex,
+                lineNumberFieldIndex,
+                quantityFieldIndex,
+                extendedPriceFieldIndex,
+                discountFieldIndex,
+                taxFieldIndex,
+                returnFlagFieldIndex,
+                lineStatusFieldIndex,
+                shipDateFieldIndex,
+                commitDateFieldIndex,
+                receiptDateFieldIndex,
+                shipInstructionsFieldIndex,
+                shipModeFieldIndex,
+                commentFieldIndex));
+
+        long orderKeySum = 0;
+
+        for (int i = 0; i < LOOPS; i++) {
+            orderKeySum = 0;
+
+            RecordReader<K, V> recordReader = inputFormat.getRecordReader(fileSplit, jobConf, Reporter.NULL);
+            K key = recordReader.createKey();
+            V value = recordReader.createValue();
+
+            while (recordReader.next(key, value)) {
+                BytesRefArrayWritable row = (BytesRefArrayWritable) value;
+
+                BytesRefWritable orderKeyBytesRefWritable = row.unCheckedGet(orderKeyFieldIndex);
+                byte[] orderKeyBytes = orderKeyBytesRefWritable.getData();
+                int orderKeyStart = orderKeyBytesRefWritable.getStart();
+                int orderKeyLength = orderKeyBytesRefWritable.getLength();
+                if (orderKeyLength != 0) {
+                    long orderKeyValue = readVBigint(orderKeyBytes, orderKeyStart, orderKeyLength);
+                    orderKeySum += orderKeyValue;
+                }
+
+            }
+            recordReader.close();
+        }
+
+        return ImmutableList.<Object>of(orderKeySum);
+    }
+
     public long readVBigint(byte[] bytes, int offset, int length)
     {
         if (length == 1) {

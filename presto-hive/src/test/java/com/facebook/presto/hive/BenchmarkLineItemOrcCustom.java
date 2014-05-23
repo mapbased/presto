@@ -13,70 +13,33 @@
  */
 package com.facebook.presto.hive;
 
-import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
-import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.hive.ql.io.IOConstants;
-import org.apache.hadoop.hive.ql.io.slice.Slice;
-import org.apache.hadoop.hive.ql.io.slice.Slices;
-import org.apache.hadoop.hive.serde2.ColumnProjectionUtils;
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.hive.ql.io.orc.OrcFile;
+import org.apache.hadoop.hive.ql.io.orc.OrcStruct;
+import org.apache.hadoop.hive.ql.io.orc.OrcStructUtil;
+import org.apache.hadoop.hive.ql.io.orc.Reader;
+import org.apache.hadoop.hive.ql.io.orc.RecordReader;
 import org.apache.hadoop.hive.serde2.Deserializer;
+import org.apache.hadoop.hive.serde2.io.DoubleWritable;
 import org.apache.hadoop.hive.serde2.objectinspector.StructField;
 import org.apache.hadoop.hive.serde2.objectinspector.StructObjectInspector;
+import org.apache.hadoop.io.LongWritable;
+import org.apache.hadoop.io.Text;
 import org.apache.hadoop.io.Writable;
 import org.apache.hadoop.mapred.FileSplit;
 import org.apache.hadoop.mapred.InputFormat;
 import org.apache.hadoop.mapred.JobConf;
-import org.apache.hadoop.mapreduce.TaskAttemptContext;
-import org.apache.hadoop.mapreduce.TaskAttemptID;
-import parquet.column.Dictionary;
-import parquet.hadoop.ParquetFileReader;
-import parquet.hadoop.ParquetInputSplit;
-import parquet.hadoop.ParquetRecordReader;
-import parquet.hadoop.api.ReadSupport;
-import parquet.hadoop.api.ReadSupport.ReadContext;
-import parquet.hadoop.metadata.BlockMetaData;
-import parquet.hadoop.metadata.FileMetaData;
-import parquet.hadoop.metadata.ParquetMetadata;
-import parquet.hadoop.util.ContextUtil;
-import parquet.io.api.Binary;
-import parquet.io.api.Converter;
-import parquet.io.api.GroupConverter;
-import parquet.io.api.PrimitiveConverter;
-import parquet.io.api.RecordMaterializer;
-import parquet.schema.MessageType;
-import parquet.schema.Type;
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Map;
 
 import static com.facebook.presto.hive.HiveInputFormatBenchmark.LOOPS;
 
-public final class BenchmarkLineItemParquet
+public final class BenchmarkLineItemOrcCustom
         implements BenchmarkLineItem
 {
-    private static final String[] COLUMN_NAMES = new String[] {
-            "orderkey",
-            "partkey",
-            "suppkey",
-            "linenumber",
-            "quantity",
-            "extendedprice",
-            "discount",
-            "tax",
-            "returnflag",
-            "linestatus",
-            "shipdate",
-            "commitdate",
-            "receiptdate",
-            "shipinstruct",
-            "shipmode",
-            "comment"
-    };
-
     @Override
     public String getName()
     {
@@ -87,28 +50,32 @@ public final class BenchmarkLineItemParquet
     public <K, V extends Writable> long orderKey(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
 
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
         StructField bigintField = rowInspector.getStructFieldRef("orderkey");
         int fieldIndex = allStructFieldRefs.indexOf(bigintField);
 
-        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
-        jobConf.set(IOConstants.COLUMNS, Joiner.on(',').join(COLUMN_NAMES));
+        boolean[] include = new boolean[rowInspector.getAllStructFieldRefs().size() + 1];
+        include[fieldIndex + 1] = true;
 
         long bigintSum = 0;
         for (int i = 0; i < LOOPS; i++) {
             bigintSum = 0;
 
-            ParquetRecordReader<NullRecord> realReader = createParquetRecordReader(jobConf, fileSplit, "orderkey");
+            RecordReader rows = createRecordReader(fileSystem, fileSplit, jobConf, include);
 
-            while (realReader.nextKeyValue()) {
-                NullRecord record = realReader.getCurrentValue();
-                if (!record.isNull(0)) {
-                    bigintSum += record.getLong(0);
+            OrcStruct row = null;
+            while (rows.hasNext()) {
+                row = (OrcStruct) rows.next(row);
+
+                LongWritable bigintValue = (LongWritable) OrcStructUtil.getFieldValue(row, fieldIndex);
+                if (bigintValue != null) {
+                    bigintSum += bigintValue.get();
                 }
             }
-            realReader.close();
+            rows.close();
         }
         return bigintSum;
     }
@@ -117,27 +84,32 @@ public final class BenchmarkLineItemParquet
     public <K, V extends Writable> long partKey(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
 
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
         StructField bigintField = rowInspector.getStructFieldRef("partkey");
         int fieldIndex = allStructFieldRefs.indexOf(bigintField);
 
-        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
+        boolean[] include = new boolean[rowInspector.getAllStructFieldRefs().size() + 1];
+        include[fieldIndex + 1] = true;
 
         long bigintSum = 0;
         for (int i = 0; i < LOOPS; i++) {
             bigintSum = 0;
 
-            ParquetRecordReader<NullRecord> realReader = createParquetRecordReader(jobConf, fileSplit, "partkey");
+            RecordReader rows = createRecordReader(fileSystem, fileSplit, jobConf, include);
 
-            while (realReader.nextKeyValue()) {
-                NullRecord record = realReader.getCurrentValue();
-                if (!record.isNull(0)) {
-                    bigintSum += record.getLong(0);
+            OrcStruct row = null;
+            while (rows.hasNext()) {
+                row = (OrcStruct) rows.next(row);
+
+                LongWritable bigintValue = (LongWritable) OrcStructUtil.getFieldValue(row, fieldIndex);
+                if (bigintValue != null) {
+                    bigintSum += bigintValue.get();
                 }
             }
-            realReader.close();
+            rows.close();
         }
         return bigintSum;
     }
@@ -146,27 +118,32 @@ public final class BenchmarkLineItemParquet
     public <K, V extends Writable> long supplierKey(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
 
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
         StructField bigintField = rowInspector.getStructFieldRef("suppkey");
         int fieldIndex = allStructFieldRefs.indexOf(bigintField);
 
-        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
+        boolean[] include = new boolean[rowInspector.getAllStructFieldRefs().size() + 1];
+        include[fieldIndex + 1] = true;
 
         long bigintSum = 0;
         for (int i = 0; i < LOOPS; i++) {
             bigintSum = 0;
 
-            ParquetRecordReader<NullRecord> realReader = createParquetRecordReader(jobConf, fileSplit, "suppkey");
+            RecordReader rows = createRecordReader(fileSystem, fileSplit, jobConf, include);
 
-            while (realReader.nextKeyValue()) {
-                NullRecord record = realReader.getCurrentValue();
-                if (!record.isNull(0)) {
-                    bigintSum += record.getLong(0);
+            OrcStruct row = null;
+            while (rows.hasNext()) {
+                row = (OrcStruct) rows.next(row);
+
+                LongWritable bigintValue = (LongWritable) OrcStructUtil.getFieldValue(row, fieldIndex);
+                if (bigintValue != null) {
+                    bigintSum += bigintValue.get();
                 }
             }
-            realReader.close();
+            rows.close();
         }
         return bigintSum;
     }
@@ -175,27 +152,32 @@ public final class BenchmarkLineItemParquet
     public <K, V extends Writable> long lineNumber(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
 
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
         StructField bigintField = rowInspector.getStructFieldRef("linenumber");
         int fieldIndex = allStructFieldRefs.indexOf(bigintField);
 
-        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
+        boolean[] include = new boolean[rowInspector.getAllStructFieldRefs().size() + 1];
+        include[fieldIndex + 1] = true;
 
         long bigintSum = 0;
         for (int i = 0; i < LOOPS; i++) {
             bigintSum = 0;
 
-            ParquetRecordReader<NullRecord> realReader = createParquetRecordReader(jobConf, fileSplit, "linenumber");
+            RecordReader rows = createRecordReader(fileSystem, fileSplit, jobConf, include);
 
-            while (realReader.nextKeyValue()) {
-                NullRecord record = realReader.getCurrentValue();
-                if (!record.isNull(0)) {
-                    bigintSum += record.getLong(0);
+            OrcStruct row = null;
+            while (rows.hasNext()) {
+                row = (OrcStruct) rows.next(row);
+
+                LongWritable bigintValue = (LongWritable) OrcStructUtil.getFieldValue(row, fieldIndex);
+                if (bigintValue != null) {
+                    bigintSum += bigintValue.get();
                 }
             }
-            realReader.close();
+            rows.close();
         }
         return bigintSum;
     }
@@ -204,26 +186,32 @@ public final class BenchmarkLineItemParquet
     public <K, V extends Writable> long quantity(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
 
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
         StructField bigintField = rowInspector.getStructFieldRef("quantity");
         int fieldIndex = allStructFieldRefs.indexOf(bigintField);
 
-        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
+        boolean[] include = new boolean[rowInspector.getAllStructFieldRefs().size() + 1];
+        include[fieldIndex + 1] = true;
 
         long bigintSum = 0;
         for (int i = 0; i < LOOPS; i++) {
             bigintSum = 0;
-            ParquetRecordReader<NullRecord> realReader = createParquetRecordReader(jobConf, fileSplit, "quantity");
 
-            while (realReader.nextKeyValue()) {
-                NullRecord record = realReader.getCurrentValue();
-                if (!record.isNull(0)) {
-                    bigintSum += record.getLong(0);
+            RecordReader rows = createRecordReader(fileSystem, fileSplit, jobConf, include);
+
+            OrcStruct row = null;
+            while (rows.hasNext()) {
+                row = (OrcStruct) rows.next(row);
+
+                LongWritable bigintValue = (LongWritable) OrcStructUtil.getFieldValue(row, fieldIndex);
+                if (bigintValue != null) {
+                    bigintSum += bigintValue.get();
                 }
             }
-            realReader.close();
+            rows.close();
         }
         return bigintSum;
     }
@@ -232,27 +220,32 @@ public final class BenchmarkLineItemParquet
     public <K, V extends Writable> double extendedPrice(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
 
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
         StructField doubleField = rowInspector.getStructFieldRef("extendedprice");
         int fieldIndex = allStructFieldRefs.indexOf(doubleField);
 
-        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
+        boolean[] include = new boolean[rowInspector.getAllStructFieldRefs().size() + 1];
+        include[fieldIndex + 1] = true;
 
         double doubleSum = 0;
         for (int i = 0; i < LOOPS; i++) {
             doubleSum = 0;
 
-            ParquetRecordReader<NullRecord> realReader = createParquetRecordReader(jobConf, fileSplit, "extendedprice");
+            RecordReader rows = createRecordReader(fileSystem, fileSplit, jobConf, include);
 
-            while (realReader.nextKeyValue()) {
-                NullRecord record = realReader.getCurrentValue();
-                if (!record.isNull(0)) {
-                    doubleSum += record.getDouble(0);
+            OrcStruct row = null;
+            while (rows.hasNext()) {
+                row = (OrcStruct) rows.next(row);
+
+                DoubleWritable doubleValue = (DoubleWritable) OrcStructUtil.getFieldValue(row, fieldIndex);
+                if (doubleValue != null) {
+                    doubleSum += doubleValue.get();
                 }
             }
-            realReader.close();
+            rows.close();
         }
         return doubleSum;
     }
@@ -261,27 +254,32 @@ public final class BenchmarkLineItemParquet
     public <K, V extends Writable> double discount(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
 
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
         StructField doubleField = rowInspector.getStructFieldRef("discount");
         int fieldIndex = allStructFieldRefs.indexOf(doubleField);
 
-        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
+        boolean[] include = new boolean[rowInspector.getAllStructFieldRefs().size() + 1];
+        include[fieldIndex + 1] = true;
 
         double doubleSum = 0;
         for (int i = 0; i < LOOPS; i++) {
             doubleSum = 0;
 
-            ParquetRecordReader<NullRecord> realReader = createParquetRecordReader(jobConf, fileSplit, "discount");
+            RecordReader rows = createRecordReader(fileSystem, fileSplit, jobConf, include);
 
-            while (realReader.nextKeyValue()) {
-                NullRecord record = realReader.getCurrentValue();
-                if (!record.isNull(0)) {
-                    doubleSum += record.getDouble(0);
+            OrcStruct row = null;
+            while (rows.hasNext()) {
+                row = (OrcStruct) rows.next(row);
+
+                DoubleWritable doubleValue = (DoubleWritable) OrcStructUtil.getFieldValue(row, fieldIndex);
+                if (doubleValue != null) {
+                    doubleSum += doubleValue.get();
                 }
             }
-            realReader.close();
+            rows.close();
         }
         return doubleSum;
     }
@@ -290,27 +288,32 @@ public final class BenchmarkLineItemParquet
     public <K, V extends Writable> double tax(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
 
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
         StructField doubleField = rowInspector.getStructFieldRef("tax");
         int fieldIndex = allStructFieldRefs.indexOf(doubleField);
 
-        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
+        boolean[] include = new boolean[rowInspector.getAllStructFieldRefs().size() + 1];
+        include[fieldIndex + 1] = true;
 
         double doubleSum = 0;
         for (int i = 0; i < LOOPS; i++) {
             doubleSum = 0;
 
-            ParquetRecordReader<NullRecord> realReader = createParquetRecordReader(jobConf, fileSplit, "tax");
+            RecordReader rows = createRecordReader(fileSystem, fileSplit, jobConf, include);
 
-            while (realReader.nextKeyValue()) {
-                NullRecord record = realReader.getCurrentValue();
-                if (!record.isNull(0)) {
-                    doubleSum += record.getDouble(0);
+            OrcStruct row = null;
+            while (rows.hasNext()) {
+                row = (OrcStruct) rows.next(row);
+
+                DoubleWritable doubleValue = (DoubleWritable) OrcStructUtil.getFieldValue(row, fieldIndex);
+                if (doubleValue != null) {
+                    doubleSum += doubleValue.get();
                 }
             }
-            realReader.close();
+            rows.close();
         }
         return doubleSum;
     }
@@ -319,27 +322,33 @@ public final class BenchmarkLineItemParquet
     public <K, V extends Writable> long returnFlag(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
 
         StructField stringField = rowInspector.getStructFieldRef("returnflag");
         int fieldIndex = allStructFieldRefs.indexOf(stringField);
 
-        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
+        boolean[] include = new boolean[rowInspector.getAllStructFieldRefs().size() + 1];
+        include[fieldIndex + 1] = true;
 
         long stringLengthSum = 0;
         for (int i = 0; i < LOOPS; i++) {
             stringLengthSum = 0;
 
-            ParquetRecordReader<NullRecord> realReader = createParquetRecordReader(jobConf, fileSplit, "returnflag");
+            RecordReader rows = createRecordReader(fileSystem, fileSplit, jobConf, include);
 
-            while (realReader.nextKeyValue()) {
-                NullRecord record = realReader.getCurrentValue();
-                if (!record.isNull(0)) {
-                    stringLengthSum += record.getSlice(0).length();
+            OrcStruct row = null;
+            while (rows.hasNext()) {
+                row = (OrcStruct) rows.next(row);
+
+                Text stringText = (Text) OrcStructUtil.getFieldValue(row, fieldIndex);
+                if (stringText != null) {
+                    byte[] stringValue = Arrays.copyOfRange(stringText.getBytes(), 0, stringText.getLength());
+                    stringLengthSum += stringValue.length;
                 }
             }
-            realReader.close();
+            rows.close();
         }
         return stringLengthSum;
     }
@@ -348,27 +357,33 @@ public final class BenchmarkLineItemParquet
     public <K, V extends Writable> long status(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
 
         StructField stringField = rowInspector.getStructFieldRef("linestatus");
         int fieldIndex = allStructFieldRefs.indexOf(stringField);
 
-        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
+        boolean[] include = new boolean[rowInspector.getAllStructFieldRefs().size() + 1];
+        include[fieldIndex + 1] = true;
 
         long stringLengthSum = 0;
         for (int i = 0; i < LOOPS; i++) {
             stringLengthSum = 0;
 
-            ParquetRecordReader<NullRecord> realReader = createParquetRecordReader(jobConf, fileSplit, "linestatus");
+            RecordReader rows = createRecordReader(fileSystem, fileSplit, jobConf, include);
 
-            while (realReader.nextKeyValue()) {
-                NullRecord record = realReader.getCurrentValue();
-                if (!record.isNull(0)) {
-                    stringLengthSum += record.getSlice(0).length();
+            OrcStruct row = null;
+            while (rows.hasNext()) {
+                row = (OrcStruct) rows.next(row);
+
+                Text stringText = (Text) OrcStructUtil.getFieldValue(row, fieldIndex);
+                if (stringText != null) {
+                    byte[] stringValue = Arrays.copyOfRange(stringText.getBytes(), 0, stringText.getLength());
+                    stringLengthSum += stringValue.length;
                 }
             }
-            realReader.close();
+            rows.close();
         }
         return stringLengthSum;
     }
@@ -378,27 +393,33 @@ public final class BenchmarkLineItemParquet
     public <K, V extends Writable> long shipDate(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
 
         StructField stringField = rowInspector.getStructFieldRef("shipdate");
         int fieldIndex = allStructFieldRefs.indexOf(stringField);
 
-        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
+        boolean[] include = new boolean[rowInspector.getAllStructFieldRefs().size() + 1];
+        include[fieldIndex + 1] = true;
 
         long stringLengthSum = 0;
         for (int i = 0; i < LOOPS; i++) {
             stringLengthSum = 0;
 
-            ParquetRecordReader<NullRecord> realReader = createParquetRecordReader(jobConf, fileSplit, "shipdate");
+            RecordReader rows = createRecordReader(fileSystem, fileSplit, jobConf, include);
 
-            while (realReader.nextKeyValue()) {
-                NullRecord record = realReader.getCurrentValue();
-                if (!record.isNull(0)) {
-                    stringLengthSum += record.getSlice(0).length();
+            OrcStruct row = null;
+            while (rows.hasNext()) {
+                row = (OrcStruct) rows.next(row);
+
+                Text stringText = (Text) OrcStructUtil.getFieldValue(row, fieldIndex);
+                if (stringText != null) {
+                    byte[] stringValue = Arrays.copyOfRange(stringText.getBytes(), 0, stringText.getLength());
+                    stringLengthSum += stringValue.length;
                 }
             }
-            realReader.close();
+            rows.close();
         }
         return stringLengthSum;
     }
@@ -407,27 +428,33 @@ public final class BenchmarkLineItemParquet
     public <K, V extends Writable> long commitDate(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
 
         StructField stringField = rowInspector.getStructFieldRef("commitdate");
         int fieldIndex = allStructFieldRefs.indexOf(stringField);
 
-        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
+        boolean[] include = new boolean[rowInspector.getAllStructFieldRefs().size() + 1];
+        include[fieldIndex + 1] = true;
 
         long stringLengthSum = 0;
         for (int i = 0; i < LOOPS; i++) {
             stringLengthSum = 0;
 
-            ParquetRecordReader<NullRecord> realReader = createParquetRecordReader(jobConf, fileSplit, "commitdate");
+            RecordReader rows = createRecordReader(fileSystem, fileSplit, jobConf, include);
 
-            while (realReader.nextKeyValue()) {
-                NullRecord record = realReader.getCurrentValue();
-                if (!record.isNull(0)) {
-                    stringLengthSum += record.getSlice(0).length();
+            OrcStruct row = null;
+            while (rows.hasNext()) {
+                row = (OrcStruct) rows.next(row);
+
+                Text stringText = (Text) OrcStructUtil.getFieldValue(row, fieldIndex);
+                if (stringText != null) {
+                    byte[] stringValue = Arrays.copyOfRange(stringText.getBytes(), 0, stringText.getLength());
+                    stringLengthSum += stringValue.length;
                 }
             }
-            realReader.close();
+            rows.close();
         }
         return stringLengthSum;
     }
@@ -436,27 +463,33 @@ public final class BenchmarkLineItemParquet
     public <K, V extends Writable> long receiptDate(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
 
         StructField stringField = rowInspector.getStructFieldRef("receiptdate");
         int fieldIndex = allStructFieldRefs.indexOf(stringField);
 
-        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
+        boolean[] include = new boolean[rowInspector.getAllStructFieldRefs().size() + 1];
+        include[fieldIndex + 1] = true;
 
         long stringLengthSum = 0;
         for (int i = 0; i < LOOPS; i++) {
             stringLengthSum = 0;
 
-            ParquetRecordReader<NullRecord> realReader = createParquetRecordReader(jobConf, fileSplit, "receiptdate");
+            RecordReader rows = createRecordReader(fileSystem, fileSplit, jobConf, include);
 
-            while (realReader.nextKeyValue()) {
-                NullRecord record = realReader.getCurrentValue();
-                if (!record.isNull(0)) {
-                    stringLengthSum += record.getSlice(0).length();
+            OrcStruct row = null;
+            while (rows.hasNext()) {
+                row = (OrcStruct) rows.next(row);
+
+                Text stringText = (Text) OrcStructUtil.getFieldValue(row, fieldIndex);
+                if (stringText != null) {
+                    byte[] stringValue = Arrays.copyOfRange(stringText.getBytes(), 0, stringText.getLength());
+                    stringLengthSum += stringValue.length;
                 }
             }
-            realReader.close();
+            rows.close();
         }
         return stringLengthSum;
     }
@@ -465,27 +498,33 @@ public final class BenchmarkLineItemParquet
     public <K, V extends Writable> long shipInstructions(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
 
         StructField stringField = rowInspector.getStructFieldRef("shipinstruct");
         int fieldIndex = allStructFieldRefs.indexOf(stringField);
 
-        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
+        boolean[] include = new boolean[rowInspector.getAllStructFieldRefs().size() + 1];
+        include[fieldIndex + 1] = true;
 
         long stringLengthSum = 0;
         for (int i = 0; i < LOOPS; i++) {
             stringLengthSum = 0;
 
-            ParquetRecordReader<NullRecord> realReader = createParquetRecordReader(jobConf, fileSplit, "shipinstruct");
+            RecordReader rows = createRecordReader(fileSystem, fileSplit, jobConf, include);
 
-            while (realReader.nextKeyValue()) {
-                NullRecord record = realReader.getCurrentValue();
-                if (!record.isNull(0)) {
-                    stringLengthSum += record.getSlice(0).length();
+            OrcStruct row = null;
+            while (rows.hasNext()) {
+                row = (OrcStruct) rows.next(row);
+
+                Text stringText = (Text) OrcStructUtil.getFieldValue(row, fieldIndex);
+                if (stringText != null) {
+                    byte[] stringValue = Arrays.copyOfRange(stringText.getBytes(), 0, stringText.getLength());
+                    stringLengthSum += stringValue.length;
                 }
             }
-            realReader.close();
+            rows.close();
         }
         return stringLengthSum;
     }
@@ -494,27 +533,33 @@ public final class BenchmarkLineItemParquet
     public <K, V extends Writable> long shipMode(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
 
         StructField stringField = rowInspector.getStructFieldRef("shipmode");
         int fieldIndex = allStructFieldRefs.indexOf(stringField);
 
-        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
+        boolean[] include = new boolean[rowInspector.getAllStructFieldRefs().size() + 1];
+        include[fieldIndex + 1] = true;
 
         long stringLengthSum = 0;
         for (int i = 0; i < LOOPS; i++) {
             stringLengthSum = 0;
 
-            ParquetRecordReader<NullRecord> realReader = createParquetRecordReader(jobConf, fileSplit, "shipmode");
+            RecordReader rows = createRecordReader(fileSystem, fileSplit, jobConf, include);
 
-            while (realReader.nextKeyValue()) {
-                NullRecord record = realReader.getCurrentValue();
-                if (!record.isNull(0)) {
-                    stringLengthSum += record.getSlice(0).length();
+            OrcStruct row = null;
+            while (rows.hasNext()) {
+                row = (OrcStruct) rows.next(row);
+
+                Text stringText = (Text) OrcStructUtil.getFieldValue(row, fieldIndex);
+                if (stringText != null) {
+                    byte[] stringValue = Arrays.copyOfRange(stringText.getBytes(), 0, stringText.getLength());
+                    stringLengthSum += stringValue.length;
                 }
             }
-            realReader.close();
+            rows.close();
         }
         return stringLengthSum;
     }
@@ -523,27 +568,33 @@ public final class BenchmarkLineItemParquet
     public <K, V extends Writable> long comment(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
 
         StructField stringField = rowInspector.getStructFieldRef("comment");
         int fieldIndex = allStructFieldRefs.indexOf(stringField);
 
-        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(fieldIndex));
+        boolean[] include = new boolean[rowInspector.getAllStructFieldRefs().size() + 1];
+        include[fieldIndex + 1] = true;
 
         long stringLengthSum = 0;
         for (int i = 0; i < LOOPS; i++) {
             stringLengthSum = 0;
 
-            ParquetRecordReader<NullRecord> realReader = createParquetRecordReader(jobConf, fileSplit, "comment");
+            RecordReader rows = createRecordReader(fileSystem, fileSplit, jobConf, include);
 
-            while (realReader.nextKeyValue()) {
-                NullRecord record = realReader.getCurrentValue();
-                if (!record.isNull(0)) {
-                    stringLengthSum += record.getSlice(0).length();
+            OrcStruct row = null;
+            while (rows.hasNext()) {
+                row = (OrcStruct) rows.next(row);
+
+                Text stringText = (Text) OrcStructUtil.getFieldValue(row, fieldIndex);
+                if (stringText != null) {
+                    byte[] stringValue = Arrays.copyOfRange(stringText.getBytes(), 0, stringText.getLength());
+                    stringLengthSum += stringValue.length;
                 }
             }
-            realReader.close();
+            rows.close();
         }
         return stringLengthSum;
     }
@@ -552,6 +603,7 @@ public final class BenchmarkLineItemParquet
     public <K, V extends Writable> List<Object> tpchQuery1(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
 
@@ -576,14 +628,14 @@ public final class BenchmarkLineItemParquet
         StructField shipDateField = rowInspector.getStructFieldRef("shipdate");
         int shipDateFieldIndex = allStructFieldRefs.indexOf(shipDateField);
 
-        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(
-                quantityFieldIndex,
-                extendedPriceFieldIndex,
-                discountFieldIndex,
-                taxFieldIndex,
-                returnFlagFieldIndex,
-                lineStatusFieldIndex,
-                shipDateFieldIndex));
+        boolean[] include = new boolean[rowInspector.getAllStructFieldRefs().size() + 1];
+        include[quantityFieldIndex + 1] = true;
+        include[extendedPriceFieldIndex + 1] = true;
+        include[discountFieldIndex + 1] = true;
+        include[taxFieldIndex + 1] = true;
+        include[returnFlagFieldIndex + 1] = true;
+        include[lineStatusFieldIndex + 1] = true;
+        include[shipDateFieldIndex + 1] = true;
 
         double quantitySum = 0;
         double extendedPriceSum = 0;
@@ -602,47 +654,51 @@ public final class BenchmarkLineItemParquet
             lineStatusSum = 0;
             shipDateSum = 0;
 
-            ParquetRecordReader<NullRecord> realReader = createParquetRecordReader(jobConf, fileSplit, 
-                    "quantity",
-                    "extendedprice",
-                    "discount",
-                    "tax",
-                    "returnflag",
-                    "linestatus",
-                    "shipdate");
+            RecordReader rows = createRecordReader(fileSystem, fileSplit, jobConf, include);
 
-            while (realReader.nextKeyValue()) {
-                NullRecord record = realReader.getCurrentValue();
+            OrcStruct row = null;
+            while (rows.hasNext()) {
+                row = (OrcStruct) rows.next(row);
 
-                if (!record.isNull(0)) {
-                    quantitySum += record.getLong(0);
+                LongWritable quantityValue = (LongWritable) OrcStructUtil.getFieldValue(row, quantityFieldIndex);
+                if (quantityValue != null) {
+                    quantitySum += quantityValue.get();
                 }
 
-                if (!record.isNull(1)) {
-                    extendedPriceSum += record.getDouble(1);
+                DoubleWritable extendedPriceValue = (DoubleWritable) OrcStructUtil.getFieldValue(row, extendedPriceFieldIndex);
+                if (extendedPriceValue != null) {
+                    extendedPriceSum += extendedPriceValue.get();
                 }
 
-                if (!record.isNull(2)) {
-                    discountSum += record.getDouble(2);
+                DoubleWritable discountValue = (DoubleWritable) OrcStructUtil.getFieldValue(row, discountFieldIndex);
+                if (discountValue != null) {
+                    discountSum += discountValue.get();
                 }
 
-                if (!record.isNull(3)) {
-                    taxSum += record.getDouble(3);
+                DoubleWritable taxValue = (DoubleWritable) OrcStructUtil.getFieldValue(row, taxFieldIndex);
+                if (taxValue != null) {
+                    taxSum += taxValue.get();
                 }
 
-                if (!record.isNull(4)) {
-                    returnFlagSum += record.getSlice(4).length();
+                Text returnFlagText = (Text) OrcStructUtil.getFieldValue(row, returnFlagFieldIndex);
+                if (returnFlagText != null) {
+                    byte[] returnFlagValue = Arrays.copyOfRange(returnFlagText.getBytes(), 0, returnFlagText.getLength());
+                    returnFlagSum += returnFlagValue.length;
                 }
 
-                if (!record.isNull(5)) {
-                    lineStatusSum += record.getSlice(5).length();
+                Text lineStatusText = (Text) OrcStructUtil.getFieldValue(row, lineStatusFieldIndex);
+                if (lineStatusText != null) {
+                    byte[] lineStatusValue = Arrays.copyOfRange(lineStatusText.getBytes(), 0, lineStatusText.getLength());
+                    lineStatusSum += lineStatusValue.length;
                 }
 
-                if (!record.isNull(6)) {
-                    shipDateSum += record.getSlice(6).length();
+                Text shipDateText = (Text) OrcStructUtil.getFieldValue(row, shipDateFieldIndex);
+                if (shipDateText != null) {
+                    byte[] shipDateValue = Arrays.copyOfRange(shipDateText.getBytes(), 0, shipDateText.getLength());
+                    shipDateSum += shipDateValue.length;
                 }
             }
-            realReader.close();
+            rows.close();
         }
         return ImmutableList.<Object>of(quantitySum, extendedPriceSum, discountSum, taxSum, returnFlagSum, lineStatusSum, shipDateSum);
     }
@@ -651,6 +707,7 @@ public final class BenchmarkLineItemParquet
     public <K, V extends Writable> List<Object> tpchQuery6(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
 
@@ -666,11 +723,11 @@ public final class BenchmarkLineItemParquet
         StructField shipDateField = rowInspector.getStructFieldRef("shipdate");
         int shipDateFieldIndex = allStructFieldRefs.indexOf(shipDateField);
 
-        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(
-                quantityFieldIndex,
-                extendedPriceFieldIndex,
-                discountFieldIndex,
-                shipDateFieldIndex));
+        boolean[] include = new boolean[rowInspector.getAllStructFieldRefs().size() + 1];
+        include[quantityFieldIndex + 1] = true;
+        include[extendedPriceFieldIndex + 1] = true;
+        include[discountFieldIndex + 1] = true;
+        include[shipDateFieldIndex + 1] = true;
 
         double quantitySum = 0;
         double extendedPriceSum = 0;
@@ -683,28 +740,34 @@ public final class BenchmarkLineItemParquet
             discountSum = 0;
             shipDateSum = 0;
 
-            ParquetRecordReader<NullRecord> realReader = createParquetRecordReader(jobConf, fileSplit, "quantity", "extendedprice", "discount", "shipdate");
+            RecordReader rows = createRecordReader(fileSystem, fileSplit, jobConf, include);
 
-            while (realReader.nextKeyValue()) {
-                NullRecord record = realReader.getCurrentValue();
+            OrcStruct row = null;
+            while (rows.hasNext()) {
+                row = (OrcStruct) rows.next(row);
 
-                if (!record.isNull(0)) {
-                    quantitySum += record.getLong(0);
+                LongWritable quantityValue = (LongWritable) OrcStructUtil.getFieldValue(row, quantityFieldIndex);
+                if (quantityValue != null) {
+                    quantitySum += quantityValue.get();
                 }
 
-                if (!record.isNull(1)) {
-                    extendedPriceSum += record.getDouble(1);
+                DoubleWritable extendedPriceValue = (DoubleWritable) OrcStructUtil.getFieldValue(row, extendedPriceFieldIndex);
+                if (extendedPriceValue != null) {
+                    extendedPriceSum += extendedPriceValue.get();
                 }
 
-                if (!record.isNull(2)) {
-                    discountSum += record.getDouble(2);
+                DoubleWritable discountValue = (DoubleWritable) OrcStructUtil.getFieldValue(row, discountFieldIndex);
+                if (discountValue != null) {
+                    discountSum += discountValue.get();
                 }
 
-                if (!record.isNull(3)) {
-                    shipDateSum += record.getSlice(3).length();
+                Text shipDateText = (Text) OrcStructUtil.getFieldValue(row, shipDateFieldIndex);
+                if (shipDateText != null) {
+                    byte[] shipDateValue = Arrays.copyOfRange(shipDateText.getBytes(), 0, shipDateText.getLength());
+                    shipDateSum += shipDateValue.length;
                 }
             }
-            realReader.close();
+            rows.close();
         }
         return ImmutableList.<Object>of(quantitySum, extendedPriceSum, discountSum, shipDateSum);
     }
@@ -713,6 +776,7 @@ public final class BenchmarkLineItemParquet
     public <K, V extends Writable> List<Object> all(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
 
@@ -764,23 +828,23 @@ public final class BenchmarkLineItemParquet
         StructField commentField = rowInspector.getStructFieldRef("comment");
         int commentFieldIndex = allStructFieldRefs.indexOf(commentField);
 
-        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(
-                orderKeyFieldIndex,
-                partKeyFieldIndex,
-                supplierKeyFieldIndex,
-                lineNumberFieldIndex,
-                quantityFieldIndex,
-                extendedPriceFieldIndex,
-                discountFieldIndex,
-                taxFieldIndex,
-                returnFlagFieldIndex,
-                lineStatusFieldIndex,
-                shipDateFieldIndex,
-                commitDateFieldIndex,
-                receiptDateFieldIndex,
-                shipInstructionsFieldIndex,
-                shipModeFieldIndex,
-                commentFieldIndex));
+        boolean[] include = new boolean[rowInspector.getAllStructFieldRefs().size() + 1];
+        include[orderKeyFieldIndex + 1] = true;
+        include[partKeyFieldIndex + 1] = true;
+        include[supplierKeyFieldIndex + 1] = true;
+        include[lineNumberFieldIndex + 1] = true;
+        include[quantityFieldIndex + 1] = true;
+        include[extendedPriceFieldIndex + 1] = true;
+        include[discountFieldIndex + 1] = true;
+        include[taxFieldIndex + 1] = true;
+        include[returnFlagFieldIndex + 1] = true;
+        include[lineStatusFieldIndex + 1] = true;
+        include[shipDateFieldIndex + 1] = true;
+        include[commitDateFieldIndex + 1] = true;
+        include[receiptDateFieldIndex + 1] = true;
+        include[shipInstructionsFieldIndex + 1] = true;
+        include[shipModeFieldIndex + 1] = true;
+        include[commentFieldIndex + 1] = true;
 
         long orderKeySum = 0;
         long partKeySum = 0;
@@ -817,92 +881,101 @@ public final class BenchmarkLineItemParquet
             shipModeSum = 0;
             commentSum = 0;
 
-            ParquetRecordReader<NullRecord> realReader = createParquetRecordReader(jobConf, fileSplit, 
-                    "orderkey",
-                    "partkey",
-                    "suppkey",
-                    "linenumber",
-                    "quantity",
-                    "extendedprice",
-                    "discount",
-                    "tax",
-                    "returnflag",
-                    "linestatus",
-                    "shipdate",
-                    "commitdate",
-                    "receiptdate",
-                    "shipinstruct",
-                    "shipmode",
-                    "comment");
+            RecordReader rows = createRecordReader(fileSystem, fileSplit, jobConf, include);
 
-            while (realReader.nextKeyValue()) {
-                NullRecord record = realReader.getCurrentValue();
+            OrcStruct row = null;
+            while (rows.hasNext()) {
+                row = (OrcStruct) rows.next(row);
 
-                if (!record.isNull(0)) {
-                    orderKeySum += record.getLong(0);
+                LongWritable orderKeyValue = (LongWritable) OrcStructUtil.getFieldValue(row, orderKeyFieldIndex);
+                if (orderKeyValue != null) {
+                    orderKeySum += orderKeyValue.get();
                 }
 
-                if (!record.isNull(1)) {
-                    partKeySum += record.getLong(1);
+                LongWritable partKeyValue = (LongWritable) OrcStructUtil.getFieldValue(row, partKeyFieldIndex);
+                if (partKeyValue != null) {
+                    partKeySum += partKeyValue.get();
                 }
 
-                if (!record.isNull(2)) {
-                    supplierKeySum += record.getLong(2);
+                LongWritable supplierKeyValue = (LongWritable) OrcStructUtil.getFieldValue(row, supplierKeyFieldIndex);
+                if (supplierKeyValue != null) {
+                    supplierKeySum += supplierKeyValue.get();
                 }
 
-                if (!record.isNull(3)) {
-                    lineNumberSum += record.getLong(3);
+                LongWritable lineNumberValue = (LongWritable) OrcStructUtil.getFieldValue(row, lineNumberFieldIndex);
+                if (lineNumberValue != null) {
+                    lineNumberSum += lineNumberValue.get();
                 }
 
-                if (!record.isNull(4)) {
-                    quantitySum += record.getLong(4);
+                LongWritable quantityValue = (LongWritable) OrcStructUtil.getFieldValue(row, quantityFieldIndex);
+                if (quantityValue != null) {
+                    quantitySum += quantityValue.get();
                 }
 
-                if (!record.isNull(5)) {
-                    extendedPriceSum += record.getDouble(5);
+                DoubleWritable extendedPriceValue = (DoubleWritable) OrcStructUtil.getFieldValue(row, extendedPriceFieldIndex);
+                if (extendedPriceValue != null) {
+                    extendedPriceSum += extendedPriceValue.get();
                 }
 
-                if (!record.isNull(6)) {
-                    discountSum += record.getDouble(6);
+                DoubleWritable discountValue = (DoubleWritable) OrcStructUtil.getFieldValue(row, discountFieldIndex);
+                if (discountValue != null) {
+                    discountSum += discountValue.get();
                 }
 
-                if (!record.isNull(7)) {
-                    taxSum += record.getDouble(7);
+                DoubleWritable taxValue = (DoubleWritable) OrcStructUtil.getFieldValue(row, taxFieldIndex);
+                if (taxValue != null) {
+                    taxSum += taxValue.get();
                 }
 
-                if (!record.isNull(8)) {
-                    returnFlagSum += record.getSlice(8).length();
+                Text returnFlagText = (Text) OrcStructUtil.getFieldValue(row, returnFlagFieldIndex);
+                if (returnFlagText != null) {
+                    byte[] returnFlagValue = Arrays.copyOfRange(returnFlagText.getBytes(), 0, returnFlagText.getLength());
+                    returnFlagSum += returnFlagValue.length;
                 }
 
-                if (!record.isNull(9)) {
-                    lineStatusSum += record.getSlice(9).length();
+                Text lineStatusText = (Text) OrcStructUtil.getFieldValue(row, lineStatusFieldIndex);
+                if (lineStatusText != null) {
+                    byte[] lineStatusValue = Arrays.copyOfRange(lineStatusText.getBytes(), 0, lineStatusText.getLength());
+                    lineStatusSum += lineStatusValue.length;
                 }
 
-                if (!record.isNull(10)) {
-                    shipDateSum += record.getSlice(10).length();
+                Text shipDateText = (Text) OrcStructUtil.getFieldValue(row, shipDateFieldIndex);
+                if (shipDateText != null) {
+                    byte[] shipDateValue = Arrays.copyOfRange(shipDateText.getBytes(), 0, shipDateText.getLength());
+                    shipDateSum += shipDateValue.length;
                 }
 
-                if (!record.isNull(11)) {
-                    commitDateSum += record.getSlice(11).length();
+                Text commitDateText = (Text) OrcStructUtil.getFieldValue(row, commitDateFieldIndex);
+                if (commitDateText != null) {
+                    byte[] commitDateValue = Arrays.copyOfRange(commitDateText.getBytes(), 0, commitDateText.getLength());
+                    commitDateSum += commitDateValue.length;
                 }
 
-                if (!record.isNull(12)) {
-                    receiptDateSum += record.getSlice(12).length();
+                Text receiptDateText = (Text) OrcStructUtil.getFieldValue(row, receiptDateFieldIndex);
+                if (receiptDateText != null) {
+                    byte[] receiptDateValue = Arrays.copyOfRange(receiptDateText.getBytes(), 0, receiptDateText.getLength());
+                    receiptDateSum += receiptDateValue.length;
                 }
 
-                if (!record.isNull(13)) {
-                    shipInstructionsSum += record.getSlice(13).length();
+                Text shipInstructionsText = (Text) OrcStructUtil.getFieldValue(row, shipInstructionsFieldIndex);
+                if (shipInstructionsText != null) {
+                    byte[] shipInstructionsValue = Arrays.copyOfRange(shipInstructionsText.getBytes(), 0, shipInstructionsText.getLength());
+                    shipInstructionsSum += shipInstructionsValue.length;
                 }
 
-                if (!record.isNull(14)) {
-                    shipModeSum += record.getSlice(14).length();
+                Text shipModeText = (Text) OrcStructUtil.getFieldValue(row, shipModeFieldIndex);
+                if (shipModeText != null) {
+                    byte[] shipModeValue = Arrays.copyOfRange(shipModeText.getBytes(), 0, shipModeText.getLength());
+                    shipModeSum += shipModeValue.length;
                 }
 
-                if (!record.isNull(15)) {
-                    commentSum += record.getSlice(15).length();
+                Text commentText = (Text) OrcStructUtil.getFieldValue(row, commentFieldIndex);
+                if (commentText != null) {
+                    byte[] commentValue = Arrays.copyOfRange(commentText.getBytes(), 0, commentText.getLength());
+                    commentSum += commentValue.length;
                 }
             }
-            realReader.close();
+            rows.close();
         }
 
         return ImmutableList.<Object>of(
@@ -928,6 +1001,7 @@ public final class BenchmarkLineItemParquet
     public <K, V extends Writable> List<Object> allReadOne(JobConf jobConf, FileSplit fileSplit, InputFormat<K, V> inputFormat, Deserializer deserializer)
             throws Exception
     {
+        FileSystem fileSystem = fileSplit.getPath().getFileSystem(jobConf);
         StructObjectInspector rowInspector = (StructObjectInspector) deserializer.getObjectInspector();
         List<StructField> allStructFieldRefs = ImmutableList.copyOf(rowInspector.getAllStructFieldRefs());
 
@@ -979,341 +1053,52 @@ public final class BenchmarkLineItemParquet
         StructField commentField = rowInspector.getStructFieldRef("comment");
         int commentFieldIndex = allStructFieldRefs.indexOf(commentField);
 
-        ColumnProjectionUtils.setReadColumnIDs(jobConf, ImmutableList.of(
-                orderKeyFieldIndex,
-                partKeyFieldIndex,
-                supplierKeyFieldIndex,
-                lineNumberFieldIndex,
-                quantityFieldIndex,
-                extendedPriceFieldIndex,
-                discountFieldIndex,
-                taxFieldIndex,
-                returnFlagFieldIndex,
-                lineStatusFieldIndex,
-                shipDateFieldIndex,
-                commitDateFieldIndex,
-                receiptDateFieldIndex,
-                shipInstructionsFieldIndex,
-                shipModeFieldIndex,
-                commentFieldIndex));
+        boolean[] include = new boolean[rowInspector.getAllStructFieldRefs().size() + 1];
+        include[orderKeyFieldIndex + 1] = true;
+        include[partKeyFieldIndex + 1] = true;
+        include[supplierKeyFieldIndex + 1] = true;
+        include[lineNumberFieldIndex + 1] = true;
+        include[quantityFieldIndex + 1] = true;
+        include[extendedPriceFieldIndex + 1] = true;
+        include[discountFieldIndex + 1] = true;
+        include[taxFieldIndex + 1] = true;
+        include[returnFlagFieldIndex + 1] = true;
+        include[lineStatusFieldIndex + 1] = true;
+        include[shipDateFieldIndex + 1] = true;
+        include[commitDateFieldIndex + 1] = true;
+        include[receiptDateFieldIndex + 1] = true;
+        include[shipInstructionsFieldIndex + 1] = true;
+        include[shipModeFieldIndex + 1] = true;
+        include[commentFieldIndex + 1] = true;
 
         long orderKeySum = 0;
 
         for (int i = 0; i < LOOPS; i++) {
             orderKeySum = 0;
 
-            ParquetRecordReader<NullRecord> realReader = createParquetRecordReader(jobConf, fileSplit,
-                    "orderkey",
-                    "partkey",
-                    "suppkey",
-                    "linenumber",
-                    "quantity",
-                    "extendedprice",
-                    "discount",
-                    "tax",
-                    "returnflag",
-                    "linestatus",
-                    "shipdate",
-                    "commitdate",
-                    "receiptdate",
-                    "shipinstruct",
-                    "shipmode",
-                    "comment");
+            RecordReader rows = createRecordReader(fileSystem, fileSplit, jobConf, include);
 
-            while (realReader.nextKeyValue()) {
-                NullRecord record = realReader.getCurrentValue();
+            OrcStruct row = null;
+            while (rows.hasNext()) {
+                row = (OrcStruct) rows.next(row);
 
-                if (!record.isNull(0)) {
-                    orderKeySum += record.getLong(0);
+                LongWritable orderKeyValue = (LongWritable) OrcStructUtil.getFieldValue(row, orderKeyFieldIndex);
+                if (orderKeyValue != null) {
+                    orderKeySum += orderKeyValue.get();
                 }
+
             }
-            realReader.close();
+            rows.close();
         }
 
         return ImmutableList.<Object>of(orderKeySum);
     }
 
-    private <T> ParquetRecordReader<T> createParquetRecordReader(JobConf jobConf, FileSplit fileSplit, String columnName, String... additionalColumnNames)
-            throws IOException, InterruptedException
+    private static RecordReader createRecordReader(FileSystem fileSystem, FileSplit fileSplit, JobConf jobConf, boolean[] include)
+            throws IOException
     {
-        ReadSupport readSupport = new PrestoReadSupport(columnName, additionalColumnNames);
+        Reader reader = OrcFile.createReader(fileSystem, fileSplit.getPath());
 
-//        conf = projectionPusher.pushProjectionsAndFilters(conf, oldSplit.getPath().getParent());
-
-        ParquetMetadata parquetMetadata = ParquetFileReader.readFooter(jobConf, fileSplit.getPath());
-        List<BlockMetaData> blocks = parquetMetadata.getBlocks();
-        FileMetaData fileMetaData = parquetMetadata.getFileMetaData();
-
-        ReadContext readContext = readSupport.init(jobConf, fileMetaData.getKeyValueMetaData(), fileMetaData.getSchema());
-
-//        int schemaSize = MessageTypeParser.parseMessageType(readContext.getReadSupportMetadata()
-//                .get(DataWritableReadSupport.HIVE_SCHEMA_KEY)).getFieldCount();
-
-        List<BlockMetaData> splitGroup = new ArrayList<>();
-        long splitStart = fileSplit.getStart();
-        long splitLength = fileSplit.getLength();
-        for (BlockMetaData block : blocks) {
-            long firstDataPage = block.getColumns().get(0).getFirstDataPageOffset();
-            if (firstDataPage >= splitStart && firstDataPage < splitStart + splitLength) {
-                splitGroup.add(block);
-            }
-        }
-
-        ParquetInputSplit split;
-        if (splitGroup.isEmpty()) {
-            // LOG.warn("Skipping split, could not find row group in: " + (FileSplit) oldSplit);
-            split = null;
-        }
-        else {
-            split = new ParquetInputSplit(fileSplit.getPath(),
-                    splitStart,
-                    splitLength,
-                    fileSplit.getLocations(),
-                    splitGroup,
-                    readContext.getRequestedSchema().toString(),
-                    fileMetaData.getSchema().toString(),
-                    fileMetaData.getKeyValueMetaData(),
-                    readContext.getReadSupportMetadata());
-        }
-
-        TaskAttemptContext taskContext = ContextUtil.newTaskAttemptContext(jobConf, new TaskAttemptID());
-        ParquetRecordReader<T> realReader = new ParquetRecordReader<T>(readSupport);
-        realReader.initialize(split, taskContext);
-        return realReader;
-    }
-
-    public static class PrestoReadSupport
-            extends ReadSupport<NullRecord>
-    {
-        private final List<String> columnNames;
-
-        public PrestoReadSupport(String columnName, String... additionalColumnNames)
-        {
-            this(ImmutableList.<String>builder().add(columnName).add(additionalColumnNames).build());
-        }
-
-        public PrestoReadSupport(List<String> columnNames)
-        {
-            this.columnNames = columnNames;
-        }
-
-        @Override
-        public ReadContext init(
-                Configuration configuration,
-                Map<String, String> keyValueMetaData,
-                MessageType fileSchema)
-        {
-            ImmutableList.Builder<Type> fields = ImmutableList.builder();
-            for (String columnName : columnNames) {
-                fields.add(fileSchema.getType(columnName));
-            }
-            MessageType requestedProjection = new MessageType(fileSchema.getName(), fields.build());
-            return new ReadContext(requestedProjection);
-        }
-
-        @Override
-        public RecordMaterializer<NullRecord> prepareForRead(
-                Configuration configuration,
-                Map<String, String> keyValueMetaData,
-                MessageType fileSchema,
-                ReadContext readContext)
-        {
-            return new NullRecordConverter(readContext.getRequestedSchema());
-        }
-    }
-
-    public static class NullRecordConverter
-            extends RecordMaterializer<NullRecord>
-    {
-        private final NullRecord record;
-        private final GroupConverter groupConverter;
-
-        public NullRecordConverter(MessageType schema)
-        {
-            record = new NullRecord(schema.getFieldCount());
-            groupConverter = new NullGroupConverter(record);
-        }
-
-        @Override
-        public NullRecord getCurrentRecord()
-        {
-            return record;
-        }
-
-        @Override
-        public GroupConverter getRootConverter()
-        {
-            return groupConverter;
-        }
-    }
-
-    public static class NullGroupConverter
-        extends GroupConverter
-    {
-        private final NullRecord record;
-        private final Converter[] converters;
-
-        public NullGroupConverter(NullRecord record)
-        {
-            this.record = record;
-            this.converters = new Converter[record.getFieldCount()];
-
-            for (int fieldIndex = 0; fieldIndex < record.getFieldCount(); fieldIndex++) {
-                this.converters[fieldIndex] = new NullPrimitiveConverter(record, fieldIndex);
-            }
-        }
-
-        @Override
-        public Converter getConverter(int fieldIndex)
-        {
-            return converters[fieldIndex];
-        }
-
-        @Override
-        public void start()
-        {
-            record.reset();
-        }
-
-        @Override
-        public void end()
-        {
-        }
-    }
-
-    @SuppressWarnings("AccessingNonPublicFieldOfAnotherObject")
-    private static class NullPrimitiveConverter
-            extends PrimitiveConverter
-    {
-        private final NullRecord record;
-        private final int fieldIndex;
-
-        private NullPrimitiveConverter(NullRecord record, int fieldIndex)
-        {
-            this.record = record;
-            this.fieldIndex = fieldIndex;
-        }
-
-        @Override
-        public boolean isPrimitive()
-        {
-            return true;
-        }
-
-        @Override
-        public PrimitiveConverter asPrimitiveConverter()
-        {
-            return this;
-        }
-
-        @Override
-        public boolean hasDictionarySupport()
-        {
-            return false;
-        }
-
-        @Override
-        public void setDictionary(Dictionary dictionary)
-        {
-        }
-
-        @Override
-        public void addValueFromDictionary(int dictionaryId)
-        {
-        }
-
-        @Override
-        public void addBoolean(boolean value)
-        {
-            record.isNull[fieldIndex] = false;
-            record.booleanValue[fieldIndex] = value;
-        }
-
-        @Override
-        public void addDouble(double value)
-        {
-            record.isNull[fieldIndex] = false;
-            record.doubleValue[fieldIndex] = value;
-        }
-
-        @Override
-        public void addLong(long value)
-        {
-            record.isNull[fieldIndex] = false;
-            record.longValue[fieldIndex] = value;
-        }
-
-        @Override
-        public void addBinary(Binary value)
-        {
-            record.isNull[fieldIndex] = false;
-            record.sliceValue[fieldIndex] = Slices.wrappedBuffer(value.getBytes());
-        }
-
-        @Override
-        public void addFloat(float value)
-        {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void addInt(int value)
-        {
-            throw new UnsupportedOperationException();
-        }
-    }
-
-    private static final class NullRecord
-    {
-        private final boolean[] isNull;
-        private final boolean[] booleanValue;
-        private final long[] longValue;
-        private final double[] doubleValue;
-        private final Slice[] sliceValue;
-
-        private NullRecord(int fieldCount)
-        {
-            isNull = new boolean[fieldCount];
-            booleanValue = new boolean[fieldCount];
-            longValue = new long[fieldCount];
-            doubleValue = new double[fieldCount];
-            sliceValue = new Slice[fieldCount];
-            reset();
-        }
-
-        public int getFieldCount()
-        {
-            return isNull.length;
-        }
-
-        public boolean isNull(int field)
-        {
-            return isNull[field];
-        }
-
-        public boolean getBoolean(int field)
-        {
-            return booleanValue[field];
-        }
-
-        public long getLong(int field)
-        {
-            return longValue[field];
-        }
-
-        public double getDouble(int field)
-        {
-            return doubleValue[field];
-        }
-
-        public Slice getSlice(int field)
-        {
-            return sliceValue[field];
-        }
-
-        private void reset()
-        {
-            Arrays.fill(isNull, true);
-        }
+        return reader.rows(fileSplit.getStart(), fileSplit.getLength(), include);
     }
 }
