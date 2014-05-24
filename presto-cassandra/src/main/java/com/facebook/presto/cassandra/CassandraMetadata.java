@@ -221,7 +221,15 @@ public class CassandraMetadata
     @Override
     public void dropTable(ConnectorTableHandle tableHandle)
     {
-        throw new UnsupportedOperationException();
+        checkArgument(tableHandle instanceof CassandraTableHandle, "tableHandle is not an instance of CassandraTableHandle");
+
+        CassandraTableHandle cassandraTableHandle = (CassandraTableHandle) tableHandle;
+        String schemaName = cassandraTableHandle.getSchemaName();
+        String tableName = cassandraTableHandle.getTableName();
+
+        StringBuilder queryBuilder = new StringBuilder(String.format("DROP TABLE \"%s\".\"%s\"", schemaName, tableName));
+        cassandraSession.executeQuery(queryBuilder.toString());
+        schemaProvider.flushTable(cassandraTableHandle.getSchemaTableName());
     }
 
     @Override
