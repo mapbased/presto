@@ -15,6 +15,7 @@ package com.facebook.presto.tests;
 
 import com.facebook.presto.index.IndexManager;
 import com.facebook.presto.metadata.MetadataManager;
+import com.facebook.presto.metadata.QualifiedTableName;
 import com.facebook.presto.spi.ConnectorSession;
 import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.split.SplitManager;
@@ -39,6 +40,7 @@ import org.testng.annotations.AfterClass;
 
 import java.util.List;
 
+import static com.facebook.presto.util.Types.checkType;
 import static java.lang.String.format;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertNotNull;
@@ -46,6 +48,8 @@ import static org.testng.Assert.fail;
 
 public abstract class AbstractTestQueryFramework
 {
+    private static final Logger log = Logger.get("TestQueries");
+
     private final H2QueryRunner h2QueryRunner;
     protected final QueryRunner queryRunner;
 
@@ -111,8 +115,6 @@ public abstract class AbstractTestQueryFramework
     {
         assertQuery(sql, "SELECT true");
     }
-
-    private static final Logger log = Logger.get(AbstractTestQueries.class);
 
     public void assertQuery(@Language("SQL") String actual, @Language("SQL") String expected, boolean ensureOrdering)
             throws Exception
@@ -185,5 +187,19 @@ public abstract class AbstractTestQueryFramework
         FeaturesConfig featuresConfig = new FeaturesConfig().setExperimentalSyntaxEnabled(true);
         List<PlanOptimizer> optimizers = new PlanOptimizersFactory(metadata, new SplitManager(), new IndexManager(), featuresConfig).get();
         return new QueryExplainer(queryRunner.getDefaultSession(), optimizers, metadata, featuresConfig.isExperimentalSyntaxEnabled());
+    }
+
+    public static void copyAllTables(QueryRunner queryRunner, String sourceCatalog, String sourceSchema, ConnectorSession session)
+            throws Exception
+    {
+        for (QualifiedTableName table : queryRunner.listTables(session, sourceCatalog, sourceSchema)) {
+            if (table.getTableName().equalsIgnoreCase("dual")) {
+                continue;
+            }
+            log.info("Running import for %s", table.getTableName());
+            @Language("SQL") String sql = format("CREATE TABLE %s AS SELECT * FROM %s", table.getTableName(), table);
+            long rows = checkType(queryRunner.execute(session, sql).getMaterializedRows().get(0).getField(0), Long.class, "rows");
+            log.info("Imported %s rows for %s", rows, table.getTableName());
+        }
     }
 }
