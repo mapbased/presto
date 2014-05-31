@@ -52,7 +52,7 @@ import java.util.Set;
 import java.util.Stack;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Executors;
+import java.util.concurrent.ExecutorService;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
@@ -62,26 +62,29 @@ import static com.google.common.base.Predicates.not;
 public class CassandraSplitManager
         implements ConnectorSplitManager
 {
-    private static final Logger log = Logger.get(ConnectorSplitManager.class);
+    private static final Logger log = Logger.get(CassandraSplitManager.class);
 
     private final String connectorId;
     private final CassandraSession cassandraSession;
     private final CachingCassandraSchemaProvider schemaProvider;
     private final int partitionSizeForBatchSelect;
     private final CassandraTokenSplitManager tokenSplitMgr;
+    private final ListeningExecutorService executor;
 
     @Inject
     public CassandraSplitManager(CassandraConnectorId connectorId,
             CassandraClientConfig cassandraClientConfig,
             CassandraSession cassandraSession,
             CachingCassandraSchemaProvider schemaProvider,
-            CassandraTokenSplitManager tokenSplitMgr)
+            CassandraTokenSplitManager tokenSplitMgr,
+            @ForCassandraSchema ExecutorService executor)
     {
         this.connectorId = checkNotNull(connectorId, "connectorId is null").toString();
         this.schemaProvider = checkNotNull(schemaProvider, "schemaProvider is null");
         this.cassandraSession = checkNotNull(cassandraSession, "cassandraSession is null");
         this.partitionSizeForBatchSelect = cassandraClientConfig.getPartitionSizeForBatchSelect();
         this.tokenSplitMgr = tokenSplitMgr;
+        this.executor = MoreExecutors.listeningDecorator(checkNotNull(executor, "executor is null"));
     }
 
     @Override
@@ -215,12 +218,11 @@ public class CassandraSplitManager
         }
 
         List<CassandraPartition> allPartitions = new ArrayList<>();
-        ListeningExecutorService service = MoreExecutors.listeningDecorator(Executors.newFixedThreadPool(10));
         List<ListenableFuture<List<CassandraPartition>>> getPartitionResults = Lists.newArrayList();
         final CassandraTable cassandraTable = table;
         while (!stack.isEmpty()) {
             final List<Comparable<?>> filter = stack.pop();
-            getPartitionResults.add(service.submit(new Callable<List<CassandraPartition>>()
+            getPartitionResults.add(executor.submit(new Callable<List<CassandraPartition>>()
                     {
                         @Override
                         public List<CassandraPartition> call()

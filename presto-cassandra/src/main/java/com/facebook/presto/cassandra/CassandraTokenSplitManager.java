@@ -34,10 +34,7 @@ import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
-import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadLocalRandom;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
@@ -48,9 +45,10 @@ public class CassandraTokenSplitManager
     private final Cassandra.Client client;
     private final int splitSize;
     private final IPartitioner<?> partitioner;
+    private final ExecutorService executor;
 
     @Inject
-    public CassandraTokenSplitManager(Cassandra.Client client, CassandraClientConfig config)
+    public CassandraTokenSplitManager(Cassandra.Client client, CassandraClientConfig config, @ForCassandraSchema ExecutorService executor)
     {
         this.client = client;
         this.splitSize = config.getSplitSize();
@@ -60,6 +58,7 @@ public class CassandraTokenSplitManager
         catch (ConfigurationException e) {
             throw new RuntimeException(e);
         }
+        this.executor = executor;
     }
 
     public List<TokenSplit> getSplits(String keyspace, String columnFamily)
@@ -68,27 +67,21 @@ public class CassandraTokenSplitManager
         List<TokenRange> masterRangeNodes = getRangeMap(keyspace, client);
 
         // canonical ranges, split into pieces, fetching the splits in parallel
-        ExecutorService executor = new ThreadPoolExecutor(0, 128, 60L, TimeUnit.SECONDS, new LinkedBlockingQueue<Runnable>());
         List<TokenSplit> splits = new ArrayList<>();
-        try {
-            List<Future<List<TokenSplit>>> splitFutures = new ArrayList<>();
-            for (TokenRange range : masterRangeNodes) {
-                // for each range, pick a live owner and ask it to compute bite-sized splits
-                splitFutures.add(executor.submit(new SplitCallable<>(range, keyspace, columnFamily, splitSize, client, partitioner)));
-            }
-
-            // wait until we have all the results back
-            for (Future<List<TokenSplit>> futureInputSplits : splitFutures) {
-                try {
-                    splits.addAll(futureInputSplits.get());
-                }
-                catch (Exception e) {
-                    throw new IOException("Could not get input splits", e);
-                }
-            }
+        List<Future<List<TokenSplit>>> splitFutures = new ArrayList<>();
+        for (TokenRange range : masterRangeNodes) {
+            // for each range, pick a live owner and ask it to compute bite-sized splits
+            splitFutures.add(executor.submit(new SplitCallable<>(range, keyspace, columnFamily, splitSize, client, partitioner)));
         }
-        finally {
-            executor.shutdownNow();
+
+        // wait until we have all the results back
+        for (Future<List<TokenSplit>> futureInputSplits : splitFutures) {
+            try {
+                splits.addAll(futureInputSplits.get());
+            }
+            catch (Exception e) {
+                throw new IOException("Could not get input splits", e);
+            }
         }
 
         checkState(!splits.isEmpty(), "No splits created");

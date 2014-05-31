@@ -30,6 +30,7 @@ import com.google.common.base.Objects;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.inject.Inject;
+import io.airlift.json.JsonCodec;
 
 import java.util.Collection;
 import java.util.List;
@@ -37,26 +38,31 @@ import java.util.Map;
 
 import static com.facebook.presto.cassandra.CassandraColumnHandle.SAMPLE_WEIGHT_COLUMN_NAME;
 import static com.facebook.presto.cassandra.CassandraColumnHandle.columnMetadataGetter;
+import static com.facebook.presto.cassandra.CassandraType.BIGINT;
 import static com.facebook.presto.cassandra.CassandraType.toCassandraType;
-import static com.facebook.presto.spi.type.BigintType.BIGINT;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Strings.isNullOrEmpty;
 import static com.google.common.collect.Iterables.transform;
 
 public class CassandraMetadata
-    implements ConnectorMetadata
+        implements ConnectorMetadata
 {
     private final String connectorId;
     private final CachingCassandraSchemaProvider schemaProvider;
     private final CassandraSession cassandraSession;
+    private final JsonCodec<List<ExtraColumnMetadata>> extraColumnMetadataCodec;
 
     @Inject
-    public CassandraMetadata(CassandraConnectorId connectorId, CachingCassandraSchemaProvider schemaProvider, CassandraSession cassandraSession)
+    public CassandraMetadata(CassandraConnectorId connectorId,
+            CachingCassandraSchemaProvider schemaProvider,
+            CassandraSession cassandraSession,
+            JsonCodec<List<ExtraColumnMetadata>> extraColumnMetadataCodec)
     {
         this.connectorId = checkNotNull(connectorId, "connectorId is null").toString();
         this.schemaProvider = checkNotNull(schemaProvider, "schemaProvider is null");
         this.cassandraSession = checkNotNull(cassandraSession, "cassandraSession is null");
+        this.extraColumnMetadataCodec = checkNotNull(extraColumnMetadataCodec, "extraColumnMetadataCodec is null");
     }
 
     @Override
@@ -131,19 +137,13 @@ public class CassandraMetadata
     {
         checkNotNull(tableHandle, "tableHandle is null");
         checkNotNull(columnName, "columnName is null");
-        return getColumnHandles(tableHandle).get(columnName);
+        return getColumnHandles(tableHandle, false).get(columnName);
     }
 
     @Override
     public ConnectorColumnHandle getSampleWeightColumnHandle(ConnectorTableHandle tableHandle)
     {
-        for (ConnectorColumnHandle handle : getColumnHandles(tableHandle, true).values()) {
-            CassandraColumnHandle columnHandle = (CassandraColumnHandle) handle;
-            if (columnHandle.getName().equals(SAMPLE_WEIGHT_COLUMN_NAME)) {
-                return columnHandle;
-            }
-        }
-        return null;
+        return getColumnHandles(tableHandle, true).get(SAMPLE_WEIGHT_COLUMN_NAME);
     }
 
     @Override
@@ -239,13 +239,12 @@ public class CassandraMetadata
 
         ImmutableList.Builder<String> columnNames = ImmutableList.builder();
         ImmutableList.Builder<Type> columnTypes = ImmutableList.builder();
+        ImmutableList.Builder<ExtraColumnMetadata> columnExtra = ImmutableList.builder();
+        columnExtra.add(new ExtraColumnMetadata("id", true));
         for (ColumnMetadata column : tableMetadata.getColumns()) {
             columnNames.add(column.getName());
             columnTypes.add(column.getType());
-        }
-        if (tableMetadata.isSampled()) {
-            columnNames.add(SAMPLE_WEIGHT_COLUMN_NAME);
-            columnTypes.add(BIGINT);
+            columnExtra.add(new ExtraColumnMetadata(column.getName(), column.isHidden()));
         }
 
         // get the root directory for the database
@@ -255,17 +254,23 @@ public class CassandraMetadata
         List<String> columns = columnNames.build();
         List<Type> types = columnTypes.build();
         StringBuilder queryBuilder = new StringBuilder(String.format("CREATE TABLE \"%s\".\"%s\"(id uuid primary key", schemaName, tableName));
+        if (tableMetadata.isSampled()) {
+            queryBuilder.append(", ").append(SAMPLE_WEIGHT_COLUMN_NAME).append(" ").append(BIGINT.name().toLowerCase());
+            columnExtra.add(new ExtraColumnMetadata(SAMPLE_WEIGHT_COLUMN_NAME, true));
+        }
         for (int i = 0; i < columns.size(); i++) {
             String name = columns.get(i);
             Type type = types.get(i);
-            if (!name.equals(SAMPLE_WEIGHT_COLUMN_NAME)) {
-                queryBuilder.append(", ")
-                            .append(name)
-                            .append(" ")
-                            .append(toCassandraType(type).name().toLowerCase());
-            }
+            queryBuilder.append(", ")
+                    .append(name)
+                    .append(" ")
+                    .append(toCassandraType(type).name().toLowerCase());
         }
-        queryBuilder.append(")");
+        queryBuilder.append(") ");
+
+        // encode column ordering in the cassandra table comment field since there is no better place to store this
+        String columnMetadata = extraColumnMetadataCodec.toJson(columnExtra.build());
+        queryBuilder.append("WITH comment='").append(CassandraSession.PRESTO_COMMENT_METADATA).append(" ").append(columnMetadata).append("'");
 
         // We need create Cassandra table before commit because record need to be written to the table .
         cassandraSession.executeQuery(queryBuilder.toString());
@@ -275,6 +280,7 @@ public class CassandraMetadata
                 tableName,
                 columnNames.build(),
                 columnTypes.build(),
+                tableMetadata.isSampled(),
                 tableMetadata.getOwner());
     }
 
