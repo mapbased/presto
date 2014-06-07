@@ -204,6 +204,12 @@
 
             <dependency>
                 <groupId>io.airlift</groupId>
+                <artifactId>slice</artifactId>
+                <version>0.6-SNAPSHOT</version>
+            </dependency>
+
+            <dependency>
+                <groupId>io.airlift</groupId>
                 <artifactId>log</artifactId>
                 <version>${dep.airlift.version}</version>
             </dependency>
