@@ -105,8 +105,8 @@ public class HiveRecordSet
                     split.getSchema(),
                     columns,
                     split.getPartitionKeys(),
-                    timeZone
-            );
+                    split.getTupleDomain(),
+                    timeZone);
             if (cursor.isPresent()) {
                 return cursor.get();
             }
