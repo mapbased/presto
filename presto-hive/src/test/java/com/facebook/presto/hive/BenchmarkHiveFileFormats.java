@@ -20,9 +20,6 @@ import com.facebook.presto.spi.TupleDomain;
 import com.google.common.base.Function;
 import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
-import io.airlift.log.Logging;
-import io.airlift.log.LoggingConfiguration;
-import io.airlift.log.LoggingMBean;
 import io.airlift.tpch.LineItem;
 import io.airlift.tpch.LineItemColumn;
 import io.airlift.tpch.LineItemGenerator;
@@ -58,11 +55,9 @@ import org.apache.hadoop.mapred.InputFormat;
 import org.apache.hadoop.mapred.JobConf;
 import org.apache.hadoop.util.Progressable;
 import org.joda.time.DateTimeZone;
-import parquet.Log;
 
 import java.io.File;
 import java.io.IOException;
-import java.io.PrintStream;
 import java.util.List;
 import java.util.Locale;
 import java.util.Properties;
@@ -70,7 +65,6 @@ import java.util.Properties;
 import static com.facebook.presto.hive.HiveColumnHandle.hiveColumnIndexGetter;
 import static com.facebook.presto.spi.type.TimeZoneKey.UTC_KEY;
 import static com.google.common.collect.Lists.transform;
-import static com.google.common.io.ByteStreams.nullOutputStream;
 import static io.airlift.tpch.LineItemColumn.DISCOUNT;
 import static io.airlift.tpch.LineItemColumn.EXTENDED_PRICE;
 import static io.airlift.tpch.LineItemColumn.ORDER_KEY;
@@ -148,7 +142,8 @@ public final class BenchmarkHiveFileFormats
                         new org.apache.hadoop.hive.ql.io.orc.OrcSerde(),
                         null,
 //                        new GenericHiveRecordCursorProvider()),  // orc needs special splits
-                        new OrcRecordCursorProvider()),
+                        new OrcRecordCursorProvider(),
+                        new OrcVectorRecordCursorProvider()),
 
                 new BenchmarkFile(
                         "rc binary gzip",
@@ -717,8 +712,8 @@ public final class BenchmarkHiveFileFormats
             throws Exception
     {
         FSRecordWriter recordWriter = createRecordWriter(columns, outputFile, outputFormat, compressionCodec);
-        SettableStructObjectInspector objectInspector = getStandardStructObjectInspector(transform(columns, columnNameGetter()), transform(columns, objectInspectorGetter()));
 
+        SettableStructObjectInspector objectInspector = getStandardStructObjectInspector(transform(columns, columnNameGetter()), transform(columns, objectInspectorGetter()));
         Object row = objectInspector.create();
 
         List<StructField> fields = ImmutableList.copyOf(objectInspector.getAllStructFieldRefs());
@@ -880,6 +875,9 @@ public final class BenchmarkHiveFileFormats
         if (recordCursorProvider instanceof GenericHiveRecordCursorProvider) {
             return "generic";
         }
+        if (recordCursorProvider instanceof OrcVectorRecordCursorProvider) {
+            return "vector";
+        }
         return "custom";
     }
 
@@ -912,6 +910,7 @@ public final class BenchmarkHiveFileFormats
             this.compressionCodec = compressionCodec;
             this.recordCursorProviders = ImmutableList.copyOf(recordCursorProviders);
 
+            serDe.initialize(new Configuration(), createTableProperties(COLUMNS));
             file = new File(DATA_DIR, "line_item." + fileExtension);
 
             Path lineitemPath = new Path(file.toURI());
@@ -964,27 +963,27 @@ public final class BenchmarkHiveFileFormats
     private static void workAroundParquetBrokenLoggingSetup()
             throws IOException
     {
-        // unhook out and err while initializing logging or logger will print to them
-        PrintStream out = System.out;
-        PrintStream err = System.err;
-        try {
-            System.setOut(new PrintStream(nullOutputStream()));
-            System.setErr(new PrintStream(nullOutputStream()));
-
-            Log.getLog(Object.class);
-            Logging logging = Logging.initialize();
-            logging.configure(new LoggingConfiguration());
-            logging.disableConsole();
-        }
-        finally {
-            System.setOut(out);
-            System.setErr(err);
-        }
-
-        LoggingMBean logging = new LoggingMBean();
-        logging.setLevel("com.hadoop", "OFF");
-        logging.setLevel("org.apache.hadoop", "OFF");
-        logging.setLevel("org.apache.zookeeper", "OFF");
-        logging.setLevel("parquet", "OFF");
+//        // unhook out and err while initializing logging or logger will print to them
+//        PrintStream out = System.out;
+//        PrintStream err = System.err;
+//        try {
+//            System.setOut(new PrintStream(nullOutputStream()));
+//            System.setErr(new PrintStream(nullOutputStream()));
+//
+//            Log.getLog(Object.class);
+//            Logging logging = Logging.initialize();
+//            logging.configure(new LoggingConfiguration());
+//            logging.disableConsole();
+//        }
+//        finally {
+//            System.setOut(out);
+//            System.setErr(err);
+//        }
+//
+//        LoggingMBean logging = new LoggingMBean();
+//        logging.setLevel("com.hadoop", "OFF");
+//        logging.setLevel("org.apache.hadoop", "OFF");
+//        logging.setLevel("org.apache.zookeeper", "OFF");
+//        logging.setLevel("parquet", "OFF");
     }
 }

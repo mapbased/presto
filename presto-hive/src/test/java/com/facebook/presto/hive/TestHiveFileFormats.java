@@ -14,6 +14,7 @@
 package com.facebook.presto.hive;
 
 import com.facebook.presto.spi.ConnectorSession;
+import com.facebook.presto.spi.TupleDomain;
 import com.facebook.presto.spi.type.TimeZoneKey;
 import com.google.common.base.Function;
 import com.google.common.base.Joiner;
@@ -169,6 +170,26 @@ public class TestHiveFileFormats
     }
 
     @Test
+    public void testOrcVector()
+            throws Exception
+    {
+        HiveOutputFormat<?, ?> outputFormat = new org.apache.hadoop.hive.ql.io.orc.OrcOutputFormat();
+        InputFormat<?, ?> inputFormat = new org.apache.hadoop.hive.ql.io.orc.OrcInputFormat();
+        @SuppressWarnings("deprecation")
+        SerDe serde = new org.apache.hadoop.hive.ql.io.orc.OrcSerde();
+        File file = File.createTempFile("presto_test", "orc-vector");
+        file.delete();
+        try {
+            FileSplit split = createTestFile(file.getAbsolutePath(), outputFormat, serde, null, TEST_COLUMNS);
+            testCursorProvider(new OrcVectorRecordCursorProvider(), split, inputFormat, serde, TEST_COLUMNS);
+        }
+        finally {
+            //noinspection ResultOfMethodCallIgnored
+            file.delete();
+        }
+    }
+
+    @Test
     public void testParquet()
             throws Exception
     {
@@ -231,6 +252,7 @@ public class TestHiveFileFormats
                 splitProperties,
                 getColumnHandles(testColumns),
                 partitionKeys,
+                TupleDomain.<HiveColumnHandle>all(),
                 DateTimeZone.getDefault()).get();
 
         checkCursor(cursor, testColumns);
