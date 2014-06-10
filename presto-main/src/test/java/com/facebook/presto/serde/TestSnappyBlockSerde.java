@@ -18,7 +18,6 @@ import com.facebook.presto.spi.block.Block;
 import com.facebook.presto.spi.block.BlockBuilder;
 import com.facebook.presto.spi.block.BlockBuilderStatus;
 import com.facebook.presto.spi.block.BlockEncoding;
-import com.facebook.presto.spi.block.RandomAccessBlock;
 import io.airlift.slice.DynamicSliceOutput;
 import io.airlift.slice.Slices;
 import org.testng.annotations.Test;
@@ -52,7 +51,7 @@ public class TestSnappyBlockSerde
     @Test
     public void testLotsOfStuff()
     {
-        RandomAccessBlock block = VARCHAR.createBlockBuilder(new BlockBuilderStatus())
+        Block block = VARCHAR.createBlockBuilder(new BlockBuilderStatus())
                 .appendSlice(Slices.utf8Slice("alice"))
                 .appendSlice(Slices.utf8Slice("bob"))
                 .appendSlice(Slices.utf8Slice("charlie"))

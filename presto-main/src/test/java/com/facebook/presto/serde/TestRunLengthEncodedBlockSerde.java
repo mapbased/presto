@@ -19,7 +19,6 @@ import com.facebook.presto.block.rle.RunLengthEncodedBlock;
 import com.facebook.presto.spi.block.Block;
 import com.facebook.presto.spi.block.BlockBuilderStatus;
 import com.facebook.presto.spi.block.BlockEncoding;
-import com.facebook.presto.spi.block.RandomAccessBlock;
 import com.facebook.presto.spi.block.VariableWidthBlockEncoding;
 import io.airlift.slice.DynamicSliceOutput;
 import io.airlift.slice.SliceInput;
@@ -37,7 +36,7 @@ public class TestRunLengthEncodedBlockSerde
     @Test
     public void testRoundTrip()
     {
-        RandomAccessBlock value = VARCHAR.createBlockBuilder(new BlockBuilderStatus())
+        Block value = VARCHAR.createBlockBuilder(new BlockBuilderStatus())
                 .appendSlice(Slices.utf8Slice("alice"))
                 .build()
                 .toRandomAccessBlock();
@@ -55,7 +54,7 @@ public class TestRunLengthEncodedBlockSerde
     @Test
     public void testCreateBlockWriter()
     {
-        RandomAccessBlock expectedBlock = VARCHAR.createBlockBuilder(new BlockBuilderStatus())
+        Block expectedBlock = VARCHAR.createBlockBuilder(new BlockBuilderStatus())
                 .appendSlice(Slices.utf8Slice("alice"))
                 .appendSlice(Slices.utf8Slice("alice"))
                 .appendSlice(Slices.utf8Slice("bob"))
