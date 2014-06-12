@@ -63,6 +63,7 @@ import com.facebook.presto.spi.block.SortOrder;
 import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.split.DataStreamProvider;
 import com.facebook.presto.sql.gen.ExpressionCompiler;
+import com.facebook.presto.sql.parser.SqlParser;
 import com.facebook.presto.sql.planner.optimizations.IndexJoinOptimizer;
 import com.facebook.presto.sql.planner.plan.AggregationNode;
 import com.facebook.presto.sql.planner.plan.DistinctLimitNode;
@@ -154,6 +155,7 @@ public class LocalExecutionPlanner
 
     private final NodeInfo nodeInfo;
     private final Metadata metadata;
+    private final SqlParser sqlParser;
 
     private final DataStreamProvider dataStreamProvider;
     private final IndexManager indexManager;
@@ -165,6 +167,7 @@ public class LocalExecutionPlanner
     @Inject
     public LocalExecutionPlanner(NodeInfo nodeInfo,
             Metadata metadata,
+            SqlParser sqlParser,
             DataStreamProvider dataStreamProvider,
             IndexManager indexManager,
             RecordSinkManager recordSinkManager,
@@ -178,6 +181,7 @@ public class LocalExecutionPlanner
         this.indexManager = checkNotNull(indexManager, "indexManager is null");
         this.exchangeClientSupplier = exchangeClientSupplier;
         this.metadata = checkNotNull(metadata, "metadata is null");
+        this.sqlParser = checkNotNull(sqlParser, "sqlParser is null");
         this.recordSinkManager = checkNotNull(recordSinkManager, "recordSinkManager is null");
         this.compiler = checkNotNull(compiler, "compiler is null");
 
@@ -688,6 +692,7 @@ public class LocalExecutionPlanner
                 IdentityHashMap<Expression, Type> expressionTypes = getExpressionTypesFromInput(
                         context.getSession(),
                         metadata,
+                        sqlParser,
                         sourceTypes,
                         concat(singleton(rewrittenFilter), rewrittenProjections));
 
@@ -725,7 +730,7 @@ public class LocalExecutionPlanner
 
             FilterFunction filterFunction;
             if (filterExpression != BooleanLiteral.TRUE_LITERAL) {
-                filterFunction = new InterpretedFilterFunction(filterExpression, context.getTypes(), sourceLayout, metadata, context.getSession());
+                filterFunction = new InterpretedFilterFunction(filterExpression, context.getTypes(), sourceLayout, metadata, sqlParser, context.getSession());
             }
             else {
                 filterFunction = FilterFunctions.TRUE_FUNCTION;
@@ -745,6 +750,7 @@ public class LocalExecutionPlanner
                             context.getTypes(),
                             sourceLayout,
                             metadata,
+                            sqlParser,
                             context.getSession()
                     );
                 }
@@ -817,7 +823,12 @@ public class LocalExecutionPlanner
             PageBuilder pageBuilder = new PageBuilder(outputTypes);
             for (List<Expression> row : node.getRows()) {
                 pageBuilder.declarePosition();
-                IdentityHashMap<Expression, Type> expressionTypes = getExpressionTypes(context.getSession(), metadata, ImmutableMap.<Symbol, Type>of(), ImmutableList.copyOf(row));
+                IdentityHashMap<Expression, Type> expressionTypes = getExpressionTypes(
+                        context.getSession(),
+                        metadata,
+                        sqlParser,
+                        ImmutableMap.<Symbol, Type>of(),
+                        ImmutableList.copyOf(row));
                 for (int i = 0; i < row.size(); i++) {
                     // evaluate the literal value
                     Object result = ExpressionInterpreter.expressionInterpreter(row.get(i), metadata, context.getSession(), expressionTypes).evaluate(new BlockCursor[0]);

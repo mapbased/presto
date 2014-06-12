@@ -54,6 +54,9 @@ public class Console
 {
     private static final String PROMPT_NAME = "presto";
 
+    // create a parser with all identifier options enabled, since this is only used for USE statements
+    private static final SqlParser SQL_PARSER = new SqlParser();
+
     @Inject
     public HelpOption helpOption;
 
@@ -187,7 +190,7 @@ public class Console
     private static Optional<Object> getParsedStatement(String statement)
     {
         try {
-            return Optional.of((Object) SqlParser.createStatement(statement));
+            return Optional.of((Object) SQL_PARSER.createStatement(statement));
         }
         catch (ParsingException e) {
             return Optional.absent();
