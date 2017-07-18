@@ -13,49 +13,59 @@
  */
 package com.facebook.presto.operator.index;
 
-import com.facebook.presto.spi.block.BlockCursor;
-import com.google.common.collect.ImmutableList;
+import com.facebook.presto.spi.Page;
+import com.facebook.presto.spi.block.Block;
+import com.google.common.util.concurrent.SettableFuture;
+import io.airlift.concurrent.MoreFutures;
 
 import javax.annotation.concurrent.ThreadSafe;
 
-import java.util.List;
-import java.util.concurrent.atomic.AtomicBoolean;
-
-import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.Preconditions.checkState;
+import static java.util.Objects.requireNonNull;
 
 @ThreadSafe
 class UpdateRequest
 {
-    private final List<BlockCursor> cursors;
-    private final AtomicBoolean finished = new AtomicBoolean();
+    private final Block[] blocks;
+    private final SettableFuture<IndexSnapshot> indexSnapshotFuture = SettableFuture.create();
+    private final Page page;
 
-    public UpdateRequest(BlockCursor... cursors)
+    public UpdateRequest(Block... blocks)
     {
-        this(ImmutableList.copyOf(checkNotNull(cursors, "cursors is null")));
+        this.blocks = requireNonNull(blocks, "blocks is null");
+        this.page = new Page(blocks);
     }
 
-    public UpdateRequest(List<BlockCursor> cursors)
+    @Deprecated
+    public Block[] getBlocks()
     {
-        this.cursors = ImmutableList.copyOf(checkNotNull(cursors, "cursors is null"));
+        return blocks;
     }
 
-    public BlockCursor[] duplicateCursors()
+    public Page getPage()
     {
-        BlockCursor[] duplicates = new BlockCursor[cursors.size()];
-        for (int i = 0; i < cursors.size(); i++) {
-            BlockCursor cursor = cursors.get(i);
-            duplicates[i] = cursor.duplicate();
-        }
-        return duplicates;
+        return page;
     }
 
-    public void finished()
+    public void finished(IndexSnapshot indexSnapshot)
     {
-        finished.set(true);
+        requireNonNull(indexSnapshot, "indexSnapshot is null");
+        checkState(indexSnapshotFuture.set(indexSnapshot), "Already finished!");
+    }
+
+    public void failed(Throwable throwable)
+    {
+        indexSnapshotFuture.setException(throwable);
     }
 
     public boolean isFinished()
     {
-        return finished.get();
+        return indexSnapshotFuture.isDone();
+    }
+
+    public IndexSnapshot getFinishedIndexSnapshot()
+    {
+        checkState(indexSnapshotFuture.isDone(), "Update request is not finished");
+        return MoreFutures.getFutureValue(indexSnapshotFuture);
     }
 }

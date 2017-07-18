@@ -5,10 +5,15 @@ Functions and Operators
 .. toctree::
     :maxdepth: 1
 
-    operators/logical
-    operators/comparison
+    functions/logical
+    functions/comparison
+    functions/conditional
+    functions/conversion
     functions/math
+    functions/bitwise
+    functions/decimal
     functions/string
+    functions/binary
     functions/datetime
     functions/regexp
     functions/json
@@ -16,4 +21,7 @@ Functions and Operators
     functions/aggregate
     functions/window
     functions/color
-    functions/conversion
+    functions/array
+    functions/map
+    functions/lambda
+    functions/teradata

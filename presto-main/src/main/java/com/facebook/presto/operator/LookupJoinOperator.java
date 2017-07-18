@@ -13,54 +13,71 @@
  */
 package com.facebook.presto.operator;
 
+import com.facebook.presto.operator.LookupJoinOperators.JoinType;
+import com.facebook.presto.spi.Page;
+import com.facebook.presto.spi.PageBuilder;
 import com.facebook.presto.spi.type.Type;
 import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.ListenableFuture;
 
+import java.io.Closeable;
 import java.util.List;
 
-import static com.facebook.presto.util.MoreFutures.tryGetUnchecked;
-import static com.google.common.base.Preconditions.checkNotNull;
+import static com.facebook.presto.operator.LookupJoinOperators.JoinType.FULL_OUTER;
+import static com.facebook.presto.operator.LookupJoinOperators.JoinType.PROBE_OUTER;
 import static com.google.common.base.Preconditions.checkState;
+import static io.airlift.concurrent.MoreFutures.tryGetFutureValue;
+import static java.util.Objects.requireNonNull;
 
 public class LookupJoinOperator
-        implements Operator
+        implements Operator, Closeable
 {
-    private final ListenableFuture<LookupSource> lookupSourceFuture;
+    private static final int MAX_POSITIONS_EVALUATED_PER_CALL = 10000;
 
     private final OperatorContext operatorContext;
-    private final JoinProbeFactory joinProbeFactory;
-    private final boolean enableOuterJoin;
     private final List<Type> types;
+    private final ListenableFuture<? extends LookupSource> lookupSourceFuture;
+    private final JoinProbeFactory joinProbeFactory;
+    private final Runnable onClose;
+
+    private final JoinStatisticsCounter statisticsCounter;
+
     private final PageBuilder pageBuilder;
+
+    private final boolean probeOnOuterSide;
 
     private LookupSource lookupSource;
     private JoinProbe probe;
 
+    private boolean closed;
     private boolean finishing;
     private long joinPosition = -1;
+    private int joinSourcePositions = 0;
+
+    private boolean currentProbePositionProducedRow;
 
     public LookupJoinOperator(
             OperatorContext operatorContext,
-            LookupSourceSupplier lookupSourceSupplier,
-            List<Type> probeTypes,
-            boolean enableOuterJoin,
-            JoinProbeFactory joinProbeFactory)
+            List<Type> types,
+            JoinType joinType,
+            ListenableFuture<LookupSource> lookupSourceFuture,
+            JoinProbeFactory joinProbeFactory,
+            Runnable onClose)
     {
-        this.operatorContext = checkNotNull(operatorContext, "operatorContext is null");
+        this.operatorContext = requireNonNull(operatorContext, "operatorContext is null");
+        this.types = ImmutableList.copyOf(requireNonNull(types, "types is null"));
 
-        // todo pass in desired projection
-        checkNotNull(lookupSourceSupplier, "lookupSourceSupplier is null");
-        checkNotNull(probeTypes, "probeTypes is null");
+        requireNonNull(joinType, "joinType is null");
+        // Cannot use switch case here, because javac will synthesize an inner class and cause IllegalAccessError
+        probeOnOuterSide = joinType == PROBE_OUTER || joinType == FULL_OUTER;
 
-        this.lookupSourceFuture = lookupSourceSupplier.getLookupSource(operatorContext);
-        this.joinProbeFactory = joinProbeFactory;
-        this.enableOuterJoin = enableOuterJoin;
+        this.lookupSourceFuture = requireNonNull(lookupSourceFuture, "lookupSourceFuture is null");
+        this.joinProbeFactory = requireNonNull(joinProbeFactory, "joinProbeFactory is null");
+        this.onClose = requireNonNull(onClose, "onClose is null");
 
-        this.types = ImmutableList.<Type>builder()
-                .addAll(probeTypes)
-                .addAll(lookupSourceSupplier.getTypes())
-                .build();
+        this.statisticsCounter = new JoinStatisticsCounter(joinType);
+        operatorContext.setInfoSupplier(this.statisticsCounter);
+
         this.pageBuilder = new PageBuilder(types);
     }
 
@@ -89,10 +106,7 @@ public class LookupJoinOperator
 
         // if finished drop references so memory is freed early
         if (finished) {
-            lookupSource = null;
-
-            probe = null;
-            pageBuilder.reset();
+            close();
         }
         return finished;
     }
@@ -111,7 +125,7 @@ public class LookupJoinOperator
         }
 
         if (lookupSource == null) {
-            lookupSource = tryGetUnchecked(lookupSourceFuture);
+            lookupSource = tryGetFutureValue(lookupSourceFuture).orElse(null);
         }
         return lookupSource != null && probe == null;
     }
@@ -119,7 +133,7 @@ public class LookupJoinOperator
     @Override
     public void addInput(Page page)
     {
-        checkNotNull(page, "page is null");
+        requireNonNull(page, "page is null");
         checkState(!finishing, "Operator is finishing");
         checkState(lookupSource != null, "Lookup source has not been built yet");
         checkState(probe == null, "Current page has not been completely processed yet");
@@ -134,15 +148,31 @@ public class LookupJoinOperator
     @Override
     public Page getOutput()
     {
+        if (lookupSource == null) {
+            return null;
+        }
+
         // join probe page with the lookup source
+        Counter lookupPositionsConsidered = new Counter();
         if (probe != null) {
-            while (joinCurrentPosition()) {
+            while (true) {
+                if (probe.getPosition() >= 0) {
+                    if (!joinCurrentPosition(lookupPositionsConsidered)) {
+                        break;
+                    }
+                    if (!currentProbePositionProducedRow) {
+                        currentProbePositionProducedRow = true;
+                        if (!outerJoinCurrentPosition()) {
+                            break;
+                        }
+                    }
+                }
+                currentProbePositionProducedRow = false;
                 if (!advanceProbePosition()) {
                     break;
                 }
-                if (!outerJoinCurrentPosition()) {
-                    break;
-                }
+                statisticsCounter.recordProbe(joinSourcePositions);
+                joinSourcePositions = 0;
             }
         }
 
@@ -156,18 +186,52 @@ public class LookupJoinOperator
         return null;
     }
 
-    private boolean joinCurrentPosition()
+    @Override
+    public void close()
     {
-        // while we have a position to join against...
+        // Closing the lookupSource is always safe to do, but we don't want to release the supplier multiple times, since its reference counted
+        if (closed) {
+            return;
+        }
+        closed = true;
+        probe = null;
+        pageBuilder.reset();
+        // closing lookup source is only here for index join
+        if (lookupSource != null) {
+            lookupSource.close();
+        }
+        onClose.run();
+    }
+
+    /**
+     * Produce rows matching join condition for the current probe position. If this method was called previously
+     * for the current probe position, calling this again will produce rows that wasn't been produced in previous
+     * invocations.
+     *
+     * @return true if all eligible rows have been produced; false otherwise (because pageBuilder became full)
+     */
+    private boolean joinCurrentPosition(Counter lookupPositionsConsidered)
+    {
+        // while we have a position on lookup side to join against...
         while (joinPosition >= 0) {
-            // write probe columns
-            probe.appendTo(pageBuilder);
+            lookupPositionsConsidered.increment();
+            if (lookupSource.isJoinPositionEligible(joinPosition, probe.getPosition(), probe.getPage())) {
+                currentProbePositionProducedRow = true;
 
-            // write build columns
-            lookupSource.appendTo(joinPosition, pageBuilder, probe.getChannelCount());
+                pageBuilder.declarePosition();
+                // write probe columns
+                probe.appendTo(pageBuilder);
+                // write build columns
+                lookupSource.appendTo(joinPosition, pageBuilder, probe.getOutputChannelCount());
+                joinSourcePositions++;
+            }
 
-            // get next join position for this row
-            joinPosition = lookupSource.getNextJoinPosition(joinPosition);
+            // get next position on lookup side for this probe row
+            joinPosition = lookupSource.getNextJoinPosition(joinPosition, probe.getPosition(), probe.getPage());
+
+            if (lookupPositionsConsidered.get() >= MAX_POSITIONS_EVALUATED_PER_CALL) {
+                return false;
+            }
             if (pageBuilder.isFull()) {
                 return false;
             }
@@ -175,6 +239,9 @@ public class LookupJoinOperator
         return true;
     }
 
+    /**
+     * @return whether there are more positions on probe side
+     */
     private boolean advanceProbePosition()
     {
         if (!probe.advanceNextPosition()) {
@@ -187,14 +254,20 @@ public class LookupJoinOperator
         return true;
     }
 
+    /**
+     * Produce a row for the current probe position, if it doesn't match any row on lookup side and this is an outer join.
+     *
+     * @return whether pageBuilder became full
+     */
     private boolean outerJoinCurrentPosition()
     {
-        if (enableOuterJoin && joinPosition < 0) {
+        if (probeOnOuterSide && joinPosition < 0) {
             // write probe columns
+            pageBuilder.declarePosition();
             probe.appendTo(pageBuilder);
 
             // write nulls into build columns
-            int outputIndex = probe.getChannelCount();
+            int outputIndex = probe.getOutputChannelCount();
             for (int buildChannel = 0; buildChannel < lookupSource.getChannelCount(); buildChannel++) {
                 pageBuilder.getBlockBuilder(outputIndex).appendNull();
                 outputIndex++;
@@ -204,5 +277,21 @@ public class LookupJoinOperator
             }
         }
         return true;
+    }
+
+    // This class needs to be public because LookupJoinOperator is isolated.
+    public static class Counter
+    {
+        private int count;
+
+        public void increment()
+        {
+            count++;
+        }
+
+        public int get()
+        {
+            return count;
+        }
     }
 }

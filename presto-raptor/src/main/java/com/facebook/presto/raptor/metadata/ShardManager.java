@@ -13,85 +13,129 @@
  */
 package com.facebook.presto.raptor.metadata;
 
-import com.facebook.presto.spi.ConnectorTableHandle;
-import com.facebook.presto.spi.PartitionKey;
-import com.google.common.base.Optional;
-import com.google.common.collect.Multimap;
+import com.facebook.presto.raptor.RaptorColumnHandle;
+import com.facebook.presto.spi.predicate.TupleDomain;
+import org.skife.jdbi.v2.ResultIterator;
 
-import javax.annotation.Nullable;
-
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
-import java.util.Map.Entry;
+import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.UUID;
 
 public interface ShardManager
 {
     /**
-     * Remove a shard from a node. When this method returns successfully, the shard will be no longer retrieved
-     * from that node.
+     * Create a table.
      */
-    void disassociateShard(long shardId, @Nullable String nodeIdentifier);
+    void createTable(long tableId, List<ColumnInfo> columns, boolean bucketed, OptionalLong temporalColumnId);
 
     /**
-     * Drop all information about a given shard.
+     * Drop a table.
      */
-    void dropShard(long shardId);
+    void dropTable(long tableId);
 
     /**
-     * Commit a partition for a table.
+     * Add a column to the end of the table.
      */
-    void commitPartition(ConnectorTableHandle tableHandle, String partition, List<? extends PartitionKey> partitionKeys, Map<UUID, String> shards);
+    void addColumn(long tableId, ColumnInfo column);
 
     /**
-     * Commit an unpartitioned table.
+     * Commit data for a table.
      */
-    void commitUnpartitionedTable(ConnectorTableHandle tableHandle, Map<UUID, String> shards);
+    void commitShards(long transactionId, long tableId, List<ColumnInfo> columns, Collection<ShardInfo> shards, Optional<String> externalBatchId, long updateTime);
 
     /**
-     * Get the names of all partitions that have been successfully imported.
+     * Replace oldShardsUuids with newShards.
+     */
+    void replaceShardUuids(long transactionId, long tableId, List<ColumnInfo> columns, Set<UUID> oldShardUuids, Collection<ShardInfo> newShards, OptionalLong updateTime);
+
+    /**
+     * Get shard metadata for a shard.
+     */
+    ShardMetadata getShard(UUID shardUuid);
+
+    /**
+     * Get shard metadata for shards on a given node.
+     */
+    Set<ShardMetadata> getNodeShards(String nodeIdentifier);
+
+    /**
+     * Get shard metadata for shards on a given node.
+     */
+    Set<ShardMetadata> getNodeShards(String nodeIdentifier, long tableId);
+
+    /**
+     * Return the shard nodes for a non-bucketed table.
+     */
+    ResultIterator<BucketShards> getShardNodes(long tableId, TupleDomain<RaptorColumnHandle> effectivePredicate);
+
+    /**
+     * Return the shard nodes for a bucketed table.
+     */
+    ResultIterator<BucketShards> getShardNodesBucketed(long tableId, boolean merged, Map<Integer, String> bucketToNode, TupleDomain<RaptorColumnHandle> effectivePredicate);
+
+    /**
+     * Assign a shard to a node.
+     */
+    void assignShard(long tableId, UUID shardUuid, String nodeIdentifier, boolean gracePeriod);
+
+    /**
+     * Remove shard assignment from a node.
+     */
+    void unassignShard(long tableId, UUID shardUuid, String nodeIdentifier);
+
+    /**
+     * Get the number of bytes used by assigned shards per node.
+     */
+    Map<String, Long> getNodeBytes();
+
+    /**
+     * Begin a transaction for creating shards.
      *
-     * @return list of partition names
+     * @return transaction ID
      */
-    Set<TablePartition> getPartitions(ConnectorTableHandle tableHandle);
+    long beginTransaction();
 
     /**
-     * Get all partition keys by Partition for a given table handle.
+     * Rollback a transaction.
      */
-    Multimap<String, ? extends PartitionKey> getAllPartitionKeys(ConnectorTableHandle tableHandle);
+    void rollbackTransaction(long transactionId);
 
     /**
-     * Return a map of shard nodes by partition for a given table.
-     *
-     * @return partitionId -> (shardUuid -> nodeIdentifier)
+     * Create initial bucket assignments for a distribution.
      */
-    Multimap<Long, Entry<UUID, String>> getShardNodesByPartition(ConnectorTableHandle tableHandle);
+    void createBuckets(long distributionId, int bucketCount);
 
     /**
-     * Return list of nodes used by table shards.
-     *
-     * @return shardUuid -> nodeIdentifier
+     * Get map of buckets to node identifiers for a distribution.
      */
-    Set<String> getTableNodes(ConnectorTableHandle tableHandle);
+    Map<Integer, String> getBucketAssignments(long distributionId);
 
     /**
-     * Return a collection of all nodes that were used in this shard manager.
+     * Change the node a bucket is assigned to.
      */
-    Iterable<String> getAllNodesInUse();
+    void updateBucketAssignment(long distributionId, int bucketNumber, String nodeId);
 
     /**
-     * Drop all record of the specified partition
+     * Get all active distributions.
      */
-    void dropPartition(ConnectorTableHandle tableHandle, String partitionName);
+    List<Distribution> getDistributions();
 
     /**
-     * remove all partitions that are no longer referred from any shard.
+     * Get total physical size of all tables in a distribution.
      */
-    void dropOrphanedPartitions();
+    long getDistributionSizeInBytes(long distributionId);
 
     /**
-     * Return a list of all shard ids for a given node that are no referenced by a table.
+     * Get list of bucket nodes for a distribution.
      */
-    Iterable<Long> getOrphanedShardIds(Optional<String> nodeIdentifier);
+    List<BucketNode> getBucketNodes(long distributionId);
+
+    /**
+     * Return the subset of shard uuids that exist
+     */
+    Set<UUID> getExistingShardUuids(long tableId, Set<UUID> shardUuids);
 }

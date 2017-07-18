@@ -14,26 +14,27 @@
 package com.facebook.presto.operator.index;
 
 import com.facebook.presto.operator.LookupSource;
-import com.facebook.presto.operator.PageBuilder;
-import com.facebook.presto.spi.block.BlockCursor;
+import com.facebook.presto.spi.Page;
+import com.facebook.presto.spi.PageBuilder;
+import com.facebook.presto.spi.block.Block;
 
 import javax.annotation.concurrent.NotThreadSafe;
 
 import static com.facebook.presto.operator.index.IndexSnapshot.UNLOADED_INDEX_KEY;
-import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
+import static java.util.Objects.requireNonNull;
 
 @NotThreadSafe
 public class IndexLookupSource
         implements LookupSource
 {
     private final IndexLoader indexLoader;
-    private IndexSnapshot indexSnapshot;
+    private IndexedData indexedData;
 
     public IndexLookupSource(IndexLoader indexLoader)
     {
-        this.indexLoader = checkNotNull(indexLoader, "indexLoader is null");
-        indexSnapshot = indexLoader.getIndexSnapshot();
+        this.indexLoader = requireNonNull(indexLoader, "indexLoader is null");
+        this.indexedData = indexLoader.getIndexSnapshot();
     }
 
     @Override
@@ -43,30 +44,63 @@ public class IndexLookupSource
     }
 
     @Override
-    public long getJoinPosition(BlockCursor... cursors)
+    public int getJoinPositionCount()
     {
-        long position = indexSnapshot.getJoinPosition(cursors);
-        if (position == UNLOADED_INDEX_KEY) {
-            indexSnapshot = indexLoader.getIndexSnapshotForKeys(cursors);
-            position = indexSnapshot.getJoinPosition(cursors);
-            checkState(position != UNLOADED_INDEX_KEY);
-        }
-        // INVARIANT: position is -1 or a valid position greater than or equal to zero
-        return position;
+        throw new UnsupportedOperationException("Index can not be used in a RIGHT or FULL outer join");
     }
 
     @Override
-    public long getNextJoinPosition(long currentPosition)
+    public long getInMemorySizeInBytes()
     {
-        long nextPosition = indexSnapshot.getNextJoinPosition(currentPosition);
+        return 0;
+    }
+
+    @Override
+    public long getJoinPosition(int position, Page hashChannelsPage, Page allChannelsPage, long rawHash)
+    {
+        // TODO update to take advantage of precomputed hash
+        return getJoinPosition(position, hashChannelsPage, allChannelsPage);
+    }
+
+    @Override
+    public long getJoinPosition(int position, Page hashChannelsPage, Page allChannelsPage)
+    {
+        Block[] blocks = hashChannelsPage.getBlocks();
+        long joinPosition = indexedData.getJoinPosition(position, hashChannelsPage);
+        if (joinPosition == UNLOADED_INDEX_KEY) {
+            indexedData.close(); // Close out the old indexedData
+            indexedData = indexLoader.getIndexedDataForKeys(position, blocks);
+            joinPosition = indexedData.getJoinPosition(position, hashChannelsPage);
+            checkState(joinPosition != UNLOADED_INDEX_KEY);
+        }
+        // INVARIANT: position is -1 or a valid position greater than or equal to zero
+        return joinPosition;
+    }
+
+    @Override
+    public long getNextJoinPosition(long currentJoinPosition, int probePosition, Page allProbeChannelsPage)
+    {
+        long nextPosition = indexedData.getNextJoinPosition(currentJoinPosition);
         checkState(nextPosition != UNLOADED_INDEX_KEY);
         // INVARIANT: currentPosition is -1 or a valid currentPosition greater than or equal to zero
         return nextPosition;
     }
 
     @Override
+    public boolean isJoinPositionEligible(long currentJoinPosition, int probePosition, Page allProbeChannelsPage)
+    {
+        return true;
+    }
+
+    @Override
     public void appendTo(long position, PageBuilder pageBuilder, int outputChannelOffset)
     {
-        indexSnapshot.appendTo(position, pageBuilder, outputChannelOffset);
+        indexedData.appendTo(position, pageBuilder, outputChannelOffset);
+    }
+
+    @Override
+    public void close()
+    {
+        indexedData.close();
     }
 }

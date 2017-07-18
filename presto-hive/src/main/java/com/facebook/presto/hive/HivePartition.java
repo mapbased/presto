@@ -13,43 +13,45 @@
  */
 package com.facebook.presto.hive;
 
-import com.facebook.presto.spi.ConnectorColumnHandle;
-import com.facebook.presto.spi.ConnectorPartition;
+import com.facebook.presto.spi.ColumnHandle;
 import com.facebook.presto.spi.SchemaTableName;
-import com.facebook.presto.spi.TupleDomain;
-import com.google.common.base.Optional;
+import com.facebook.presto.spi.predicate.NullableValue;
+import com.facebook.presto.spi.predicate.TupleDomain;
 import com.google.common.collect.ImmutableMap;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
 import static com.facebook.presto.hive.HiveBucketing.HiveBucket;
-import static com.google.common.base.Preconditions.checkNotNull;
+import static java.util.Objects.requireNonNull;
 
 public class HivePartition
-        implements ConnectorPartition
 {
     public static final String UNPARTITIONED_ID = "<UNPARTITIONED>";
 
     private final SchemaTableName tableName;
+    private final TupleDomain<HiveColumnHandle> effectivePredicate;
     private final String partitionId;
-    private final Map<ConnectorColumnHandle, Comparable<?>> keys;
-    private final Optional<HiveBucket> bucket;
+    private final Map<ColumnHandle, NullableValue> keys;
+    private final List<HiveBucket> buckets;
 
-    public HivePartition(SchemaTableName tableName)
+    public HivePartition(SchemaTableName tableName, TupleDomain<HiveColumnHandle> effectivePredicate, List<HiveBucket> buckets)
     {
-        this.tableName = checkNotNull(tableName, "tableName is null");
-        this.partitionId = UNPARTITIONED_ID;
-        this.keys = ImmutableMap.of();
-        this.bucket = Optional.absent();
+        this(tableName, effectivePredicate, UNPARTITIONED_ID, ImmutableMap.of(), buckets);
     }
 
-    public HivePartition(SchemaTableName tableName, String partitionId, Map<ConnectorColumnHandle, Comparable<?>> keys, Optional<HiveBucket> bucket)
+    public HivePartition(SchemaTableName tableName,
+            TupleDomain<HiveColumnHandle> effectivePredicate,
+            String partitionId,
+            Map<ColumnHandle, NullableValue> keys,
+            List<HiveBucket> buckets)
     {
-        this.tableName = checkNotNull(tableName, "tableName is null");
-        this.partitionId = checkNotNull(partitionId, "partitionId is null");
-        this.keys = ImmutableMap.copyOf(checkNotNull(keys, "keys is null"));
-        this.bucket = checkNotNull(bucket, "bucket number is null");
+        this.tableName = requireNonNull(tableName, "tableName is null");
+        this.effectivePredicate = requireNonNull(effectivePredicate, "effectivePredicate is null");
+        this.partitionId = requireNonNull(partitionId, "partitionId is null");
+        this.keys = ImmutableMap.copyOf(requireNonNull(keys, "keys is null"));
+        this.buckets = requireNonNull(buckets, "bucket number is null");
     }
 
     public SchemaTableName getTableName()
@@ -57,26 +59,24 @@ public class HivePartition
         return tableName;
     }
 
-    @Override
+    public TupleDomain<HiveColumnHandle> getEffectivePredicate()
+    {
+        return effectivePredicate;
+    }
+
     public String getPartitionId()
     {
         return partitionId;
     }
 
-    @Override
-    public TupleDomain<ConnectorColumnHandle> getTupleDomain()
-    {
-        return TupleDomain.withFixedValues(keys);
-    }
-
-    public Map<ConnectorColumnHandle, Comparable<?>> getKeys()
+    public Map<ColumnHandle, NullableValue> getKeys()
     {
         return keys;
     }
 
-    public Optional<HiveBucket> getBucket()
+    public List<HiveBucket> getBuckets()
     {
-        return bucket;
+        return buckets;
     }
 
     @Override

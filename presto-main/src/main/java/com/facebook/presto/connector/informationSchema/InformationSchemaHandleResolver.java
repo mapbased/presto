@@ -13,39 +13,16 @@
  */
 package com.facebook.presto.connector.informationSchema;
 
-import com.facebook.presto.spi.ConnectorColumnHandle;
+import com.facebook.presto.spi.ColumnHandle;
 import com.facebook.presto.spi.ConnectorHandleResolver;
-import com.facebook.presto.spi.ConnectorIndexHandle;
 import com.facebook.presto.spi.ConnectorSplit;
 import com.facebook.presto.spi.ConnectorTableHandle;
+import com.facebook.presto.spi.ConnectorTableLayoutHandle;
+import com.facebook.presto.spi.connector.ConnectorTransactionHandle;
 
 public class InformationSchemaHandleResolver
         implements ConnectorHandleResolver
 {
-    @Override
-    public boolean canHandle(ConnectorTableHandle tableHandle)
-    {
-        return tableHandle instanceof InformationSchemaTableHandle;
-    }
-
-    @Override
-    public boolean canHandle(ConnectorColumnHandle columnHandle)
-    {
-        return columnHandle instanceof InformationSchemaColumnHandle;
-    }
-
-    @Override
-    public boolean canHandle(ConnectorSplit split)
-    {
-        return split instanceof InformationSchemaSplit;
-    }
-
-    @Override
-    public boolean canHandle(ConnectorIndexHandle indexHandle)
-    {
-        return false;
-    }
-
     @Override
     public Class<? extends ConnectorTableHandle> getTableHandleClass()
     {
@@ -53,7 +30,7 @@ public class InformationSchemaHandleResolver
     }
 
     @Override
-    public Class<? extends ConnectorColumnHandle> getColumnHandleClass()
+    public Class<? extends ColumnHandle> getColumnHandleClass()
     {
         return InformationSchemaColumnHandle.class;
     }
@@ -65,8 +42,14 @@ public class InformationSchemaHandleResolver
     }
 
     @Override
-    public Class<? extends ConnectorIndexHandle> getIndexHandleClass()
+    public Class<? extends ConnectorTableLayoutHandle> getTableLayoutHandleClass()
     {
-        throw new UnsupportedOperationException();
+        return InformationSchemaTableLayoutHandle.class;
+    }
+
+    @Override
+    public Class<? extends ConnectorTransactionHandle> getTransactionHandleClass()
+    {
+        return InformationSchemaTransactionHandle.class;
     }
 }

@@ -14,10 +14,8 @@
 package com.facebook.presto.ml;
 
 import com.google.common.base.Throwables;
-import com.google.common.io.Files;
 import com.google.common.util.concurrent.SimpleTimeLimiter;
 import com.google.common.util.concurrent.TimeLimiter;
-import io.airlift.concurrent.Threads;
 import libsvm.svm;
 import libsvm.svm_model;
 import libsvm.svm_node;
@@ -26,14 +24,16 @@ import libsvm.svm_problem;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.util.List;
 import java.util.SortedMap;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
-import static com.google.common.base.Preconditions.checkNotNull;
+import static io.airlift.concurrent.Threads.threadsNamed;
+import static java.util.Objects.requireNonNull;
+import static java.util.concurrent.Executors.newCachedThreadPool;
 
 public abstract class AbstractSvmModel
         implements Model
@@ -43,12 +43,12 @@ public abstract class AbstractSvmModel
 
     protected AbstractSvmModel(svm_parameter params)
     {
-        this.params = checkNotNull(params, "params is null");
+        this.params = requireNonNull(params, "params is null");
     }
 
     protected AbstractSvmModel(svm_model model)
     {
-        this.model = checkNotNull(model, "model is null");
+        this.model = requireNonNull(model, "model is null");
     }
 
     @Override
@@ -59,13 +59,14 @@ public abstract class AbstractSvmModel
             // libsvm doesn't have a method to serialize the model into a buffer, so write it out to a file and then read it back in
             file = File.createTempFile("svm", null);
             svm.svm_save_model(file.getAbsolutePath(), model);
-            return Files.toByteArray(file);
+            return Files.readAllBytes(file.toPath());
         }
         catch (IOException e) {
             throw Throwables.propagate(e);
         }
         finally {
             if (file != null) {
+                //noinspection ResultOfMethodCallIgnored
                 file.delete();
             }
         }
@@ -78,7 +79,7 @@ public abstract class AbstractSvmModel
 
         svm_problem problem = toSvmProblem(dataset);
 
-        ExecutorService service = Executors.newCachedThreadPool(Threads.threadsNamed("libsvm-trainer-" + System.identityHashCode(this) + "-%d"));
+        ExecutorService service = newCachedThreadPool(threadsNamed("libsvm-trainer-" + System.identityHashCode(this) + "-%s"));
         try {
             TimeLimiter limiter = new SimpleTimeLimiter(service);
             //TODO: this time limit should be configurable
@@ -96,16 +97,9 @@ public abstract class AbstractSvmModel
         }
     }
 
-    private static Callable<svm_model> getTrainingFunction(final svm_problem problem, final svm_parameter param)
+    private static Callable<svm_model> getTrainingFunction(svm_problem problem, svm_parameter param)
     {
-        return new Callable<svm_model>() {
-            @Override
-            public svm_model call()
-                    throws Exception
-            {
-                return svm.svm_train(problem, param);
-            }
-        };
+        return () -> svm.svm_train(problem, param);
     }
 
     protected abstract int getLibsvmType();

@@ -13,18 +13,17 @@
  */
 package com.facebook.presto.operator;
 
-import com.facebook.presto.spi.block.Block;
+import com.facebook.presto.spi.Page;
 import com.facebook.presto.spi.type.Type;
+import com.facebook.presto.sql.planner.plan.PlanNodeId;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterators;
-import com.google.common.util.concurrent.ListenableFuture;
 
 import java.util.Iterator;
 import java.util.List;
 
-import static com.google.common.base.Preconditions.checkArgument;
-import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
+import static java.util.Objects.requireNonNull;
 
 public class ValuesOperator
         implements Operator
@@ -33,15 +32,17 @@ public class ValuesOperator
             implements OperatorFactory
     {
         private final int operatorId;
+        private final PlanNodeId planNodeId;
         private final List<Type> types;
         private final List<Page> pages;
         private boolean closed;
 
-        public ValuesOperatorFactory(int operatorId, List<Page> pages)
+        public ValuesOperatorFactory(int operatorId, PlanNodeId planNodeId, List<Type> types, List<Page> pages)
         {
             this.operatorId = operatorId;
-            this.types = extractTypes(pages);
-            this.pages = pages;
+            this.planNodeId = requireNonNull(planNodeId, "planNodeId is null");
+            this.types = ImmutableList.copyOf(requireNonNull(types, "types is null"));
+            this.pages = ImmutableList.copyOf(requireNonNull(pages, "pages is null"));
         }
 
         @Override
@@ -54,8 +55,8 @@ public class ValuesOperator
         public Operator createOperator(DriverContext driverContext)
         {
             checkState(!closed, "Factory is already closed");
-            OperatorContext operatorContext = driverContext.addOperatorContext(operatorId, ValuesOperator.class.getSimpleName());
-            return new ValuesOperator(operatorContext, pages);
+            OperatorContext operatorContext = driverContext.addOperatorContext(operatorId, planNodeId, ValuesOperator.class.getSimpleName());
+            return new ValuesOperator(operatorContext, types, pages);
         }
 
         @Override
@@ -63,20 +64,25 @@ public class ValuesOperator
         {
             closed = true;
         }
+
+        @Override
+        public OperatorFactory duplicate()
+        {
+            return new ValuesOperatorFactory(operatorId, planNodeId, types, pages);
+        }
     }
 
     private final OperatorContext operatorContext;
     private final ImmutableList<Type> types;
     private final Iterator<Page> pages;
 
-    public ValuesOperator(OperatorContext operatorContext, List<Page> pages)
+    public ValuesOperator(OperatorContext operatorContext, List<Type> types, List<Page> pages)
     {
-        this.operatorContext = checkNotNull(operatorContext, "operatorContext is null");
+        this.operatorContext = requireNonNull(operatorContext, "operatorContext is null");
+        this.types = ImmutableList.copyOf(requireNonNull(types, "types is null"));
 
-        checkNotNull(pages, "pages is null");
-        checkArgument(!pages.isEmpty(), "pages is empty");
+        requireNonNull(pages, "pages is null");
 
-        this.types = extractTypes(pages);
         this.pages = ImmutableList.copyOf(pages).iterator();
     }
 
@@ -105,12 +111,6 @@ public class ValuesOperator
     }
 
     @Override
-    public ListenableFuture<?> isBlocked()
-    {
-        return NOT_BLOCKED;
-    }
-
-    @Override
     public boolean needsInput()
     {
         return false;
@@ -130,17 +130,8 @@ public class ValuesOperator
         }
         Page page = pages.next();
         if (page != null) {
-            operatorContext.recordGeneratedInput(page.getDataSize(), page.getPositionCount());
+            operatorContext.recordGeneratedInput(page.getSizeInBytes(), page.getPositionCount());
         }
         return page;
-    }
-
-    private static ImmutableList<Type> extractTypes(List<Page> pages)
-    {
-        ImmutableList.Builder<Type> tupleInfos = ImmutableList.builder();
-        for (Block block : pages.get(0).getBlocks()) {
-            tupleInfos.add(block.getType());
-        }
-        return tupleInfos.build();
     }
 }

@@ -31,6 +31,7 @@ import java.util.TreeMap;
 import static java.lang.Character.isDigit;
 import static java.lang.Math.abs;
 import static java.lang.Math.max;
+import static java.util.Locale.ENGLISH;
 import static java.util.Objects.requireNonNull;
 
 public final class TimeZoneKey
@@ -50,7 +51,8 @@ public final class TimeZoneKey
         try (InputStream in = TimeZoneIndex.class.getResourceAsStream("zone-index.properties")) {
             // load zone file
             // todo parse file by hand since Properties ignores duplicate entries
-            Properties data = new Properties() {
+            Properties data = new Properties()
+            {
                 @Override
                 public synchronized Object put(Object key, Object value)
                 {
@@ -68,7 +70,7 @@ public final class TimeZoneKey
             }
 
             Map<String, TimeZoneKey> zoneIdToKey = new TreeMap<>();
-            zoneIdToKey.put(UTC_KEY.getId().toLowerCase(), UTC_KEY);
+            zoneIdToKey.put(UTC_KEY.getId().toLowerCase(ENGLISH), UTC_KEY);
 
             short maxZoneKey = 0;
             for (Entry<Object, Object> entry : data.entrySet()) {
@@ -76,7 +78,7 @@ public final class TimeZoneKey
                 String zoneId = ((String) entry.getValue()).trim();
 
                 maxZoneKey = (short) max(maxZoneKey, zoneKey);
-                zoneIdToKey.put(zoneId.toLowerCase(), new TimeZoneKey(zoneId, zoneKey));
+                zoneIdToKey.put(zoneId.toLowerCase(ENGLISH), new TimeZoneKey(zoneId, zoneKey));
             }
 
             MAX_TIME_ZONE_KEY = maxZoneKey;
@@ -119,7 +121,7 @@ public final class TimeZoneKey
         requireNonNull(zoneId, "Zone id is null");
         checkArgument(!zoneId.isEmpty(), "Zone id is an empty string");
 
-        TimeZoneKey zoneKey = ZONE_ID_TO_KEY.get(zoneId.toLowerCase());
+        TimeZoneKey zoneKey = ZONE_ID_TO_KEY.get(zoneId.toLowerCase(ENGLISH));
         if (zoneKey == null) {
             zoneKey = ZONE_ID_TO_KEY.get(normalizeZoneId(zoneId));
         }
@@ -199,7 +201,7 @@ public final class TimeZoneKey
 
     private static String normalizeZoneId(String originalZoneId)
     {
-        String zoneId = originalZoneId.toLowerCase();
+        String zoneId = originalZoneId.toLowerCase(ENGLISH);
 
         if (zoneId.startsWith("etc/")) {
             zoneId = zoneId.substring(4);
@@ -222,6 +224,11 @@ public final class TimeZoneKey
         else if (length > 2 && zoneId.startsWith("ut")) {
             zoneId = zoneId.substring(2);
             length = zoneId.length();
+        }
+
+        // (+/-)00:00 is UTC
+        if ("+00:00".equals(zoneId) || "-00:00".equals(zoneId)) {
+            return "utc";
         }
 
         // if zoneId matches XXX:XX, it is likely +HH:mm, so just return it
@@ -279,9 +286,7 @@ public final class TimeZoneKey
                 zoneId.equals("gmt0") ||
                 zoneId.equals("greenwich") ||
                 zoneId.equals("universal") ||
-                zoneId.equals("zulu") ||
-                zoneId.equals("+00:00") ||
-                zoneId.equals("-00:00");
+                zoneId.equals("zulu");
     }
 
     private static String zoneIdForOffset(long offset)

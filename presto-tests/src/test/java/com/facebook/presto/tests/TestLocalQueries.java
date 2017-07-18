@@ -13,48 +13,69 @@
  */
 package com.facebook.presto.tests;
 
-import com.facebook.presto.spi.ConnectorSession;
+import com.facebook.presto.Session;
+import com.facebook.presto.connector.ConnectorId;
+import com.facebook.presto.metadata.SessionPropertyManager;
 import com.facebook.presto.testing.LocalQueryRunner;
+import com.facebook.presto.testing.MaterializedResult;
 import com.facebook.presto.tpch.TpchConnectorFactory;
-import com.facebook.presto.tpch.TpchMetadata;
-import com.facebook.presto.tpch.testing.SampledTpchConnectorFactory;
 import com.google.common.collect.ImmutableMap;
+import org.testng.annotations.Test;
 
-import java.util.Locale;
-
-import static com.facebook.presto.spi.type.TimeZoneKey.UTC_KEY;
-import static java.util.Locale.ENGLISH;
+import static com.facebook.presto.SystemSessionProperties.PUSH_PARTIAL_AGGREGATION_THROUGH_JOIN;
+import static com.facebook.presto.spi.type.DoubleType.DOUBLE;
+import static com.facebook.presto.spi.type.VarcharType.VARCHAR;
+import static com.facebook.presto.testing.MaterializedResult.resultBuilder;
+import static com.facebook.presto.testing.TestingSession.TESTING_CATALOG;
+import static com.facebook.presto.testing.TestingSession.testSessionBuilder;
+import static com.facebook.presto.testing.assertions.Assert.assertEquals;
+import static com.facebook.presto.tpch.TpchMetadata.TINY_SCHEMA_NAME;
 
 public class TestLocalQueries
-        extends AbstractTestApproximateQueries
+        extends AbstractTestQueries
 {
-    private static final String TPCH_SAMPLED_SCHEMA = "tpch_sampled";
-
     public TestLocalQueries()
     {
-        super(createLocalQueryRunner(), createDefaultSampledSession());
+        super(TestLocalQueries::createLocalQueryRunner);
     }
 
-    private static LocalQueryRunner createLocalQueryRunner()
+    public static LocalQueryRunner createLocalQueryRunner()
     {
-        ConnectorSession defaultSession = new ConnectorSession("user", "test", "local", TpchMetadata.TINY_SCHEMA_NAME, UTC_KEY, Locale.ENGLISH, null, null);
+        Session defaultSession = testSessionBuilder()
+                .setCatalog("local")
+                .setSchema(TINY_SCHEMA_NAME)
+                .setSystemProperty(PUSH_PARTIAL_AGGREGATION_THROUGH_JOIN, "true")
+                .build();
+
         LocalQueryRunner localQueryRunner = new LocalQueryRunner(defaultSession);
 
         // add the tpch catalog
         // local queries run directly against the generator
         localQueryRunner.createCatalog(
-                defaultSession.getCatalog(),
-                new TpchConnectorFactory(localQueryRunner.getNodeManager(), 1),
-                ImmutableMap.<String, String>of());
-        localQueryRunner.createCatalog(TPCH_SAMPLED_SCHEMA, new SampledTpchConnectorFactory(localQueryRunner.getNodeManager(), 1, 2), ImmutableMap.<String, String>of());
+                defaultSession.getCatalog().get(),
+                new TpchConnectorFactory(1),
+                ImmutableMap.of());
 
         localQueryRunner.getMetadata().addFunctions(CUSTOM_FUNCTIONS);
+
+        SessionPropertyManager sessionPropertyManager = localQueryRunner.getMetadata().getSessionPropertyManager();
+        sessionPropertyManager.addSystemSessionProperties(TEST_SYSTEM_PROPERTIES);
+        sessionPropertyManager.addConnectorSessionProperties(new ConnectorId(TESTING_CATALOG), TEST_CATALOG_PROPERTIES);
 
         return localQueryRunner;
     }
 
-    private static ConnectorSession createDefaultSampledSession()
+    @Test
+    public void testShowColumnStats()
+            throws Exception
     {
-        return new ConnectorSession("user", "test", TPCH_SAMPLED_SCHEMA, TpchMetadata.TINY_SCHEMA_NAME, UTC_KEY, ENGLISH, null, null);
+        // FIXME Add tests for more complex scenario with more stats
+        MaterializedResult result = computeActual("SHOW STATS FOR nation");
+
+        MaterializedResult expectedStatistics = resultBuilder(getSession(), VARCHAR, DOUBLE)
+                .row(null, 25.0)
+                .build();
+
+        assertEquals(result, expectedStatistics);
     }
 }

@@ -13,6 +13,7 @@
  */
 package com.facebook.presto.util;
 
+import com.facebook.presto.server.JavaVersion;
 import com.facebook.presto.spi.type.TimeZoneKey;
 import com.google.common.collect.Sets;
 import org.joda.time.DateTime;
@@ -28,6 +29,7 @@ import static com.facebook.presto.spi.type.TimeZoneKey.isUtcZoneId;
 import static com.facebook.presto.util.DateTimeZoneIndex.getDateTimeZone;
 import static com.facebook.presto.util.DateTimeZoneIndex.packDateTimeWithZone;
 import static com.facebook.presto.util.DateTimeZoneIndex.unpackDateTimeZone;
+import static java.util.Locale.ENGLISH;
 import static org.testng.Assert.assertEquals;
 
 public class TestTimeZoneUtils
@@ -41,9 +43,15 @@ public class TestTimeZoneUtils
         TreeSet<String> jdkZones = new TreeSet<>(Arrays.asList(TimeZone.getAvailableIDs()));
 
         for (String zoneId : new TreeSet<>(Sets.intersection(jodaZones, jdkZones))) {
-            if (zoneId.toLowerCase().startsWith("etc/") || zoneId.toLowerCase().startsWith("gmt")) {
+            if (zoneId.toLowerCase(ENGLISH).startsWith("etc/") || zoneId.toLowerCase(ENGLISH).startsWith("gmt")) {
                 continue;
             }
+            // Known bug in Joda(https://github.com/JodaOrg/joda-time/issues/427)
+            // We will skip this timezone in test
+            if (JavaVersion.current().getMajor() == 8 && JavaVersion.current().getUpdate().orElse(0) < 121 && zoneId.equals("Asia/Rangoon")) {
+                continue;
+            }
+
             DateTimeZone dateTimeZone = DateTimeZone.forID(zoneId);
             DateTimeZone indexedZone = getDateTimeZone(TimeZoneKey.getTimeZoneKey(zoneId));
 

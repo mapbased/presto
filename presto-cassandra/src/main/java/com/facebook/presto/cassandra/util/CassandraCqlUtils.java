@@ -18,13 +18,17 @@ import com.datastax.driver.core.querybuilder.Select;
 import com.datastax.driver.core.querybuilder.Select.Selection;
 import com.facebook.presto.cassandra.CassandraColumnHandle;
 import com.facebook.presto.cassandra.CassandraTableHandle;
-import com.facebook.presto.spi.ConnectorColumnHandle;
+import com.facebook.presto.cassandra.CassandraType;
+import com.facebook.presto.spi.ColumnHandle;
 import com.fasterxml.jackson.core.io.JsonStringEncoder;
+import io.airlift.slice.Slice;
 
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+
+import static java.util.Locale.ENGLISH;
 
 public final class CassandraCqlUtils
 {
@@ -68,11 +72,11 @@ public final class CassandraCqlUtils
 
     private static String validIdentifier(String identifier)
     {
-        if (!identifier.equals(identifier.toLowerCase())) {
+        if (!identifier.equals(identifier.toLowerCase(ENGLISH))) {
             return quoteIdentifier(identifier);
         }
 
-        if (keywords.contains(identifier.toUpperCase())) {
+        if (keywords.contains(identifier.toUpperCase(ENGLISH))) {
             return quoteIdentifier(identifier);
         }
         return identifier;
@@ -93,14 +97,14 @@ public final class CassandraCqlUtils
         return '"' + new String(JsonStringEncoder.getInstance().quoteAsUTF8(string)) + '"';
     }
 
-    public static void appendSelectColumns(StringBuilder stringBuilder, List<? extends ConnectorColumnHandle> columns)
+    public static void appendSelectColumns(StringBuilder stringBuilder, List<? extends ColumnHandle> columns)
     {
         appendSelectColumns(stringBuilder, columns, true);
     }
 
-    private static void appendSelectColumns(StringBuilder stringBuilder, List<? extends ConnectorColumnHandle> columns, boolean first)
+    private static void appendSelectColumns(StringBuilder stringBuilder, List<? extends ColumnHandle> columns, boolean first)
     {
-        for (ConnectorColumnHandle column : columns) {
+        for (ColumnHandle column : columns) {
             if (first) {
                 first = false;
             }
@@ -158,5 +162,28 @@ public final class CassandraCqlUtils
         String schema = validSchemaName(tableHandle.getSchemaName());
         String table = validTableName(tableHandle.getTableName());
         return QueryBuilder.select().countAll().from(schema, table);
+    }
+
+    public static String cqlValue(String value, CassandraType cassandraType)
+    {
+        switch (cassandraType) {
+            case ASCII:
+            case TEXT:
+            case VARCHAR:
+                return quoteStringLiteral(value);
+            case INET:
+                // remove '/' in the string. e.g. /127.0.0.1
+                return quoteStringLiteral(value.substring(1));
+            default:
+                return value;
+        }
+    }
+
+    public static String toCQLCompatibleString(Object value)
+    {
+        if (value instanceof Slice) {
+            return ((Slice) value).toStringUtf8();
+        }
+        return value.toString();
     }
 }

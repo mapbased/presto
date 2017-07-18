@@ -16,27 +16,24 @@ package com.facebook.presto.operator.aggregation;
 import com.facebook.presto.spi.block.Block;
 import com.facebook.presto.spi.block.BlockBuilder;
 import com.facebook.presto.spi.block.BlockBuilderStatus;
+import com.facebook.presto.spi.type.StandardTypes;
+import com.google.common.collect.ImmutableList;
 
-import static com.facebook.presto.operator.aggregation.AverageAggregations.LONG_AVERAGE;
+import java.util.List;
+
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
 
 public class TestLongAverageAggregation
         extends AbstractTestAggregationFunction
 {
     @Override
-    public Block getSequenceBlock(int start, int length)
+    public Block[] getSequenceBlocks(int start, int length)
     {
-        BlockBuilder blockBuilder = BIGINT.createBlockBuilder(new BlockBuilderStatus());
+        BlockBuilder blockBuilder = BIGINT.createBlockBuilder(new BlockBuilderStatus(), length);
         for (int i = start; i < start + length; i++) {
-            blockBuilder.appendLong(i);
+            BIGINT.writeLong(blockBuilder, i);
         }
-        return blockBuilder.build();
-    }
-
-    @Override
-    public AggregationFunction getFunction()
-    {
-        return LONG_AVERAGE;
+        return new Block[] {blockBuilder.build()};
     }
 
     @Override
@@ -51,5 +48,17 @@ public class TestLongAverageAggregation
             sum += i;
         }
         return sum / length;
+    }
+
+    @Override
+    protected String getFunctionName()
+    {
+        return "avg";
+    }
+
+    @Override
+    protected List<String> getFunctionParameterTypes()
+    {
+        return ImmutableList.of(StandardTypes.BIGINT);
     }
 }

@@ -13,57 +13,187 @@
  */
 package com.facebook.presto.verifier;
 
-import com.facebook.presto.util.IterableTransformer;
-import com.google.common.base.Function;
-import com.google.common.base.Optional;
-import com.google.common.collect.ImmutableMap;
-import io.airlift.configuration.ConfigurationFactory;
-import io.airlift.configuration.ConfigurationLoader;
+import com.facebook.presto.sql.parser.SqlParser;
+import com.facebook.presto.sql.parser.SqlParserOptions;
+import com.facebook.presto.sql.tree.AddColumn;
+import com.facebook.presto.sql.tree.CreateTable;
+import com.facebook.presto.sql.tree.CreateTableAsSelect;
+import com.facebook.presto.sql.tree.CreateView;
+import com.facebook.presto.sql.tree.Delete;
+import com.facebook.presto.sql.tree.DropColumn;
+import com.facebook.presto.sql.tree.DropTable;
+import com.facebook.presto.sql.tree.DropView;
+import com.facebook.presto.sql.tree.Explain;
+import com.facebook.presto.sql.tree.Insert;
+import com.facebook.presto.sql.tree.RenameColumn;
+import com.facebook.presto.sql.tree.RenameTable;
+import com.facebook.presto.sql.tree.ShowCatalogs;
+import com.facebook.presto.sql.tree.ShowColumns;
+import com.facebook.presto.sql.tree.ShowFunctions;
+import com.facebook.presto.sql.tree.ShowPartitions;
+import com.facebook.presto.sql.tree.ShowSchemas;
+import com.facebook.presto.sql.tree.ShowSession;
+import com.facebook.presto.sql.tree.ShowTables;
+import com.facebook.presto.sql.tree.Statement;
+import com.google.common.base.Throwables;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Sets;
+import com.google.inject.Injector;
+import com.google.inject.Key;
+import com.google.inject.Module;
+import com.google.inject.TypeLiteral;
+import com.google.inject.name.Names;
+import io.airlift.bootstrap.Bootstrap;
+import io.airlift.bootstrap.LifeCycleManager;
 import io.airlift.event.client.EventClient;
+import io.airlift.log.Logger;
 import org.skife.jdbi.v2.DBI;
 
-import java.io.FileNotFoundException;
-import java.io.IOException;
-import java.io.PrintStream;
+import java.io.File;
+import java.net.MalformedURLException;
+import java.net.URL;
+import java.net.URLClassLoader;
+import java.nio.file.Paths;
+import java.sql.Driver;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Optional;
+import java.util.Set;
 
-import static com.google.common.base.Preconditions.checkNotNull;
-import static java.lang.String.format;
+import static com.facebook.presto.verifier.QueryType.CREATE;
+import static com.facebook.presto.verifier.QueryType.MODIFY;
+import static com.facebook.presto.verifier.QueryType.READ;
+import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.collect.ImmutableList.toImmutableList;
 
 public class PrestoVerifier
 {
-    private final VerifierConfig config;
+    public static final String SUPPORTED_EVENT_CLIENTS = "SUPPORTED_EVENT_CLIENTS";
+    private static final Logger LOG = Logger.get(PrestoVerifier.class);
 
-    protected PrestoVerifier(VerifierConfig config)
+    protected PrestoVerifier()
     {
-        this.config = checkNotNull(config, "config is null");
     }
 
     public static void main(String[] args)
             throws Exception
     {
-        Optional<String> configPath = Optional.fromNullable((args.length > 0) ? args[0] : null);
-        VerifierConfig config = loadConfig(VerifierConfig.class, configPath);
-        PrestoVerifier verifier = new PrestoVerifier(config);
-        verifier.run();
-
-        // HttpClient's threads don't seem to shutdown properly, so force the VM to exit
-        System.exit(0);
+        int failed = new PrestoVerifier().run(args);
+        System.exit((failed > 0) ? 1 : 0);
     }
 
-    public void run()
+    public int run(String[] args)
             throws Exception
     {
-        EventClient eventClient = getEventClient(config);
+        if (args.length > 0) {
+            System.setProperty("config", args[0]);
+        }
 
-        VerifierDao dao = new DBI(config.getQueryDatabase()).onDemand(VerifierDao.class);
-        List<QueryPair> queries = dao.getQueriesBySuite(config.getSuite(), config.getMaxQueries());
+        ImmutableList.Builder<Module> builder = ImmutableList.<Module>builder()
+                .add(new PrestoVerifierModule())
+                .addAll(getAdditionalModules());
 
-        queries = applyOverrides(config, queries);
-        queries = filterQueries(queries);
+        Bootstrap app = new Bootstrap(builder.build());
+        Injector injector = app.strictConfig().initialize();
 
-        Verifier verifier = new Verifier(System.out, config, eventClient);
-        verifier.run(queries);
+        try {
+            VerifierConfig config = injector.getInstance(VerifierConfig.class);
+            injector.injectMembers(this);
+            Set<String> supportedEventClients = injector.getInstance(Key.get(new TypeLiteral<Set<String>>() {}, Names.named(SUPPORTED_EVENT_CLIENTS)));
+            for (String clientType : config.getEventClients()) {
+                checkArgument(supportedEventClients.contains(clientType), "Unsupported event client: %s", clientType);
+            }
+            Set<EventClient> eventClients = injector.getInstance(Key.get(new TypeLiteral<Set<EventClient>>() {}));
+
+            VerifierDao dao = new DBI(config.getQueryDatabase()).onDemand(VerifierDao.class);
+
+            ImmutableList.Builder<QueryPair> queriesBuilder = ImmutableList.builder();
+            for (String suite : config.getSuites()) {
+                queriesBuilder.addAll(dao.getQueriesBySuite(suite, config.getMaxQueries()));
+            }
+
+            List<QueryPair> queries = queriesBuilder.build();
+            queries = applyOverrides(config, queries);
+            queries = filterQueryTypes(new SqlParser(getParserOptions()), config, queries);
+            queries = filterQueries(queries);
+            if (config.getShadowWrites()) {
+                Sets.SetView<QueryType> allowedTypes = Sets.union(config.getTestQueryTypes(), config.getControlQueryTypes());
+                checkArgument(!Sets.intersection(allowedTypes, ImmutableSet.of(CREATE, MODIFY)).isEmpty(), "CREATE or MODIFY queries must be allowed in test or control to use write shadowing");
+                queries = rewriteQueries(new SqlParser(getParserOptions()), config, queries);
+            }
+
+            // Load jdbc drivers if needed
+            if (config.getAdditionalJdbcDriverPath() != null) {
+                List<URL> urlList = getUrls(config.getAdditionalJdbcDriverPath());
+                URL[] urls = new URL[urlList.size()];
+                urlList.toArray(urls);
+                if (config.getTestJdbcDriverName() != null) {
+                    loadJdbcDriver(urls, config.getTestJdbcDriverName());
+                }
+                if (config.getControlJdbcDriverName() != null) {
+                    loadJdbcDriver(urls, config.getControlJdbcDriverName());
+                }
+            }
+
+            // TODO: construct this with Guice
+            Verifier verifier = new Verifier(System.out, config, eventClients);
+            return verifier.run(queries);
+        }
+        finally {
+            injector.getInstance(LifeCycleManager.class).stop();
+        }
+    }
+
+    private static void loadJdbcDriver(URL[] urls, String jdbcClassName)
+    {
+        try {
+            try (URLClassLoader classLoader = new URLClassLoader(urls)) {
+                Driver driver = (Driver) Class.forName(jdbcClassName, true, classLoader).getConstructor().newInstance();
+                // The code calling the DriverManager to load the driver needs to be in the same class loader as the driver
+                // In order to bypass this we create a shim that wraps the specified jdbc driver class.
+                // TODO: Change the implementation to be DataSource based instead of DriverManager based.
+                DriverManager.registerDriver(new ForwardingDriver(driver));
+            }
+        }
+        catch (Exception e) {
+            throw Throwables.propagate(e);
+        }
+    }
+
+    private static List<URL> getUrls(String path)
+            throws MalformedURLException
+    {
+        ImmutableList.Builder<URL> urlList = ImmutableList.builder();
+        File driverPath = new File(path);
+        if (!driverPath.isDirectory()) {
+            urlList.add(Paths.get(path).toUri().toURL());
+            return urlList.build();
+        }
+        File[] files = driverPath.listFiles((dir, name) -> {
+            return name.endsWith(".jar");
+        });
+        if (files == null) {
+            return urlList.build();
+        }
+        for (File file : files) {
+            // Does not handle nested directories
+            if (file.isDirectory()) {
+                continue;
+            }
+            urlList.add(Paths.get(file.getAbsolutePath()).toUri().toURL());
+        }
+        return urlList.build();
+    }
+
+    /**
+     * Override this method to change the parser options used when parsing queries to decide if they match the allowed query types
+     */
+    protected SqlParserOptions getParserOptions()
+    {
+        return new SqlParserOptions();
     }
 
     /**
@@ -74,60 +204,185 @@ public class PrestoVerifier
         return queries;
     }
 
-    private static List<QueryPair> applyOverrides(final VerifierConfig config, List<QueryPair> queries)
+    private static List<QueryPair> rewriteQueries(SqlParser parser, VerifierConfig config, List<QueryPair> queries)
     {
-        return IterableTransformer.on(queries).transform(new Function<QueryPair, QueryPair>()
-        {
-            @Override
-            public QueryPair apply(QueryPair input)
-            {
-                Query test = new Query(
-                        Optional.fromNullable(config.getTestCatalogOverride()).or(input.getTest().getCatalog()),
-                        Optional.fromNullable(config.getTestSchemaOverride()).or(input.getTest().getSchema()),
-                        input.getTest().getQuery());
-                Query control = new Query(
-                        Optional.fromNullable(config.getControlCatalogOverride()).or(input.getControl().getCatalog()),
-                        Optional.fromNullable(config.getControlSchemaOverride()).or(input.getControl().getSchema()),
-                        input.getControl().getQuery());
-                return new QueryPair(input.getSuite(), input.getName(), test, control);
+        QueryRewriter testRewriter = new QueryRewriter(
+                parser,
+                config.getTestGateway(),
+                config.getShadowTestTablePrefix(),
+                Optional.ofNullable(config.getTestCatalogOverride()),
+                Optional.ofNullable(config.getTestSchemaOverride()),
+                Optional.ofNullable(config.getTestUsernameOverride()),
+                Optional.ofNullable(config.getTestPasswordOverride()),
+                config.getDoublePrecision(),
+                config.getTestTimeout());
+
+        QueryRewriter controlRewriter = new QueryRewriter(
+                parser,
+                config.getControlGateway(),
+                config.getShadowControlTablePrefix(),
+                Optional.ofNullable(config.getControlCatalogOverride()),
+                Optional.ofNullable(config.getControlSchemaOverride()),
+                Optional.ofNullable(config.getControlUsernameOverride()),
+                Optional.ofNullable(config.getControlPasswordOverride()),
+                config.getDoublePrecision(),
+                config.getControlTimeout());
+
+        ImmutableList.Builder<QueryPair> builder = ImmutableList.builder();
+        for (QueryPair pair : queries) {
+            try {
+                Query testQuery = testRewriter.shadowQuery(pair.getTest());
+                Query controlQuery = controlRewriter.shadowQuery(pair.getControl());
+                builder.add(new QueryPair(pair.getSuite(), pair.getName(), testQuery, controlQuery));
             }
-        }).list();
+            catch (SQLException | QueryRewriter.QueryRewriteException e) {
+                LOG.warn(e, "Failed to rewrite %s for shadowing. Skipping.", pair.getName());
+            }
+        }
+        return builder.build();
     }
 
-    private EventClient getEventClient(VerifierConfig config)
-            throws FileNotFoundException
+    private static List<QueryPair> filterQueryTypes(SqlParser parser, VerifierConfig config, List<QueryPair> queries)
     {
-        switch (config.getEventClient()) {
-            case "human-readable":
-                return new HumanReadableEventClient(System.out, config.isAlwaysReport());
-            case "file":
-                checkNotNull(config.getEventLogFile(), "event log file path is null");
-                return new JsonEventClient(new PrintStream(config.getEventLogFile()));
+        ImmutableList.Builder<QueryPair> builder = ImmutableList.builder();
+        for (QueryPair pair : queries) {
+            if (queryTypeAllowed(parser, config.getControlQueryTypes(), pair.getControl()) && queryTypeAllowed(parser, config.getTestQueryTypes(), pair.getTest())) {
+                builder.add(pair);
+            }
         }
-        EventClient client = getEventClient(config.getEventClient());
-        if (client != null) {
-            return client;
-        }
-        throw new RuntimeException(format("Unsupported event client %s", config.getEventClient()));
+        return builder.build();
     }
 
-    /**
-     * Override this method to provide other event client implementations.
-     */
-    protected EventClient getEventClient(String name)
+    private static boolean queryTypeAllowed(SqlParser parser, Set<QueryType> allowedTypes, Query query)
     {
-        return null;
+        Set<QueryType> types = EnumSet.noneOf(QueryType.class);
+        try {
+            for (String sql : query.getPreQueries()) {
+                types.add(statementToQueryType(parser, sql));
+            }
+            types.add(statementToQueryType(parser, query.getQuery()));
+            for (String sql : query.getPostQueries()) {
+                types.add(statementToQueryType(parser, sql));
+            }
+        }
+        catch (UnsupportedOperationException e) {
+            return false;
+        }
+        return allowedTypes.containsAll(types);
     }
 
-    public static <T> T loadConfig(Class<T> clazz, Optional<String> path)
-            throws IOException
+    static QueryType statementToQueryType(SqlParser parser, String sql)
     {
-        ImmutableMap.Builder<String, String> map = ImmutableMap.builder();
-        ConfigurationLoader loader = new ConfigurationLoader();
-        if (path.isPresent()) {
-            map.putAll(loader.loadPropertiesFrom(path.get()));
+        try {
+            return statementToQueryType(parser.createStatement(sql));
         }
-        map.putAll(loader.getSystemProperties());
-        return new ConfigurationFactory(map.build()).build(clazz);
+        catch (RuntimeException e) {
+            throw new UnsupportedOperationException();
+        }
+    }
+
+    private static QueryType statementToQueryType(Statement statement)
+    {
+        if (statement instanceof AddColumn) {
+            return MODIFY;
+        }
+        if (statement instanceof CreateTable) {
+            return CREATE;
+        }
+        if (statement instanceof CreateTableAsSelect) {
+            return CREATE;
+        }
+        if (statement instanceof CreateView) {
+            if (((CreateView) statement).isReplace()) {
+                return MODIFY;
+            }
+            return CREATE;
+        }
+        if (statement instanceof Delete) {
+            return MODIFY;
+        }
+        if (statement instanceof DropTable) {
+            return MODIFY;
+        }
+        if (statement instanceof DropView) {
+            return MODIFY;
+        }
+        if (statement instanceof Explain) {
+            if (((Explain) statement).isAnalyze()) {
+                return statementToQueryType(((Explain) statement).getStatement());
+            }
+            return READ;
+        }
+        if (statement instanceof Insert) {
+            return MODIFY;
+        }
+        if (statement instanceof com.facebook.presto.sql.tree.Query) {
+            return READ;
+        }
+        if (statement instanceof RenameColumn) {
+            return MODIFY;
+        }
+        if (statement instanceof DropColumn) {
+            return MODIFY;
+        }
+        if (statement instanceof RenameTable) {
+            return MODIFY;
+        }
+        if (statement instanceof ShowCatalogs) {
+            return READ;
+        }
+        if (statement instanceof ShowColumns) {
+            return READ;
+        }
+        if (statement instanceof ShowFunctions) {
+            return READ;
+        }
+        if (statement instanceof ShowPartitions) {
+            return READ;
+        }
+        if (statement instanceof ShowSchemas) {
+            return READ;
+        }
+        if (statement instanceof ShowSession) {
+            return READ;
+        }
+        if (statement instanceof ShowTables) {
+            return READ;
+        }
+        throw new UnsupportedOperationException();
+    }
+
+    protected Iterable<Module> getAdditionalModules()
+    {
+        return ImmutableList.of();
+    }
+
+    private static List<QueryPair> applyOverrides(VerifierConfig config, List<QueryPair> queries)
+    {
+        return queries.stream()
+                .map(input -> {
+                    Query test = new Query(
+                            Optional.ofNullable(config.getTestCatalogOverride()).orElse(input.getTest().getCatalog()),
+                            Optional.ofNullable(config.getTestSchemaOverride()).orElse(input.getTest().getSchema()),
+                            input.getTest().getPreQueries(),
+                            input.getTest().getQuery(),
+                            input.getTest().getPostQueries(),
+                            Optional.ofNullable(config.getTestUsernameOverride()).orElse(input.getTest().getUsername()),
+                            Optional.ofNullable(config.getTestPasswordOverride()).orElse(
+                                    Optional.ofNullable(input.getTest().getPassword()).orElse(null)),
+                            input.getTest().getSessionProperties());
+                    Query control = new Query(
+                            Optional.ofNullable(config.getControlCatalogOverride()).orElse(input.getControl().getCatalog()),
+                            Optional.ofNullable(config.getControlSchemaOverride()).orElse(input.getControl().getSchema()),
+                            input.getControl().getPreQueries(),
+                            input.getControl().getQuery(),
+                            input.getControl().getPostQueries(),
+                            Optional.ofNullable(config.getControlUsernameOverride()).orElse(input.getControl().getUsername()),
+                            Optional.ofNullable(config.getControlPasswordOverride()).orElse(
+                                    Optional.ofNullable(input.getControl().getPassword()).orElse(null)),
+                            input.getControl().getSessionProperties());
+                    return new QueryPair(input.getSuite(), input.getName(), test, control);
+                })
+                .collect(toImmutableList());
     }
 }

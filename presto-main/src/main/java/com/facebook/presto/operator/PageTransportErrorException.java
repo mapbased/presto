@@ -22,6 +22,11 @@ public class PageTransportErrorException
 {
     public PageTransportErrorException(String message)
     {
-        super(PAGE_TRANSPORT_ERROR.toErrorCode(), message);
+        super(PAGE_TRANSPORT_ERROR, message);
+    }
+
+    public PageTransportErrorException(String message, Throwable cause)
+    {
+        super(PAGE_TRANSPORT_ERROR, message, cause);
     }
 }

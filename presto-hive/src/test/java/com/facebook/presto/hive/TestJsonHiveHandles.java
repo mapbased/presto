@@ -13,18 +13,20 @@
  */
 package com.facebook.presto.hive;
 
-import com.facebook.presto.spi.ConnectorSession;
 import com.facebook.presto.spi.SchemaTableName;
+import com.facebook.presto.spi.type.StandardTypes;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.ImmutableMap;
 import io.airlift.json.ObjectMapperProvider;
 import org.testng.annotations.Test;
 
-import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 
-import static com.facebook.presto.spi.type.TimeZoneKey.UTC_KEY;
+import static com.facebook.presto.hive.HiveColumnHandle.ColumnType.PARTITION_KEY;
+import static com.facebook.presto.spi.type.DoubleType.DOUBLE;
+import static com.facebook.presto.spi.type.TypeSignature.parseTypeSignature;
 import static io.airlift.testing.Assertions.assertEqualsIgnoreOrder;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertTrue;
@@ -32,29 +34,19 @@ import static org.testng.Assert.assertTrue;
 @Test
 public class TestJsonHiveHandles
 {
-    private static final ConnectorSession SESSION = new ConnectorSession("user", "test", "catalog", "test", UTC_KEY, Locale.ENGLISH, null, null);
-
-    private static final Map<String, Object> TABLE_HANDLE_AS_MAP = ImmutableMap.<String, Object>of(
+    private static final Map<String, Object> TABLE_HANDLE_AS_MAP = ImmutableMap.of(
             "clientId", "hive",
             "schemaName", "hive_schema",
-            "tableName", "hive_table",
-            "session", ImmutableMap.builder()
-                    .put("user", SESSION.getUser())
-                    .put("source", SESSION.getSource())
-                    .put("catalog", SESSION.getCatalog())
-                    .put("schema", SESSION.getSchema())
-                    .put("timeZoneKey", (int) SESSION.getTimeZoneKey().getKey())
-                    .put("locale", SESSION.getLocale().toString())
-                    .put("startTime", SESSION.getStartTime())
-                    .build());
+            "tableName", "hive_table");
 
     private static final Map<String, Object> COLUMN_HANDLE_AS_MAP = ImmutableMap.<String, Object>builder()
             .put("clientId", "hive")
             .put("name", "column")
-            .put("ordinalPosition", 42)
-            .put("hiveType", "FLOAT")
+            .put("hiveType", "float")
+            .put("typeSignature", "double")
             .put("hiveColumnIndex", -1)
-            .put("partitionKey", true)
+            .put("columnType", PARTITION_KEY.toString())
+            .put("comment", "comment")
             .build();
 
     private final ObjectMapper objectMapper = new ObjectMapperProvider().get();
@@ -63,7 +55,7 @@ public class TestJsonHiveHandles
     public void testTableHandleSerialize()
             throws Exception
     {
-        HiveTableHandle tableHandle = new HiveTableHandle("hive", "hive_schema", "hive_table", SESSION);
+        HiveTableHandle tableHandle = new HiveTableHandle("hive", "hive_schema", "hive_table");
 
         assertTrue(objectMapper.canSerialize(HiveTableHandle.class));
         String json = objectMapper.writeValueAsString(tableHandle);
@@ -88,7 +80,7 @@ public class TestJsonHiveHandles
     public void testColumnHandleSerialize()
             throws Exception
     {
-        HiveColumnHandle columnHandle = new HiveColumnHandle("hive", "column", 42, HiveType.FLOAT, -1, true);
+        HiveColumnHandle columnHandle = new HiveColumnHandle("hive", "column", HiveType.HIVE_FLOAT, parseTypeSignature(StandardTypes.DOUBLE), -1, PARTITION_KEY, Optional.of("comment"));
 
         assertTrue(objectMapper.canSerialize(HiveColumnHandle.class));
         String json = objectMapper.writeValueAsString(columnHandle);
@@ -103,9 +95,10 @@ public class TestJsonHiveHandles
 
         HiveColumnHandle columnHandle = objectMapper.readValue(json, HiveColumnHandle.class);
 
+        assertEquals(columnHandle.getClientId(), "hive");
         assertEquals(columnHandle.getName(), "column");
-        assertEquals(columnHandle.getOrdinalPosition(), 42);
-        assertEquals(columnHandle.getHiveType(), HiveType.FLOAT);
+        assertEquals(columnHandle.getTypeSignature(), DOUBLE.getTypeSignature());
+        assertEquals(columnHandle.getHiveType(), HiveType.HIVE_FLOAT);
         assertEquals(columnHandle.getHiveColumnIndex(), -1);
         assertEquals(columnHandle.isPartitionKey(), true);
     }

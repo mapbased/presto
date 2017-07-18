@@ -13,16 +13,18 @@
  */
 package com.facebook.presto.operator;
 
+import com.facebook.presto.spi.Page;
+import com.facebook.presto.spi.PageBuilder;
 import com.facebook.presto.spi.block.SortOrder;
 import com.facebook.presto.spi.type.Type;
+import com.facebook.presto.sql.planner.plan.PlanNodeId;
 import com.google.common.collect.ImmutableList;
 import com.google.common.primitives.Ints;
-import com.google.common.util.concurrent.ListenableFuture;
 
 import java.util.List;
 
-import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
+import static java.util.Objects.requireNonNull;
 
 public class OrderByOperator
         implements Operator
@@ -31,6 +33,7 @@ public class OrderByOperator
             implements OperatorFactory
     {
         private final int operatorId;
+        private final PlanNodeId planNodeId;
         private final List<Type> sourceTypes;
         private final List<Integer> outputChannels;
         private final int expectedPositions;
@@ -38,23 +41,28 @@ public class OrderByOperator
         private final List<SortOrder> sortOrder;
         private final List<Type> types;
         private boolean closed;
+        private final PagesIndex.Factory pagesIndexFactory;
 
         public OrderByOperatorFactory(
                 int operatorId,
+                PlanNodeId planNodeId,
                 List<? extends Type> sourceTypes,
                 List<Integer> outputChannels,
                 int expectedPositions,
                 List<Integer> sortChannels,
-                List<SortOrder> sortOrder)
+                List<SortOrder> sortOrder,
+                PagesIndex.Factory pagesIndexFactory)
         {
             this.operatorId = operatorId;
-            this.sourceTypes = ImmutableList.copyOf(checkNotNull(sourceTypes, "sourceTypes is null"));
-            this.outputChannels = checkNotNull(outputChannels, "outputChannels is null");
+            this.planNodeId = requireNonNull(planNodeId, "planNodeId is null");
+            this.sourceTypes = ImmutableList.copyOf(requireNonNull(sourceTypes, "sourceTypes is null"));
+            this.outputChannels = requireNonNull(outputChannels, "outputChannels is null");
             this.expectedPositions = expectedPositions;
-            this.sortChannels = ImmutableList.copyOf(checkNotNull(sortChannels, "sortChannels is null"));
-            this.sortOrder = ImmutableList.copyOf(checkNotNull(sortOrder, "sortOrder is null"));
+            this.sortChannels = ImmutableList.copyOf(requireNonNull(sortChannels, "sortChannels is null"));
+            this.sortOrder = ImmutableList.copyOf(requireNonNull(sortOrder, "sortOrder is null"));
 
             this.types = toTypes(sourceTypes, outputChannels);
+            this.pagesIndexFactory = requireNonNull(pagesIndexFactory, "pagesIndexFactory is null");
         }
 
         @Override
@@ -68,20 +76,27 @@ public class OrderByOperator
         {
             checkState(!closed, "Factory is already closed");
 
-            OperatorContext operatorContext = driverContext.addOperatorContext(operatorId, OrderByOperator.class.getSimpleName());
+            OperatorContext operatorContext = driverContext.addOperatorContext(operatorId, planNodeId, OrderByOperator.class.getSimpleName());
             return new OrderByOperator(
                     operatorContext,
                     sourceTypes,
                     outputChannels,
                     expectedPositions,
                     sortChannels,
-                    sortOrder);
+                    sortOrder,
+                    pagesIndexFactory);
         }
 
         @Override
         public void close()
         {
             closed = true;
+        }
+
+        @Override
+        public OperatorFactory duplicate()
+        {
+            return new OrderByOperatorFactory(operatorId, planNodeId, sourceTypes, outputChannels, expectedPositions, sortChannels, sortOrder, pagesIndexFactory);
         }
     }
 
@@ -111,15 +126,18 @@ public class OrderByOperator
             List<Integer> outputChannels,
             int expectedPositions,
             List<Integer> sortChannels,
-            List<SortOrder> sortOrder)
+            List<SortOrder> sortOrder,
+            PagesIndex.Factory pagesIndexFactory)
     {
-        this.operatorContext = checkNotNull(operatorContext, "operatorContext is null");
-        this.outputChannels = Ints.toArray(checkNotNull(outputChannels, "outputChannels is null"));
-        this.types = toTypes(sourceTypes, outputChannels);
-        this.sortChannels = ImmutableList.copyOf(checkNotNull(sortChannels, "sortChannels is null"));
-        this.sortOrder = ImmutableList.copyOf(checkNotNull(sortOrder, "sortOrder is null"));
+        requireNonNull(pagesIndexFactory, "pagesIndexFactory is null");
 
-        this.pageIndex = new PagesIndex(sourceTypes, expectedPositions, operatorContext);
+        this.operatorContext = requireNonNull(operatorContext, "operatorContext is null");
+        this.outputChannels = Ints.toArray(requireNonNull(outputChannels, "outputChannels is null"));
+        this.types = toTypes(sourceTypes, outputChannels);
+        this.sortChannels = ImmutableList.copyOf(requireNonNull(sortChannels, "sortChannels is null"));
+        this.sortOrder = ImmutableList.copyOf(requireNonNull(sortOrder, "sortOrder is null"));
+
+        this.pageIndex = pagesIndexFactory.newPagesIndex(sourceTypes, expectedPositions);
 
         this.pageBuilder = new PageBuilder(this.types);
     }
@@ -154,12 +172,6 @@ public class OrderByOperator
     }
 
     @Override
-    public ListenableFuture<?> isBlocked()
-    {
-        return NOT_BLOCKED;
-    }
-
-    @Override
     public boolean needsInput()
     {
         return state == State.NEEDS_INPUT;
@@ -169,9 +181,15 @@ public class OrderByOperator
     public void addInput(Page page)
     {
         checkState(state == State.NEEDS_INPUT, "Operator is already finishing");
-        checkNotNull(page, "page is null");
+        requireNonNull(page, "page is null");
 
         pageIndex.addPage(page);
+
+        if (!operatorContext.trySetMemoryReservation(pageIndex.getEstimatedSize().toBytes())) {
+            pageIndex.compact();
+        }
+
+        operatorContext.setMemoryReservation(pageIndex.getEstimatedSize().toBytes());
     }
 
     @Override

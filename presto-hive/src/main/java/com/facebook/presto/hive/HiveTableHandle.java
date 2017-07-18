@@ -13,14 +13,14 @@
  */
 package com.facebook.presto.hive;
 
-import com.facebook.presto.spi.ConnectorSession;
 import com.facebook.presto.spi.ConnectorTableHandle;
 import com.facebook.presto.spi.SchemaTableName;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.google.common.base.Objects;
 
-import static com.google.common.base.Preconditions.checkNotNull;
+import java.util.Objects;
+
+import static java.util.Objects.requireNonNull;
 
 public class HiveTableHandle
         implements ConnectorTableHandle
@@ -28,19 +28,16 @@ public class HiveTableHandle
     private final String clientId;
     private final String schemaName;
     private final String tableName;
-    private final ConnectorSession session;
 
     @JsonCreator
     public HiveTableHandle(
             @JsonProperty("clientId") String clientId,
             @JsonProperty("schemaName") String schemaName,
-            @JsonProperty("tableName") String tableName,
-            @JsonProperty("session") ConnectorSession session)
+            @JsonProperty("tableName") String tableName)
     {
-        this.clientId = checkNotNull(clientId, "clientId is null");
-        this.schemaName = checkNotNull(schemaName, "schemaName is null");
-        this.tableName = checkNotNull(tableName, "tableName is null");
-        this.session = checkNotNull(session, "session is null");
+        this.clientId = requireNonNull(clientId, "clientId is null");
+        this.schemaName = requireNonNull(schemaName, "schemaName is null");
+        this.tableName = requireNonNull(tableName, "tableName is null");
     }
 
     @JsonProperty
@@ -53,12 +50,6 @@ public class HiveTableHandle
     public String getSchemaName()
     {
         return schemaName;
-    }
-
-    @JsonProperty
-    public ConnectorSession getSession()
-    {
-        return session;
     }
 
     @JsonProperty
@@ -75,7 +66,7 @@ public class HiveTableHandle
     @Override
     public int hashCode()
     {
-        return Objects.hashCode(clientId, schemaName, tableName);
+        return Objects.hash(clientId, schemaName, tableName);
     }
 
     @Override
@@ -88,9 +79,9 @@ public class HiveTableHandle
             return false;
         }
         HiveTableHandle other = (HiveTableHandle) obj;
-        return Objects.equal(this.clientId, other.clientId) &&
-                Objects.equal(this.schemaName, other.schemaName) &&
-                Objects.equal(this.tableName, other.tableName);
+        return Objects.equals(this.clientId, other.clientId) &&
+                Objects.equals(this.schemaName, other.schemaName) &&
+                Objects.equals(this.tableName, other.tableName);
     }
 
     @Override

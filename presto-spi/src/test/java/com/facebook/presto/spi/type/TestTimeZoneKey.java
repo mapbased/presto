@@ -24,6 +24,7 @@ import java.util.SortedSet;
 
 import static com.facebook.presto.spi.type.TimeZoneKey.MAX_TIME_ZONE_KEY;
 import static com.facebook.presto.spi.type.TimeZoneKey.UTC_KEY;
+import static java.util.Locale.ENGLISH;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertSame;
@@ -56,11 +57,15 @@ public class TestTimeZoneKey
         assertSame(TimeZoneKey.getTimeZoneKey("GMT0"), UTC_KEY);
         assertSame(TimeZoneKey.getTimeZoneKey("GMT+0"), UTC_KEY);
         assertSame(TimeZoneKey.getTimeZoneKey("GMT-0"), UTC_KEY);
+        assertSame(TimeZoneKey.getTimeZoneKey("GMT+00:00"), UTC_KEY);
+        assertSame(TimeZoneKey.getTimeZoneKey("GMT-00:00"), UTC_KEY);
         assertSame(TimeZoneKey.getTimeZoneKey("+00:00"), UTC_KEY);
         assertSame(TimeZoneKey.getTimeZoneKey("-00:00"), UTC_KEY);
         assertSame(TimeZoneKey.getTimeZoneKey("etc/utc"), UTC_KEY);
         assertSame(TimeZoneKey.getTimeZoneKey("etc/gmt"), UTC_KEY);
         assertSame(TimeZoneKey.getTimeZoneKey("etc/gmt+0"), UTC_KEY);
+        assertSame(TimeZoneKey.getTimeZoneKey("etc/gmt+00:00"), UTC_KEY);
+        assertSame(TimeZoneKey.getTimeZoneKey("etc/gmt-00:00"), UTC_KEY);
         assertSame(TimeZoneKey.getTimeZoneKey("etc/ut"), UTC_KEY);
         assertSame(TimeZoneKey.getTimeZoneKey("etc/UT"), UTC_KEY);
         assertSame(TimeZoneKey.getTimeZoneKey("etc/UCT"), UTC_KEY);
@@ -133,8 +138,8 @@ public class TestTimeZoneKey
         for (TimeZoneKey timeZoneKey : TimeZoneKey.getTimeZoneKeys()) {
             assertSame(TimeZoneKey.getTimeZoneKey(timeZoneKey.getKey()), timeZoneKey);
             assertSame(TimeZoneKey.getTimeZoneKey(timeZoneKey.getId()), timeZoneKey);
-            assertSame(TimeZoneKey.getTimeZoneKey(timeZoneKey.getId().toUpperCase()), timeZoneKey);
-            assertSame(TimeZoneKey.getTimeZoneKey(timeZoneKey.getId().toLowerCase()), timeZoneKey);
+            assertSame(TimeZoneKey.getTimeZoneKey(timeZoneKey.getId().toUpperCase(ENGLISH)), timeZoneKey);
+            assertSame(TimeZoneKey.getTimeZoneKey(timeZoneKey.getId().toLowerCase(ENGLISH)), timeZoneKey);
         }
     }
 
@@ -186,7 +191,7 @@ public class TestTimeZoneKey
             hasher.putShort(timeZoneKey.getKey());
             hasher.putString(timeZoneKey.getId(), StandardCharsets.UTF_8);
         }
-        // Zone file should not (normally) be changed, so let's make is more difficult
-        assertEquals(hasher.hash().asLong(), -3500128963570093374L, "zone-index.properties file contents changed!");
+        // Zone file should not (normally) be changed, so let's make this more difficult
+        assertEquals(hasher.hash().asLong(), -5839014144088293930L, "zone-index.properties file contents changed!");
     }
 }

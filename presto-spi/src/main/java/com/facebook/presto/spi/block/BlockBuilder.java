@@ -16,32 +16,69 @@ package com.facebook.presto.spi.block;
 import io.airlift.slice.Slice;
 
 public interface BlockBuilder
-        extends RandomAccessBlock
+        extends Block
 {
     /**
-     * Appends a boolean value to the block.
+     * Write a byte to the current entry;
      */
-    BlockBuilder appendBoolean(boolean value);
+    default BlockBuilder writeByte(int value)
+    {
+        throw new UnsupportedOperationException(getClass().getName());
+    }
 
     /**
-     * Appends a long value to the block.
+     * Write a short to the current entry;
      */
-    BlockBuilder appendLong(long value);
+    default BlockBuilder writeShort(int value)
+    {
+        throw new UnsupportedOperationException(getClass().getName());
+    }
 
     /**
-     * Appends a double value to the block.
+     * Write a int to the current entry;
      */
-    BlockBuilder appendDouble(double value);
+    default BlockBuilder writeInt(int value)
+    {
+        throw new UnsupportedOperationException(getClass().getName());
+    }
 
     /**
-     * Appends a Slice value to the block.
+     * Write a long to the current entry;
      */
-    BlockBuilder appendSlice(Slice value);
+    default BlockBuilder writeLong(long value)
+    {
+        throw new UnsupportedOperationException(getClass().getName());
+    }
 
     /**
-     * Appends a range of a Slice value to the block.
+     * Write a byte sequences to the current entry;
      */
-    BlockBuilder appendSlice(Slice value, int offset, int length);
+    default BlockBuilder writeBytes(Slice source, int sourceIndex, int length)
+    {
+        throw new UnsupportedOperationException(getClass().getName());
+    }
+
+    /**
+     * Write an object to the current entry;
+     */
+    default BlockBuilder writeObject(Object value)
+    {
+        throw new UnsupportedOperationException(getClass().getName());
+    }
+
+    /**
+     * Return a writer to the current entry. The caller can operate on the returned caller to incrementally build the object. This is generally more efficient than
+     * building the object elsewhere and call writeObject afterwards because a large chunk of memory could potentially be unnecessarily copied in this process.
+     */
+    default BlockBuilder beginBlockEntry()
+    {
+        throw new UnsupportedOperationException(getClass().getName());
+    }
+
+    /**
+     * Write a byte to the current entry;
+     */
+    BlockBuilder closeEntry();
 
     /**
      * Appends a null value to the block.
@@ -51,15 +88,10 @@ public interface BlockBuilder
     /**
      * Builds the block. This method can be called multiple times.
      */
-    RandomAccessBlock build();
+    Block build();
 
     /**
-     * Have any values been added to the block?
+     * Creates a new block builder of the same type based on the current usage statistics of this block builder.
      */
-    boolean isEmpty();
-
-    /**
-     * Is this block full? If true no more values should be added to the block.
-     */
-    boolean isFull();
+    BlockBuilder newBlockBuilderLike(BlockBuilderStatus blockBuilderStatus);
 }

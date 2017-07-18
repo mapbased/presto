@@ -13,18 +13,24 @@
  */
 package com.facebook.presto.hive.util;
 
-import com.fasterxml.jackson.core.Base64Variants;
+import com.facebook.presto.block.BlockSerdeUtil;
+import com.facebook.presto.spi.block.Block;
+import com.facebook.presto.spi.block.BlockBuilder;
+import com.facebook.presto.spi.block.BlockBuilderStatus;
+import com.facebook.presto.spi.block.InterleavedBlockBuilder;
+import com.facebook.presto.spi.type.ArrayType;
+import com.facebook.presto.spi.type.RowType;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.reflect.TypeToken;
+import io.airlift.slice.DynamicSliceOutput;
+import io.airlift.slice.Slice;
+import io.airlift.slice.SliceOutput;
+import io.airlift.slice.Slices;
 import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
-import org.apache.hadoop.hive.serde2.objectinspector.UnionObject;
-import org.apache.hadoop.hive.serde2.objectinspector.UnionObjectInspector;
+import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector.Category;
 import org.apache.hadoop.io.BytesWritable;
 import org.joda.time.DateTime;
-import org.joda.time.DateTimeZone;
-import org.joda.time.format.DateTimeFormat;
-import org.joda.time.format.DateTimeFormatter;
 import org.testng.annotations.Test;
 
 import java.lang.reflect.Type;
@@ -32,22 +38,35 @@ import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.TreeMap;
 
-import static com.facebook.presto.hive.util.SerDeUtils.getJsonBytes;
+import static com.facebook.presto.hive.HiveTestUtils.mapType;
+import static com.facebook.presto.hive.util.SerDeUtils.getBlockObject;
+import static com.facebook.presto.hive.util.SerDeUtils.serializeObject;
+import static com.facebook.presto.spi.type.BigintType.BIGINT;
+import static com.facebook.presto.spi.type.BooleanType.BOOLEAN;
+import static com.facebook.presto.spi.type.DoubleType.DOUBLE;
+import static com.facebook.presto.spi.type.IntegerType.INTEGER;
+import static com.facebook.presto.spi.type.RealType.REAL;
+import static com.facebook.presto.spi.type.SmallintType.SMALLINT;
+import static com.facebook.presto.spi.type.TinyintType.TINYINT;
+import static com.facebook.presto.spi.type.VarbinaryType.VARBINARY;
+import static com.facebook.presto.spi.type.VarcharType.createUnboundedVarcharType;
+import static com.facebook.presto.tests.StructuralTestUtil.arrayBlockOf;
+import static com.facebook.presto.tests.StructuralTestUtil.mapBlockOf;
+import static com.facebook.presto.tests.StructuralTestUtil.rowBlockOf;
+import static io.airlift.slice.Slices.utf8Slice;
+import static java.lang.Double.doubleToLongBits;
+import static java.lang.Float.floatToRawIntBits;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.apache.hadoop.hive.serde2.objectinspector.ObjectInspectorFactory.ObjectInspectorOptions;
 import static org.apache.hadoop.hive.serde2.objectinspector.ObjectInspectorFactory.getReflectionObjectInspector;
-import static org.apache.hadoop.hive.serde2.objectinspector.ObjectInspectorFactory.getStandardUnionObjectInspector;
-import static org.apache.hadoop.hive.serde2.objectinspector.StandardUnionObjectInspector.StandardUnion;
 import static org.testng.Assert.assertEquals;
 
 @SuppressWarnings("PackageVisibleField")
 public class TestSerDeUtils
 {
-    private static final DateTimeZone SESSION_TIME_ZONE = DateTimeZone.forID("Europe/Berlin");
-    private static final DateTimeFormatter TIMESTAMP_FORMAT = DateTimeFormat.forPattern("yyyy-MM-dd HH:mm:ss.SSS").withZone(SESSION_TIME_ZONE);
-
     private static class ListHolder
     {
         List<InnerStruct> array;
@@ -80,82 +99,92 @@ public class TestSerDeUtils
         InnerStruct innerStruct;
     }
 
-    private static ObjectInspector getInspector(Type type)
+    private static synchronized ObjectInspector getInspector(Type type)
     {
+        // ObjectInspectorFactory.getReflectionObjectInspector is not thread-safe although it
+        // gives people a first impression that it is. This may have been fixed in HIVE-11586.
+
+        // Presto only uses getReflectionObjectInspector here, in a test method. Therefore, we
+        // choose to work around this issue by synchronizing this method. Before synchronizing
+        // this method, test in this class fails approximately 1 out of 10 runs on Travis.
+
         return getReflectionObjectInspector(type, ObjectInspectorOptions.JAVA);
     }
 
     @Test
-    public void testPrimitiveJsonString()
+    public void testPrimitiveSlice()
     {
         // boolean
-        String expectedBoolean = "true";
-        String actualBoolean = toJsonString(true, getInspector(Boolean.class));
-        assertEquals(actualBoolean, expectedBoolean);
+        Block expectedBoolean = VARBINARY.createBlockBuilder(new BlockBuilderStatus(), 1).writeByte(1).closeEntry().build();
+        Block actualBoolean = toBinaryBlock(BOOLEAN, true, getInspector(Boolean.class));
+        assertBlockEquals(actualBoolean, expectedBoolean);
 
         // byte
-        String expectedByte = "5";
-        String actualByte = toJsonString((byte) 5, getInspector(Byte.class));
-        assertEquals(actualByte, expectedByte);
+        Block expectedByte = VARBINARY.createBlockBuilder(new BlockBuilderStatus(), 1).writeByte(5).closeEntry().build();
+        Block actualByte = toBinaryBlock(TINYINT, (byte) 5, getInspector(Byte.class));
+        assertBlockEquals(actualByte, expectedByte);
+
         // short
-        String expectedShort = "2";
-        String actualShort = toJsonString((short) 2, getInspector(Short.class));
-        assertEquals(actualShort, expectedShort);
+        Block expectedShort = VARBINARY.createBlockBuilder(new BlockBuilderStatus(), 1).writeShort(2).closeEntry().build();
+        Block actualShort = toBinaryBlock(SMALLINT, (short) 2, getInspector(Short.class));
+        assertBlockEquals(actualShort, expectedShort);
 
         // int
-        String expectedInt = "1";
-        String actualInt = toJsonString(1, getInspector(Integer.class));
-        assertEquals(actualInt, expectedInt);
+        Block expectedInt = VARBINARY.createBlockBuilder(new BlockBuilderStatus(), 1).writeInt(1).closeEntry().build();
+        Block actualInt = toBinaryBlock(INTEGER, 1, getInspector(Integer.class));
+        assertBlockEquals(actualInt, expectedInt);
 
         // long
-        String expectedLong = "10";
-        String actualLong = toJsonString(10L, getInspector(Long.class));
-        assertEquals(actualLong, expectedLong);
+        Block expectedLong = VARBINARY.createBlockBuilder(new BlockBuilderStatus(), 1).writeLong(10).closeEntry().build();
+        Block actualLong = toBinaryBlock(BIGINT, 10L, getInspector(Long.class));
+        assertBlockEquals(actualLong, expectedLong);
 
         // float
-        String expectedFloat = "20.0";
-        String actualFloat = toJsonString(20.0f, getInspector(Float.class));
-        assertEquals(actualFloat, expectedFloat);
+        Block expectedFloat = VARBINARY.createBlockBuilder(new BlockBuilderStatus(), 1).writeInt(floatToRawIntBits(20.0f)).closeEntry().build();
+        Block actualFloat = toBinaryBlock(REAL, 20.0f, getInspector(Float.class));
+        assertBlockEquals(actualFloat, expectedFloat);
 
         // double
-        String expectedDouble = "30.12";
-        String actualDouble = toJsonString(30.12d, getInspector(Double.class));
-        assertEquals(actualDouble, expectedDouble);
+        Block expectedDouble = VARBINARY.createBlockBuilder(new BlockBuilderStatus(), 1).writeLong(doubleToLongBits(30.12)).closeEntry().build();
+        Block actualDouble = toBinaryBlock(DOUBLE, 30.12d, getInspector(Double.class));
+        assertBlockEquals(actualDouble, expectedDouble);
 
         // string
-        String expectedString = "\"abdd\"";
-        String actualString = toJsonString("abdd", getInspector(String.class));
-        assertEquals(actualString, expectedString);
+        Block expectedString = VARBINARY.createBlockBuilder(new BlockBuilderStatus(), 1).writeBytes(utf8Slice("abdd"), 0, 4).closeEntry().build();
+        Block actualString = toBinaryBlock(createUnboundedVarcharType(), "abdd", getInspector(String.class));
+        assertBlockEquals(actualString, expectedString);
 
         // timestamp
         DateTime dateTime = new DateTime(2008, 10, 28, 16, 7, 15, 0);
-        String expectedTimestamp = "\"" + TIMESTAMP_FORMAT.print(dateTime) + "\"";
-        String actualTimestamp = toJsonString(new Timestamp(dateTime.getMillis()), getInspector(Timestamp.class));
-        assertEquals(actualTimestamp, expectedTimestamp);
+        Block expectedTimestamp = VARBINARY.createBlockBuilder(new BlockBuilderStatus(), 1).writeLong(dateTime.getMillis()).closeEntry().build();
+        Block actualTimestamp = toBinaryBlock(BIGINT, new Timestamp(dateTime.getMillis()), getInspector(Timestamp.class));
+        assertBlockEquals(actualTimestamp, expectedTimestamp);
 
         // binary
         byte[] byteArray = {81, 82, 84, 85};
-        String expectedBinary = "\"UVJUVQ==\"";
-        String actualBinary = toJsonString(byteArray, getInspector(byte[].class));
-        assertEquals(actualBinary, expectedBinary);
+        Block expectedBinary = VARBINARY.createBlockBuilder(new BlockBuilderStatus(), 1).writeBytes(Slices.wrappedBuffer(byteArray), 0, 4).closeEntry().build();
+        Block actualBinary = toBinaryBlock(createUnboundedVarcharType(), byteArray, getInspector(byte[].class));
+        assertBlockEquals(actualBinary, expectedBinary);
     }
 
     @Test
-    public void testListJsonString()
+    public void testListBlock()
     {
-        List<InnerStruct> mArray = new ArrayList<>(2);
-        InnerStruct is1 = new InnerStruct(8, 9L);
-        InnerStruct is2 = new InnerStruct(10, 11L);
-        mArray.add(is1);
-        mArray.add(is2);
+        List<InnerStruct> array = new ArrayList<>(2);
+        array.add(new InnerStruct(8, 9L));
+        array.add(new InnerStruct(10, 11L));
         ListHolder listHolder = new ListHolder();
-        listHolder.array = mArray;
+        listHolder.array = array;
 
-        String actual = toJsonString(listHolder, getInspector(ListHolder.class));
-        String expected = "{\"array\":[" +
-                "{\"intval\":8,\"longval\":9}," +
-                "{\"intval\":10,\"longval\":11}]}";
-        assertEquals(actual, expected);
+        com.facebook.presto.spi.type.Type rowType = new RowType(ImmutableList.of(INTEGER, BIGINT), Optional.empty());
+        com.facebook.presto.spi.type.Type arrayOfRowType = new RowType(ImmutableList.of(new ArrayType(rowType)), Optional.empty());
+        Block actual = toBinaryBlock(arrayOfRowType, listHolder, getInspector(ListHolder.class));
+        BlockBuilder blockBuilder = rowType.createBlockBuilder(new BlockBuilderStatus(), 1024);
+        rowType.writeObject(blockBuilder, rowBlockOf(ImmutableList.of(INTEGER, BIGINT), 8, 9L));
+        rowType.writeObject(blockBuilder, rowBlockOf(ImmutableList.of(INTEGER, BIGINT), 10, 11L));
+        Block expected = rowBlockOf(ImmutableList.of(new ArrayType(rowType)), blockBuilder.build());
+
+        assertBlockEquals(actual, expected);
     }
 
     private static class MapHolder
@@ -164,32 +193,43 @@ public class TestSerDeUtils
     }
 
     @Test
-    public void testMapJsonString()
+    public void testMapBlock()
     {
         MapHolder holder = new MapHolder();
         holder.map = new TreeMap<>();
         holder.map.put("twelve", new InnerStruct(13, 14L));
         holder.map.put("fifteen", new InnerStruct(16, 17L));
-        String actual = toJsonString(holder, getInspector(MapHolder.class));
-        String expected = "{\"map\":{" +
-                "\"fifteen\":{\"intval\":16,\"longval\":17}," +
-                "\"twelve\":{\"intval\":13,\"longval\":14}}}";
-        assertEquals(actual, expected);
+
+        com.facebook.presto.spi.type.Type rowType = new RowType(ImmutableList.of(INTEGER, BIGINT), Optional.empty());
+        com.facebook.presto.spi.type.Type mapOfVarcharRowType = new RowType(ImmutableList.of(mapType(createUnboundedVarcharType(), rowType)), Optional.empty());
+        Block actual = toBinaryBlock(mapOfVarcharRowType, holder, getInspector(MapHolder.class));
+
+        BlockBuilder blockBuilder = new InterleavedBlockBuilder(ImmutableList.of(createUnboundedVarcharType(), rowType), new BlockBuilderStatus(), 1024);
+        createUnboundedVarcharType().writeString(blockBuilder, "fifteen");
+        rowType.writeObject(blockBuilder, rowBlockOf(ImmutableList.of(INTEGER, BIGINT), 16, 17L));
+        createUnboundedVarcharType().writeString(blockBuilder, "twelve");
+        rowType.writeObject(blockBuilder, rowBlockOf(ImmutableList.of(INTEGER, BIGINT), 13, 14L));
+        Block expected = rowBlockOf(ImmutableList.of(mapType(createUnboundedVarcharType(), rowType)), blockBuilder);
+
+        assertBlockEquals(actual, expected);
     }
 
     @Test
-    public void testStructJsonString()
+    public void testStructBlock()
     {
         // test simple structs
         InnerStruct innerStruct = new InnerStruct(13, 14L);
-        String actual = toJsonString(innerStruct, getInspector(InnerStruct.class));
-        String expected = "{\"intval\":13,\"longval\":14}";
-        assertEquals(actual, expected);
+
+        com.facebook.presto.spi.type.Type rowType = new RowType(ImmutableList.of(INTEGER, BIGINT), Optional.empty());
+        Block actual = toBinaryBlock(rowType, innerStruct, getInspector(InnerStruct.class));
+
+        Block expected = rowBlockOf(ImmutableList.of(INTEGER, BIGINT), 13, 14L);
+        assertBlockEquals(actual, expected);
 
         // test complex structs
         OuterStruct outerStruct = new OuterStruct();
-        outerStruct.byteVal = 1;
-        outerStruct.shortVal = 2;
+        outerStruct.byteVal = (byte) 1;
+        outerStruct.shortVal = (short) 2;
         outerStruct.intVal = 3;
         outerStruct.longVal = 4L;
         outerStruct.floatVal = 5.01f;
@@ -206,36 +246,33 @@ public class TestSerDeUtils
         outerStruct.map.put("fifteen", new InnerStruct(-5, -10L));
         outerStruct.innerStruct = new InnerStruct(18, 19L);
 
-        actual = toJsonString(outerStruct, getInspector(OuterStruct.class));
-        expected = "{" +
-                "\"byteval\":1," +
-                "\"shortval\":2," +
-                "\"intval\":3," +
-                "\"longval\":4," +
-                "\"floatval\":5.01," +
-                "\"doubleval\":6.001," +
-                "\"stringval\":\"seven\"," +
-                "\"bytearray\":\"Mg==\"," +
-                "\"structarray\":[" +
-                "{\"intval\":2,\"longval\":-5}," +
-                "{\"intval\":-10,\"longval\":0}]," +
-                "\"map\":{" +
-                "\"fifteen\":{\"intval\":-5,\"longval\":-10}," +
-                "\"twelve\":{\"intval\":0,\"longval\":5}}," +
-                "\"innerstruct\":{\"intval\":18,\"longval\":19}}";
+        com.facebook.presto.spi.type.Type innerRowType = new RowType(ImmutableList.of(INTEGER, BIGINT), Optional.empty());
+        com.facebook.presto.spi.type.Type arrayOfInnerRowType = new ArrayType(innerRowType);
+        com.facebook.presto.spi.type.Type mapOfInnerRowType = mapType(createUnboundedVarcharType(), innerRowType);
+        List<com.facebook.presto.spi.type.Type> outerRowParameterTypes = ImmutableList.of(TINYINT, SMALLINT, INTEGER, BIGINT, REAL, DOUBLE, createUnboundedVarcharType(), createUnboundedVarcharType(), arrayOfInnerRowType, mapOfInnerRowType, innerRowType);
+        com.facebook.presto.spi.type.Type outerRowType = new RowType(outerRowParameterTypes, Optional.empty());
 
-        assertEquals(actual, expected);
-    }
+        actual = toBinaryBlock(outerRowType, outerStruct, getInspector(OuterStruct.class));
 
-    @Test
-    public void testUnionJsonString()
-    {
-        UnionObjectInspector unionInspector = getStandardUnionObjectInspector(ImmutableList.of(getInspector(InnerStruct.class)));
+        ImmutableList.Builder<Object> outerRowValues = ImmutableList.builder();
+        outerRowValues.add((byte) 1);
+        outerRowValues.add((short) 2);
+        outerRowValues.add(3);
+        outerRowValues.add(4L);
+        outerRowValues.add(5.01f);
+        outerRowValues.add(6.001d);
+        outerRowValues.add("seven");
+        outerRowValues.add(new byte[] {'2'});
+        outerRowValues.add(arrayBlockOf(innerRowType, rowBlockOf(ImmutableList.of(INTEGER, BIGINT), 2, -5L), rowBlockOf(ImmutableList.of(INTEGER, BIGINT), -10, 0L)));
+        BlockBuilder blockBuilder = new InterleavedBlockBuilder(ImmutableList.of(createUnboundedVarcharType(), innerRowType), new BlockBuilderStatus(), 1024);
+        createUnboundedVarcharType().writeString(blockBuilder, "fifteen");
+        innerRowType.writeObject(blockBuilder, rowBlockOf(ImmutableList.of(INTEGER, BIGINT), -5, -10L));
+        createUnboundedVarcharType().writeString(blockBuilder, "twelve");
+        innerRowType.writeObject(blockBuilder, rowBlockOf(ImmutableList.of(INTEGER, BIGINT), 0, 5L));
+        outerRowValues.add(blockBuilder.build());
+        outerRowValues.add(rowBlockOf(ImmutableList.of(INTEGER, BIGINT), 18, 19L));
 
-        UnionObject union = new StandardUnion((byte) 0, new InnerStruct(1, 2L));
-        String actual = toJsonString(union, unionInspector);
-        String expected = "{\"0\":{\"intval\":1,\"longval\":2}}";
-        assertEquals(actual, expected);
+        assertBlockEquals(actual, rowBlockOf(outerRowParameterTypes, outerRowValues.build().toArray()));
     }
 
     @Test
@@ -250,17 +287,40 @@ public class TestSerDeUtils
         byte[] second = "bye".getBytes(UTF_8);
         value.set(second, 0, second.length);
 
-        Type type = new TypeToken<Map<BytesWritable, Integer>>() {}.getType();
-        ObjectInspector inspector = getReflectionObjectInspector(type, ObjectInspectorOptions.JAVA);
+        Type type = new TypeToken<Map<BytesWritable, Long>>() {}.getType();
+        ObjectInspector inspector = getInspector(type);
 
-        byte[] bytes = getJsonBytes(SESSION_TIME_ZONE, ImmutableMap.of(value, 0), inspector);
+        Block actual = getBlockObject(mapType(createUnboundedVarcharType(), BIGINT), ImmutableMap.of(value, 0L), inspector);
+        Block expected = mapBlockOf(createUnboundedVarcharType(), BIGINT, "bye", 0L);
 
-        String encoded = Base64Variants.getDefaultVariant().encode(second);
-        assertEquals(new String(bytes, UTF_8), "{\"" + encoded + "\":0}");
+        assertBlockEquals(actual, expected);
     }
 
-    private static String toJsonString(Object object, ObjectInspector inspector)
+    private static void assertBlockEquals(Block actual, Block expected)
     {
-        return new String(getJsonBytes(SESSION_TIME_ZONE, object, inspector), UTF_8);
+        assertEquals(blockToSlice(actual), blockToSlice(expected));
+    }
+
+    private static Slice blockToSlice(Block block)
+    {
+        // This function is strictly for testing use only
+        SliceOutput sliceOutput = new DynamicSliceOutput(1000);
+        BlockSerdeUtil.writeBlock(sliceOutput, block);
+        return sliceOutput.slice();
+    }
+
+    private static Block toBinaryBlock(com.facebook.presto.spi.type.Type type, Object object, ObjectInspector inspector)
+    {
+        if (inspector.getCategory() == Category.PRIMITIVE) {
+            return getPrimitiveBlock(type, object, inspector);
+        }
+        return getBlockObject(type, object, inspector);
+    }
+
+    private static Block getPrimitiveBlock(com.facebook.presto.spi.type.Type type, Object object, ObjectInspector inspector)
+    {
+        BlockBuilder builder = VARBINARY.createBlockBuilder(new BlockBuilderStatus(), 1);
+        serializeObject(type, builder, object, inspector);
+        return builder.build();
     }
 }

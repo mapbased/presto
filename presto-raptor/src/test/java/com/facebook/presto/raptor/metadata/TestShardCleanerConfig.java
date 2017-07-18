@@ -14,38 +14,58 @@
 package com.facebook.presto.raptor.metadata;
 
 import com.google.common.collect.ImmutableMap;
-import io.airlift.configuration.testing.ConfigAssertions;
 import io.airlift.units.Duration;
 import org.testng.annotations.Test;
 
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
+
+import static io.airlift.configuration.testing.ConfigAssertions.assertFullMapping;
+import static io.airlift.configuration.testing.ConfigAssertions.assertRecordedDefaults;
+import static io.airlift.configuration.testing.ConfigAssertions.recordDefaults;
+import static java.util.concurrent.TimeUnit.DAYS;
+import static java.util.concurrent.TimeUnit.HOURS;
+import static java.util.concurrent.TimeUnit.MINUTES;
 
 public class TestShardCleanerConfig
 {
     @Test
     public void testDefaults()
     {
-        ConfigAssertions.assertRecordedDefaults(ConfigAssertions.recordDefaults(ShardCleanerConfig.class)
-                .setEnabled(false)
-                .setCleanerInterval(new Duration(60, TimeUnit.SECONDS))
-                .setMaxThreads(32));
+        assertRecordedDefaults(recordDefaults(ShardCleanerConfig.class)
+                .setMaxTransactionAge(new Duration(1, DAYS))
+                .setTransactionCleanerInterval(new Duration(10, MINUTES))
+                .setLocalCleanerInterval(new Duration(1, HOURS))
+                .setLocalCleanTime(new Duration(4, HOURS))
+                .setBackupCleanerInterval(new Duration(5, MINUTES))
+                .setBackupCleanTime(new Duration(1, DAYS))
+                .setBackupDeletionThreads(50)
+                .setMaxCompletedTransactionAge(new Duration(1, DAYS)));
     }
 
     @Test
     public void testExplicitPropertyMappings()
     {
         Map<String, String> properties = new ImmutableMap.Builder<String, String>()
-                .put("shard-cleaner.enabled", "true")
-                .put("shard-cleaner.interval", "10m")
-                .put("shard-cleaner.max-threads", "100")
+                .put("raptor.max-transaction-age", "42m")
+                .put("raptor.transaction-cleaner-interval", "43m")
+                .put("raptor.local-cleaner-interval", "31m")
+                .put("raptor.local-clean-time", "32m")
+                .put("raptor.backup-cleaner-interval", "34m")
+                .put("raptor.backup-clean-time", "35m")
+                .put("raptor.backup-deletion-threads", "37")
+                .put("raptor.max-completed-transaction-age", "39m")
                 .build();
 
         ShardCleanerConfig expected = new ShardCleanerConfig()
-                .setEnabled(true)
-                .setCleanerInterval(new Duration(10, TimeUnit.MINUTES))
-                .setMaxThreads(100);
+                .setMaxTransactionAge(new Duration(42, MINUTES))
+                .setTransactionCleanerInterval(new Duration(43, MINUTES))
+                .setLocalCleanerInterval(new Duration(31, MINUTES))
+                .setLocalCleanTime(new Duration(32, MINUTES))
+                .setBackupCleanerInterval(new Duration(34, MINUTES))
+                .setBackupCleanTime(new Duration(35, MINUTES))
+                .setBackupDeletionThreads(37)
+                .setMaxCompletedTransactionAge(new Duration(39, MINUTES));
 
-        ConfigAssertions.assertFullMapping(properties, expected);
+        assertFullMapping(properties, expected);
     }
 }

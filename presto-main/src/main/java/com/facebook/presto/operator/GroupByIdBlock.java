@@ -13,30 +13,30 @@
  */
 package com.facebook.presto.operator;
 
-import com.facebook.presto.spi.ConnectorSession;
+import com.facebook.presto.spi.block.Block;
 import com.facebook.presto.spi.block.BlockBuilder;
-import com.facebook.presto.spi.block.BlockCursor;
 import com.facebook.presto.spi.block.BlockEncoding;
-import com.facebook.presto.spi.block.RandomAccessBlock;
-import com.facebook.presto.spi.block.SortOrder;
-import com.facebook.presto.spi.type.Type;
-import com.google.common.base.Objects;
 import io.airlift.slice.Slice;
+import org.openjdk.jol.info.ClassLayout;
+
+import java.util.List;
+import java.util.function.BiConsumer;
 
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
-import static com.google.common.base.Preconditions.checkArgument;
-import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.MoreObjects.toStringHelper;
+import static java.util.Objects.requireNonNull;
 
 public class GroupByIdBlock
-        implements RandomAccessBlock
+        implements Block
 {
-    private final long groupCount;
-    private final RandomAccessBlock block;
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(GroupByIdBlock.class).instanceSize();
 
-    public GroupByIdBlock(long groupCount, RandomAccessBlock block)
+    private final long groupCount;
+    private final Block block;
+
+    public GroupByIdBlock(long groupCount, Block block)
     {
-        checkNotNull(block, "block is null");
-        checkArgument(block.getType().equals(BIGINT));
+        requireNonNull(block, "block is null");
         this.groupCount = groupCount;
         this.block = block;
     }
@@ -48,47 +48,113 @@ public class GroupByIdBlock
 
     public long getGroupId(int position)
     {
-        return block.getLong(position);
+        return BIGINT.getLong(block, position);
     }
 
     @Override
-    public RandomAccessBlock getRegion(int positionOffset, int length)
+    public Block getRegion(int positionOffset, int length)
     {
         return block.getRegion(positionOffset, length);
     }
 
     @Override
-    public boolean getBoolean(int position)
+    public long getRegionSizeInBytes(int positionOffset, int length)
     {
-        throw new UnsupportedOperationException();
+        return block.getRegionSizeInBytes(positionOffset, length);
     }
 
     @Override
-    public long getLong(int position)
+    public Block copyRegion(int positionOffset, int length)
     {
-        return block.getLong(position);
+        return block.copyRegion(positionOffset, length);
     }
 
     @Override
-    public double getDouble(int position)
+    public int getSliceLength(int position)
     {
-        throw new UnsupportedOperationException();
+        return block.getSliceLength(position);
     }
 
     @Override
-    public Object getObjectValue(ConnectorSession session, int position)
+    public byte getByte(int position, int offset)
     {
-        return block.getObjectValue(session, position);
+        return block.getByte(position, offset);
     }
 
     @Override
-    public Slice getSlice(int position)
+    public short getShort(int position, int offset)
     {
-        throw new UnsupportedOperationException();
+        return block.getShort(position, offset);
     }
 
     @Override
-    public RandomAccessBlock getSingleValueBlock(int position)
+    public int getInt(int position, int offset)
+    {
+        return block.getInt(position, offset);
+    }
+
+    @Override
+    public long getLong(int position, int offset)
+    {
+        return block.getLong(position, offset);
+    }
+
+    @Override
+    public Slice getSlice(int position, int offset, int length)
+    {
+        return block.getSlice(position, offset, length);
+    }
+
+    @Override
+    public <T> T getObject(int position, Class<T> clazz)
+    {
+        return block.getObject(position, clazz);
+    }
+
+    @Override
+    public boolean bytesEqual(int position, int offset, Slice otherSlice, int otherOffset, int length)
+    {
+        return block.bytesEqual(position, offset, otherSlice, otherOffset, length);
+    }
+
+    @Override
+    public int bytesCompare(int position, int offset, int length, Slice otherSlice, int otherOffset, int otherLength)
+    {
+        return block.bytesCompare(position, offset, length, otherSlice, otherOffset, otherLength);
+    }
+
+    @Override
+    public void writeBytesTo(int position, int offset, int length, BlockBuilder blockBuilder)
+    {
+        block.writeBytesTo(position, offset, length, blockBuilder);
+    }
+
+    @Override
+    public void writePositionTo(int position, BlockBuilder blockBuilder)
+    {
+        block.writePositionTo(position, blockBuilder);
+    }
+
+    @Override
+    public boolean equals(int position, int offset, Block otherBlock, int otherPosition, int otherOffset, int length)
+    {
+        return block.equals(position, offset, otherBlock, otherPosition, otherOffset, length);
+    }
+
+    @Override
+    public long hash(int position, int offset, int length)
+    {
+        return block.hash(position, offset, length);
+    }
+
+    @Override
+    public int compareTo(int leftPosition, int leftOffset, int leftLength, Block rightBlock, int rightPosition, int rightOffset, int rightLength)
+    {
+        return block.compareTo(leftPosition, leftOffset, leftLength, rightBlock, rightPosition, rightOffset, rightLength);
+    }
+
+    @Override
+    public Block getSingleValueBlock(int position)
     {
         return block.getSingleValueBlock(position);
     }
@@ -100,75 +166,28 @@ public class GroupByIdBlock
     }
 
     @Override
-    public boolean equalTo(int position, RandomAccessBlock otherBlock, int otherPosition)
-    {
-        return block.equalTo(position, otherBlock, otherPosition);
-    }
-
-    @Override
-    public boolean equalTo(int position, BlockCursor cursor)
-    {
-        return block.equalTo(position, cursor);
-    }
-
-    @Override
-    public boolean equalTo(int position, Slice otherSlice, int otherOffset)
-    {
-        return block.equalTo(position, otherSlice, otherOffset);
-    }
-
-    @Override
-    public int hash(int position)
-    {
-        return block.hash(position);
-    }
-
-    @Override
-    public int compareTo(SortOrder sortOrder, int position, RandomAccessBlock otherBlock, int otherPosition)
-    {
-        return block.compareTo(sortOrder, position, otherBlock, otherPosition);
-    }
-
-    @Override
-    public int compareTo(SortOrder sortOrder, int position, BlockCursor cursor)
-    {
-        return block.compareTo(sortOrder, position, cursor);
-    }
-
-    @Override
-    public int compareTo(int position, Slice otherSlice, int otherOffset)
-    {
-        return block.compareTo(position, otherSlice, otherOffset);
-    }
-
-    @Override
-    public void appendTo(int position, BlockBuilder blockBuilder)
-    {
-        block.appendTo(position, blockBuilder);
-    }
-
-    @Override
-    public Type getType()
-    {
-        return block.getType();
-    }
-
-    @Override
     public int getPositionCount()
     {
         return block.getPositionCount();
     }
 
     @Override
-    public int getSizeInBytes()
+    public long getSizeInBytes()
     {
         return block.getSizeInBytes();
     }
 
     @Override
-    public BlockCursor cursor()
+    public long getRetainedSizeInBytes()
     {
-        return block.cursor();
+        return INSTANCE_SIZE + block.getRetainedSizeInBytes();
+    }
+
+    @Override
+    public void retainedBytesForEachPart(BiConsumer<Object, Long> consumer)
+    {
+        consumer.accept(block, block.getRetainedSizeInBytes());
+        consumer.accept(this, (long) INSTANCE_SIZE);
     }
 
     @Override
@@ -178,15 +197,20 @@ public class GroupByIdBlock
     }
 
     @Override
-    public RandomAccessBlock toRandomAccessBlock()
+    public Block copyPositions(List<Integer> positions)
     {
-        return block.toRandomAccessBlock();
+        return block.copyPositions(positions);
+    }
+
+    @Override
+    public void assureLoaded()
+    {
     }
 
     @Override
     public String toString()
     {
-        return Objects.toStringHelper(this)
+        return toStringHelper(this)
                 .add("groupCount", groupCount)
                 .add("positionCount", getPositionCount())
                 .toString();

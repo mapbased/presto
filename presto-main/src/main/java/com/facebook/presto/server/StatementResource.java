@@ -13,14 +13,15 @@
  */
 package com.facebook.presto.server;
 
+import com.facebook.presto.OutputBuffers.OutputBufferId;
+import com.facebook.presto.Session;
+import com.facebook.presto.client.ClientTypeSignature;
 import com.facebook.presto.client.Column;
 import com.facebook.presto.client.FailureInfo;
 import com.facebook.presto.client.QueryError;
 import com.facebook.presto.client.QueryResults;
 import com.facebook.presto.client.StageStats;
 import com.facebook.presto.client.StatementStats;
-import com.facebook.presto.execution.BufferInfo;
-import com.facebook.presto.execution.QueryId;
 import com.facebook.presto.execution.QueryInfo;
 import com.facebook.presto.execution.QueryManager;
 import com.facebook.presto.execution.QueryState;
@@ -28,24 +29,29 @@ import com.facebook.presto.execution.QueryStats;
 import com.facebook.presto.execution.StageInfo;
 import com.facebook.presto.execution.StageState;
 import com.facebook.presto.execution.TaskInfo;
+import com.facebook.presto.execution.buffer.OutputBufferInfo;
+import com.facebook.presto.execution.buffer.PagesSerde;
+import com.facebook.presto.execution.buffer.PagesSerdeFactory;
+import com.facebook.presto.execution.buffer.SerializedPage;
+import com.facebook.presto.metadata.SessionPropertyManager;
 import com.facebook.presto.operator.ExchangeClient;
-import com.facebook.presto.operator.Page;
+import com.facebook.presto.operator.ExchangeClientSupplier;
 import com.facebook.presto.spi.ConnectorSession;
-import com.facebook.presto.spi.block.BlockCursor;
-import com.facebook.presto.spi.type.TimeZoneKey;
-import com.facebook.presto.spi.type.TimeZoneNotSupportedException;
+import com.facebook.presto.spi.ErrorCode;
+import com.facebook.presto.spi.Page;
+import com.facebook.presto.spi.QueryId;
+import com.facebook.presto.spi.block.Block;
+import com.facebook.presto.spi.block.BlockEncodingSerde;
+import com.facebook.presto.spi.type.StandardTypes;
 import com.facebook.presto.spi.type.Type;
-import com.facebook.presto.util.IterableTransformer;
-import com.google.common.base.Preconditions;
-import com.google.common.base.Predicate;
-import com.google.common.base.Supplier;
+import com.facebook.presto.spi.type.TypeSignature;
+import com.facebook.presto.transaction.TransactionId;
 import com.google.common.collect.AbstractIterator;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Ordering;
-import com.google.common.collect.Sets;
 import io.airlift.log.Logger;
 import io.airlift.units.DataSize;
 import io.airlift.units.Duration;
@@ -57,7 +63,6 @@ import javax.inject.Inject;
 import javax.servlet.http.HttpServletRequest;
 import javax.ws.rs.DELETE;
 import javax.ws.rs.GET;
-import javax.ws.rs.HeaderParam;
 import javax.ws.rs.POST;
 import javax.ws.rs.Path;
 import javax.ws.rs.PathParam;
@@ -67,67 +72,77 @@ import javax.ws.rs.WebApplicationException;
 import javax.ws.rs.core.Context;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
+import javax.ws.rs.core.Response.ResponseBuilder;
 import javax.ws.rs.core.Response.Status;
 import javax.ws.rs.core.UriInfo;
 
-import java.io.Closeable;
+import java.io.UnsupportedEncodingException;
 import java.net.URI;
+import java.net.URLEncoder;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Locale;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.Optional;
 import java.util.Set;
-import java.util.TimeZone;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
-import static com.facebook.presto.client.PrestoHeaders.PRESTO_CATALOG;
-import static com.facebook.presto.client.PrestoHeaders.PRESTO_LANGUAGE;
-import static com.facebook.presto.client.PrestoHeaders.PRESTO_SCHEMA;
-import static com.facebook.presto.client.PrestoHeaders.PRESTO_SOURCE;
-import static com.facebook.presto.client.PrestoHeaders.PRESTO_TIME_ZONE;
-import static com.facebook.presto.client.PrestoHeaders.PRESTO_USER;
-import static com.facebook.presto.execution.QueryInfo.queryIdGetter;
-import static com.facebook.presto.execution.StageInfo.getAllStages;
-import static com.facebook.presto.execution.StageInfo.stageStateGetter;
+import static com.facebook.presto.SystemSessionProperties.isExchangeCompressionEnabled;
+import static com.facebook.presto.client.PrestoHeaders.PRESTO_ADDED_PREPARE;
+import static com.facebook.presto.client.PrestoHeaders.PRESTO_CLEAR_SESSION;
+import static com.facebook.presto.client.PrestoHeaders.PRESTO_CLEAR_TRANSACTION_ID;
+import static com.facebook.presto.client.PrestoHeaders.PRESTO_DEALLOCATED_PREPARE;
+import static com.facebook.presto.client.PrestoHeaders.PRESTO_SET_SESSION;
+import static com.facebook.presto.client.PrestoHeaders.PRESTO_STARTED_TRANSACTION_ID;
+import static com.facebook.presto.spi.StandardErrorCode.GENERIC_INTERNAL_ERROR;
 import static com.facebook.presto.util.Failures.toFailure;
 import static com.google.common.base.Preconditions.checkArgument;
-import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Strings.isNullOrEmpty;
-import static com.google.common.collect.Iterables.transform;
-import static com.google.common.net.HttpHeaders.USER_AGENT;
 import static io.airlift.concurrent.Threads.threadsNamed;
 import static io.airlift.http.client.HttpUriBuilder.uriBuilderFrom;
 import static io.airlift.units.DataSize.Unit.MEGABYTE;
 import static java.lang.String.format;
+import static java.util.Objects.requireNonNull;
 import static java.util.concurrent.Executors.newSingleThreadScheduledExecutor;
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
+import static java.util.concurrent.TimeUnit.SECONDS;
 
 @Path("/v1/statement")
 public class StatementResource
 {
     private static final Logger log = Logger.get(StatementResource.class);
 
-    private static final Duration MAX_WAIT_TIME = new Duration(1, TimeUnit.SECONDS);
+    private static final Duration MAX_WAIT_TIME = new Duration(1, SECONDS);
     private static final Ordering<Comparable<Duration>> WAIT_ORDERING = Ordering.natural().nullsLast();
     private static final long DESIRED_RESULT_BYTES = new DataSize(1, MEGABYTE).toBytes();
 
     private final QueryManager queryManager;
-    private final Supplier<ExchangeClient> exchangeClientSupplier;
+    private final SessionPropertyManager sessionPropertyManager;
+    private final ExchangeClientSupplier exchangeClientSupplier;
+    private final BlockEncodingSerde blockEncodingSerde;
 
     private final ConcurrentMap<QueryId, Query> queries = new ConcurrentHashMap<>();
     private final ScheduledExecutorService queryPurger = newSingleThreadScheduledExecutor(threadsNamed("query-purger"));
 
     @Inject
-    public StatementResource(QueryManager queryManager, Supplier<ExchangeClient> exchangeClientSupplier)
+    public StatementResource(
+            QueryManager queryManager,
+            SessionPropertyManager sessionPropertyManager,
+            ExchangeClientSupplier exchangeClientSupplier,
+            BlockEncodingSerde blockEncodingSerde)
     {
-        this.queryManager = checkNotNull(queryManager, "queryManager is null");
-        this.exchangeClientSupplier = checkNotNull(exchangeClientSupplier, "exchangeClientSupplier is null");
+        this.queryManager = requireNonNull(queryManager, "queryManager is null");
+        this.sessionPropertyManager = requireNonNull(sessionPropertyManager, "sessionPropertyManager is null");
+        this.exchangeClientSupplier = requireNonNull(exchangeClientSupplier, "exchangeClientSupplier is null");
+        this.blockEncodingSerde = requireNonNull(blockEncodingSerde, "blockEncodingSerde is null");
 
-        queryPurger.scheduleWithFixedDelay(new PurgeQueriesRunnable(queries, queryManager), 200, 200, TimeUnit.MILLISECONDS);
+        queryPurger.scheduleWithFixedDelay(new PurgeQueriesRunnable(queries, queryManager), 200, 200, MILLISECONDS);
     }
 
     @PreDestroy
@@ -140,65 +155,31 @@ public class StatementResource
     @Produces(MediaType.APPLICATION_JSON)
     public Response createQuery(
             String statement,
-            @HeaderParam(PRESTO_USER) String user,
-            @HeaderParam(PRESTO_SOURCE) String source,
-            @HeaderParam(PRESTO_CATALOG) String catalog,
-            @HeaderParam(PRESTO_SCHEMA) String schema,
-            @HeaderParam(PRESTO_TIME_ZONE) String timeZoneId,
-            @HeaderParam(PRESTO_LANGUAGE) String language,
-            @HeaderParam(USER_AGENT) String userAgent,
-            @Context HttpServletRequest requestContext,
+            @Context HttpServletRequest servletRequest,
             @Context UriInfo uriInfo)
             throws InterruptedException
     {
-        assertRequest(!isNullOrEmpty(statement), "SQL statement is empty");
-        assertRequest(!isNullOrEmpty(user), "User (%s) is empty", PRESTO_USER);
-        assertRequest(!isNullOrEmpty(catalog), "Catalog (%s) is empty", PRESTO_CATALOG);
-        assertRequest(!isNullOrEmpty(schema), "Schema (%s) is empty", PRESTO_SCHEMA);
-
-        if (timeZoneId == null) {
-            timeZoneId = TimeZone.getDefault().getID();
+        if (isNullOrEmpty(statement)) {
+            throw new WebApplicationException(Response
+                    .status(Status.BAD_REQUEST)
+                    .type(MediaType.TEXT_PLAIN)
+                    .entity("SQL statement is empty")
+                    .build());
         }
 
-        Locale locale = Locale.getDefault();
-        if (language != null) {
-            locale = Locale.forLanguageTag(language);
-        }
+        SessionSupplier sessionSupplier = new HttpRequestSessionFactory(servletRequest);
 
-        String remoteUserAddress = requestContext.getRemoteAddr();
-
-        ConnectorSession session = new ConnectorSession(user, source, catalog, schema, getTimeZoneKey(timeZoneId), locale, remoteUserAddress, userAgent);
-
-        ExchangeClient exchangeClient = exchangeClientSupplier.get();
-        Query query = new Query(session, statement, queryManager, exchangeClient);
+        ExchangeClient exchangeClient = exchangeClientSupplier.get(deltaMemoryInBytes -> { });
+        Query query = new Query(
+                sessionSupplier,
+                statement,
+                queryManager,
+                sessionPropertyManager,
+                exchangeClient,
+                blockEncodingSerde);
         queries.put(query.getQueryId(), query);
-        return Response.ok(query.getNextResults(uriInfo, new Duration(1, TimeUnit.MILLISECONDS))).build();
-    }
 
-    static void assertRequest(boolean expression, String format, Object... args)
-    {
-        if (!expression) {
-            throw badRequest(format(format, args));
-        }
-    }
-
-    static TimeZoneKey getTimeZoneKey(String timeZoneId)
-    {
-        try {
-            return TimeZoneKey.getTimeZoneKey(timeZoneId);
-        }
-        catch (TimeZoneNotSupportedException e) {
-            throw badRequest(e.getMessage());
-        }
-    }
-
-    private static WebApplicationException badRequest(String message)
-    {
-        throw new WebApplicationException(Response
-                .status(Status.BAD_REQUEST)
-                .type(MediaType.TEXT_PLAIN)
-                .entity(message)
-                .build());
+        return getQueryResults(query, Optional.empty(), uriInfo, new Duration(1, MILLISECONDS));
     }
 
     @GET
@@ -217,7 +198,52 @@ public class StatementResource
         }
 
         Duration wait = WAIT_ORDERING.min(MAX_WAIT_TIME, maxWait);
-        return Response.ok(query.getResults(token, uriInfo, wait)).build();
+        return getQueryResults(query, Optional.of(token), uriInfo, wait);
+    }
+
+    private static Response getQueryResults(Query query, Optional<Long> token, UriInfo uriInfo, Duration wait)
+            throws InterruptedException
+    {
+        QueryResults queryResults;
+        if (token.isPresent()) {
+            queryResults = query.getResults(token.get(), uriInfo, wait);
+        }
+        else {
+            queryResults = query.getNextResults(uriInfo, wait);
+        }
+
+        ResponseBuilder response = Response.ok(queryResults);
+
+        // add set session properties
+        query.getSetSessionProperties().entrySet()
+                .forEach(entry -> response.header(PRESTO_SET_SESSION, entry.getKey() + '=' + entry.getValue()));
+
+        // add clear session properties
+        query.getResetSessionProperties()
+                .forEach(name -> response.header(PRESTO_CLEAR_SESSION, name));
+
+        // add added prepare statements
+        for (Entry<String, String> entry : query.getAddedPreparedStatements().entrySet()) {
+            String encodedKey = urlEncode(entry.getKey());
+            String encodedValue = urlEncode(entry.getValue());
+            response.header(PRESTO_ADDED_PREPARE, encodedKey + '=' + encodedValue);
+        }
+
+        // add deallocated prepare statements
+        for (String name : query.getDeallocatedPreparedStatements()) {
+            response.header(PRESTO_DEALLOCATED_PREPARE, urlEncode(name));
+        }
+
+        // add new transaction ID
+        query.getStartedTransactionId()
+                .ifPresent(transactionId -> response.header(PRESTO_STARTED_TRANSACTION_ID, transactionId));
+
+        // add clear transaction ID directive
+        if (query.isClearTransactionId()) {
+            response.header(PRESTO_CLEAR_TRANSACTION_ID, true);
+        }
+
+        return response.build();
     }
 
     @DELETE
@@ -230,20 +256,30 @@ public class StatementResource
         if (query == null) {
             return Response.status(Status.NOT_FOUND).build();
         }
-        query.close();
+        query.cancel();
         return Response.noContent().build();
+    }
+
+    private static String urlEncode(String value)
+    {
+        try {
+            return URLEncoder.encode(value, "UTF-8");
+        }
+        catch (UnsupportedEncodingException e) {
+            throw new AssertionError(e);
+        }
     }
 
     @ThreadSafe
     public static class Query
-            implements Closeable
     {
         private final QueryManager queryManager;
         private final QueryId queryId;
         private final ExchangeClient exchangeClient;
+        private final PagesSerde serde;
 
         private final AtomicLong resultId = new AtomicLong();
-        private final ConnectorSession session;
+        private final Session session;
 
         @GuardedBy("this")
         private QueryResults lastResult;
@@ -254,33 +290,94 @@ public class StatementResource
         @GuardedBy("this")
         private List<Column> columns;
 
-        public Query(ConnectorSession session,
+        @GuardedBy("this")
+        private Map<String, String> setSessionProperties;
+
+        @GuardedBy("this")
+        private Set<String> resetSessionProperties;
+
+        @GuardedBy("this")
+        private Map<String, String> addedPreparedStatements;
+
+        @GuardedBy("this")
+        private Set<String> deallocatedPreparedStatements;
+
+        @GuardedBy("this")
+        private Optional<TransactionId> startedTransactionId;
+
+        @GuardedBy("this")
+        private boolean clearTransactionId;
+
+        @GuardedBy("this")
+        private Long updateCount;
+
+        public Query(
+                SessionSupplier sessionSupplier,
                 String query,
                 QueryManager queryManager,
-                ExchangeClient exchangeClient)
+                SessionPropertyManager sessionPropertyManager,
+                ExchangeClient exchangeClient,
+                BlockEncodingSerde blockEncodingSerde)
         {
-            checkNotNull(session, "session is null");
-            checkNotNull(query, "query is null");
-            checkNotNull(queryManager, "queryManager is null");
-            checkNotNull(exchangeClient, "exchangeClient is null");
+            requireNonNull(sessionSupplier, "sessionFactory is null");
+            requireNonNull(query, "query is null");
+            requireNonNull(queryManager, "queryManager is null");
+            requireNonNull(exchangeClient, "exchangeClient is null");
 
-            this.session = session;
             this.queryManager = queryManager;
 
-            QueryInfo queryInfo = queryManager.createQuery(session, query);
+            QueryInfo queryInfo = queryManager.createQuery(sessionSupplier, query);
             queryId = queryInfo.getQueryId();
+            session = queryInfo.getSession().toSession(sessionPropertyManager);
             this.exchangeClient = exchangeClient;
+            requireNonNull(blockEncodingSerde, "serde is null");
+            this.serde = new PagesSerdeFactory(blockEncodingSerde, isExchangeCompressionEnabled(session)).createPagesSerde();
         }
 
-        @Override
-        public void close()
+        public void cancel()
         {
             queryManager.cancelQuery(queryId);
+            dispose();
+        }
+
+        public void dispose()
+        {
+            exchangeClient.close();
         }
 
         public QueryId getQueryId()
         {
             return queryId;
+        }
+
+        public synchronized Map<String, String> getSetSessionProperties()
+        {
+            return setSessionProperties;
+        }
+
+        public synchronized Set<String> getResetSessionProperties()
+        {
+            return resetSessionProperties;
+        }
+
+        public synchronized Map<String, String> getAddedPreparedStatements()
+        {
+            return addedPreparedStatements;
+        }
+
+        public synchronized Set<String> getDeallocatedPreparedStatements()
+        {
+            return deallocatedPreparedStatements;
+        }
+
+        public synchronized Optional<TransactionId> getStartedTransactionId()
+        {
+            return startedTransactionId;
+        }
+
+        public synchronized boolean isClearTransactionId()
+        {
+            return clearTransactionId;
         }
 
         public synchronized QueryResults getResults(long token, UriInfo uriInfo, Duration maxWaitTime)
@@ -291,6 +388,7 @@ public class StatementResource
             if (lastResultPath != null && requestedPath.equals(lastResultPath)) {
                 // tell query manager we are still interested in the query
                 queryManager.getQueryInfo(queryId);
+                queryManager.recordHeartbeat(queryId);
                 return lastResult;
             }
 
@@ -315,6 +413,7 @@ public class StatementResource
             // get the query info before returning
             // force update if query manager is closed
             QueryInfo queryInfo = queryManager.getQueryInfo(queryId);
+            queryManager.recordHeartbeat(queryId);
 
             // if we have received all of the output data and the query is not marked as done, wait for the query to finish
             if (exchangeClient.isClosed() && !queryInfo.getState().isDone()) {
@@ -322,45 +421,68 @@ public class StatementResource
                 queryInfo = queryManager.getQueryInfo(queryId);
             }
 
+            // TODO: figure out a better way to do this
+            // grab the update count for non-queries
+            if ((data != null) && (queryInfo.getUpdateType() != null) && (updateCount == null) &&
+                    (columns.size() == 1) && (columns.get(0).getType().equals(StandardTypes.BIGINT))) {
+                Iterator<List<Object>> iterator = data.iterator();
+                if (iterator.hasNext()) {
+                    Number number = (Number) iterator.next().get(0);
+                    if (number != null) {
+                        updateCount = number.longValue();
+                    }
+                }
+            }
+
             // close exchange client if the query has failed
             if (queryInfo.getState().isDone()) {
                 if (queryInfo.getState() != QueryState.FINISHED) {
                     exchangeClient.close();
                 }
-                else if (queryInfo.getOutputStage() == null) {
+                else if (!queryInfo.getOutputStage().isPresent()) {
                     // For simple executions (e.g. drop table), there will never be an output stage,
                     // so close the exchange as soon as the query is done.
                     exchangeClient.close();
 
-                    // this is a hack to suppress the warn message in the client saying that there are no columns.
-                    // The reason for this is that the current API definition assumes that everything is a query,
-                    // so statements without results produce an error in the client otherwise.
-                    //
-                    // TODO: add support to the API for non-query statements.
-                    columns = ImmutableList.of(new Column("result", "boolean"));
-                    data = ImmutableSet.<List<Object>>of(ImmutableList.<Object>of(true));
+                    // Return a single value for clients that require a result.
+                    columns = ImmutableList.of(new Column("result", "boolean", new ClientTypeSignature(StandardTypes.BOOLEAN, ImmutableList.of())));
+                    data = ImmutableSet.of(ImmutableList.of(true));
                 }
             }
 
             // only return a next if the query is not done or there is more data to send (due to buffering)
             URI nextResultsUri = null;
-            if ((!queryInfo.getState().isDone()) || (!exchangeClient.isClosed())) {
+            if ((!queryInfo.isFinalQueryInfo()) || (!exchangeClient.isClosed())) {
                 nextResultsUri = createNextResultsUri(uriInfo);
             }
+
+            // update setSessionProperties
+            setSessionProperties = queryInfo.getSetSessionProperties();
+            resetSessionProperties = queryInfo.getResetSessionProperties();
+
+            // update preparedStatements
+            addedPreparedStatements = queryInfo.getAddedPreparedStatements();
+            deallocatedPreparedStatements = queryInfo.getDeallocatedPreparedStatements();
+
+            // update startedTransactionId
+            startedTransactionId = queryInfo.getStartedTransactionId();
+            clearTransactionId = queryInfo.isClearTransactionId();
 
             // first time through, self is null
             QueryResults queryResults = new QueryResults(
                     queryId.toString(),
-                    uriInfo.getRequestUriBuilder().replaceQuery("").replacePath(queryInfo.getSelf().getPath()).build(),
+                    uriInfo.getRequestUriBuilder().replaceQuery(queryId.toString()).replacePath("query.html").build(),
                     findCancelableLeafStage(queryInfo),
                     nextResultsUri,
                     columns,
                     data,
                     toStatementStats(queryInfo),
-                    toQueryError(queryInfo));
+                    toQueryError(queryInfo),
+                    queryInfo.getUpdateType(),
+                    updateCount);
 
             // cache the last results
-            if (lastResult != null) {
+            if (lastResult != null && lastResult.getNextUri() != null) {
                 lastResultPath = lastResult.getNextUri().getPath();
             }
             else {
@@ -376,12 +498,14 @@ public class StatementResource
             // wait for query to start
             QueryInfo queryInfo = queryManager.getQueryInfo(queryId);
             while (maxWait.toMillis() > 1 && !isQueryStarted(queryInfo)) {
+                queryManager.recordHeartbeat(queryId);
                 maxWait = queryManager.waitForStateChange(queryId, queryInfo.getState(), maxWait);
                 queryInfo = queryManager.getQueryInfo(queryId);
             }
 
+            StageInfo outputStage = queryInfo.getOutputStage().orElse(null);
             // if query did not finish starting or does not have output, just return
-            if (!isQueryStarted(queryInfo) || queryInfo.getOutputStage() == null) {
+            if (!isQueryStarted(queryInfo) || outputStage == null) {
                 return null;
             }
 
@@ -389,28 +513,33 @@ public class StatementResource
                 columns = createColumnsList(queryInfo);
             }
 
-            updateExchangeClient(queryInfo.getOutputStage());
+            List<Type> types = outputStage.getTypes();
+
+            updateExchangeClient(outputStage);
 
             ImmutableList.Builder<RowIterable> pages = ImmutableList.builder();
             // wait up to max wait for data to arrive; then try to return at least DESIRED_RESULT_BYTES
-            int bytes = 0;
+            long bytes = 0;
             while (bytes < DESIRED_RESULT_BYTES) {
-                Page page = exchangeClient.getNextPage(maxWait);
-                if (page == null) {
+                SerializedPage serializedPage = exchangeClient.getNextPage(maxWait);
+                if (serializedPage == null) {
                     break;
                 }
-                bytes += page.getDataSize().toBytes();
-                pages.add(new RowIterable(session, page));
+
+                Page page = serde.deserialize(serializedPage);
+                bytes += page.getSizeInBytes();
+                pages.add(new RowIterable(session.toConnectorSession(), types, page));
 
                 // only wait on first call
-                maxWait = new Duration(0, TimeUnit.MILLISECONDS);
+                maxWait = new Duration(0, MILLISECONDS);
             }
 
-            if (bytes == 0) {
+            List<RowIterable> rowIterables = pages.build();
+            if (rowIterables.isEmpty()) {
                 return null;
             }
 
-            return Iterables.concat(pages.build());
+            return Iterables.concat(rowIterables);
         }
 
         private static boolean isQueryStarted(QueryInfo queryInfo)
@@ -421,24 +550,42 @@ public class StatementResource
 
         private synchronized void updateExchangeClient(StageInfo outputStage)
         {
-            // if the output stage is not done, update the exchange client with any additional locations
+            // add any additional output locations
             if (!outputStage.getState().isDone()) {
                 for (TaskInfo taskInfo : outputStage.getTasks()) {
-                    List<BufferInfo> buffers = taskInfo.getOutputBuffers().getBuffers();
-                    Preconditions.checkState(buffers.size() == 1,
-                            "Expected a single output buffer for task %s, but found %s",
-                            taskInfo.getTaskId(),
-                            buffers);
-
-                    String bufferId = Iterables.getOnlyElement(buffers).getBufferId();
-                    URI uri = uriBuilderFrom(taskInfo.getSelf()).appendPath("results").appendPath(bufferId).build();
+                    OutputBufferInfo outputBuffers = taskInfo.getOutputBuffers();
+                    if (outputBuffers.getState().canAddBuffers()) {
+                        // output buffer are still being created
+                        continue;
+                    }
+                    OutputBufferId bufferId = new OutputBufferId(0);
+                    URI uri = uriBuilderFrom(taskInfo.getTaskStatus().getSelf()).appendPath("results").appendPath(bufferId.toString()).build();
                     exchangeClient.addLocation(uri);
                 }
             }
-            // if the output stage has finished scheduling, set no more locations
-            if ((outputStage.getState() != StageState.PLANNED) && (outputStage.getState() != StageState.SCHEDULING)) {
+
+            if (allOutputBuffersCreated(outputStage)) {
                 exchangeClient.noMoreLocations();
             }
+        }
+
+        private static boolean allOutputBuffersCreated(StageInfo outputStage)
+        {
+            StageState stageState = outputStage.getState();
+
+            // if the stage is already done, then there will be no more buffers
+            if (stageState.isDone()) {
+                return true;
+            }
+
+            // have all stage tasks been scheduled?
+            if (stageState == StageState.PLANNED || stageState == StageState.SCHEDULING) {
+                return false;
+            }
+
+            // have all tasks finished adding buffers
+            return outputStage.getTasks().stream()
+                    .allMatch(taskInfo -> !taskInfo.getOutputBuffers().getState().canAddBuffers());
         }
 
         private synchronized URI createNextResultsUri(UriInfo uriInfo)
@@ -448,11 +595,8 @@ public class StatementResource
 
         private static List<Column> createColumnsList(QueryInfo queryInfo)
         {
-            checkNotNull(queryInfo, "queryInfo is null");
-            StageInfo outputStage = queryInfo.getOutputStage();
-            if (outputStage == null) {
-                checkNotNull(outputStage, "outputStage is null");
-            }
+            StageInfo outputStage = queryInfo.getOutputStage()
+                    .orElseThrow(() -> new IllegalArgumentException("outputStage not present"));
 
             List<String> names = queryInfo.getFieldNames();
             List<Type> types = outputStage.getTypes();
@@ -462,8 +606,9 @@ public class StatementResource
             ImmutableList.Builder<Column> list = ImmutableList.builder();
             for (int i = 0; i < names.size(); i++) {
                 String name = names.get(i);
-                String type = types.get(i).getName();
-                list.add(new Column(name, type));
+                TypeSignature typeSignature = types.get(i).getTypeSignature();
+                String type = typeSignature.toString();
+                list.add(new Column(name, type, new ClientTypeSignature(typeSignature)));
             }
             return list.build();
         }
@@ -471,21 +616,23 @@ public class StatementResource
         private static StatementStats toStatementStats(QueryInfo queryInfo)
         {
             QueryStats queryStats = queryInfo.getQueryStats();
+            StageInfo outputStage = queryInfo.getOutputStage().orElse(null);
 
             return StatementStats.builder()
                     .setState(queryInfo.getState().toString())
-                    .setScheduled(isScheduled(queryInfo))
-                    .setNodes(globalUniqueNodes(queryInfo.getOutputStage()).size())
+                    .setQueued(queryInfo.getState() == QueryState.QUEUED)
+                    .setScheduled(queryInfo.isScheduled())
+                    .setNodes(globalUniqueNodes(outputStage).size())
                     .setTotalSplits(queryStats.getTotalDrivers())
                     .setQueuedSplits(queryStats.getQueuedDrivers())
-                    .setRunningSplits(queryStats.getRunningDrivers())
+                    .setRunningSplits(queryStats.getRunningDrivers() + queryStats.getBlockedDrivers())
                     .setCompletedSplits(queryStats.getCompletedDrivers())
                     .setUserTimeMillis(queryStats.getTotalUserTime().toMillis())
                     .setCpuTimeMillis(queryStats.getTotalCpuTime().toMillis())
                     .setWallTimeMillis(queryStats.getTotalScheduledTime().toMillis())
                     .setProcessedRows(queryStats.getRawInputPositions())
                     .setProcessedBytes(queryStats.getRawInputDataSize().toBytes())
-                    .setRootStage(toStageStats(queryInfo.getOutputStage()))
+                    .setRootStage(toStageStats(outputStage))
                     .build();
         }
 
@@ -505,7 +652,7 @@ public class StatementResource
             Set<String> uniqueNodes = new HashSet<>();
             for (TaskInfo task : stageInfo.getTasks()) {
                 // todo add nodeId to TaskInfo
-                URI uri = task.getSelf();
+                URI uri = task.getTaskStatus().getSelf();
                 uniqueNodes.add(uri.getHost() + ":" + uri.getPort());
             }
 
@@ -516,7 +663,7 @@ public class StatementResource
                     .setNodes(uniqueNodes.size())
                     .setTotalSplits(stageStats.getTotalDrivers())
                     .setQueuedSplits(stageStats.getQueuedDrivers())
-                    .setRunningSplits(stageStats.getRunningDrivers())
+                    .setRunningSplits(stageStats.getRunningDrivers() + stageStats.getBlockedDrivers())
                     .setCompletedSplits(stageStats.getCompletedDrivers())
                     .setUserTimeMillis(stageStats.getTotalUserTime().toMillis())
                     .setCpuTimeMillis(stageStats.getTotalCpuTime().toMillis())
@@ -535,7 +682,7 @@ public class StatementResource
             ImmutableSet.Builder<String> nodes = ImmutableSet.builder();
             for (TaskInfo task : stageInfo.getTasks()) {
                 // todo add nodeId to TaskInfo
-                URI uri = task.getSelf();
+                URI uri = task.getTaskStatus().getSelf();
                 nodes.add(uri.getHost() + ":" + uri.getPort());
             }
 
@@ -545,38 +692,10 @@ public class StatementResource
             return nodes.build();
         }
 
-        private static boolean isScheduled(QueryInfo queryInfo)
-        {
-            StageInfo stage = queryInfo.getOutputStage();
-            if (stage == null) {
-                return false;
-            }
-            return IterableTransformer.on(getAllStages(stage))
-                    .transform(stageStateGetter())
-                    .all(isStageRunningOrDone());
-        }
-
-        private static Predicate<StageState> isStageRunningOrDone()
-        {
-            return new Predicate<StageState>()
-            {
-                @Override
-                public boolean apply(StageState state)
-                {
-                    return (state == StageState.RUNNING) || state.isDone();
-                }
-            };
-        }
-
         private static URI findCancelableLeafStage(QueryInfo queryInfo)
         {
-            if (queryInfo.getOutputStage() == null) {
-                // query is not running yet, cannot cancel leaf stage
-                return null;
-            }
-
-            // query is running, find the leaf-most running stage
-            return findCancelableLeafStage(queryInfo.getOutputStage());
+            // if query is running, find the leaf-most running stage
+            return queryInfo.getOutputStage().map(Query::findCancelableLeafStage).orElse(null);
         }
 
         private static URI findCancelableLeafStage(StageInfo stage)
@@ -610,25 +729,43 @@ public class StatementResource
                 log.warn("Query %s in state %s has no failure info", queryInfo.getQueryId(), state);
                 failure = toFailure(new RuntimeException(format("Query is %s (reason unknown)", state))).toFailureInfo();
             }
-            return new QueryError(failure.getMessage(), null, 0, failure.getErrorLocation(), failure);
+
+            ErrorCode errorCode;
+            if (queryInfo.getErrorCode() != null) {
+                errorCode = queryInfo.getErrorCode();
+            }
+            else {
+                errorCode = GENERIC_INTERNAL_ERROR.toErrorCode();
+                log.warn("Failed query %s has no error code", queryInfo.getQueryId());
+            }
+            return new QueryError(
+                    failure.getMessage(),
+                    null,
+                    errorCode.getCode(),
+                    errorCode.getName(),
+                    errorCode.getType().toString(),
+                    failure.getErrorLocation(),
+                    failure);
         }
 
         private static class RowIterable
                 implements Iterable<List<Object>>
         {
             private final ConnectorSession session;
+            private final List<Type> types;
             private final Page page;
 
-            private RowIterable(ConnectorSession session, Page page)
+            private RowIterable(ConnectorSession session, List<Type> types, Page page)
             {
                 this.session = session;
-                this.page = checkNotNull(page, "page is null");
+                this.types = ImmutableList.copyOf(requireNonNull(types, "types is null"));
+                this.page = requireNonNull(page, "page is null");
             }
 
             @Override
             public Iterator<List<Object>> iterator()
             {
-                return new RowIterator(session, page);
+                return new RowIterator(session, types, page);
             }
         }
 
@@ -636,30 +773,32 @@ public class StatementResource
                 extends AbstractIterator<List<Object>>
         {
             private final ConnectorSession session;
-            private final BlockCursor[] cursors;
+            private final List<Type> types;
+            private final Page page;
+            private int position = -1;
 
-            private RowIterator(ConnectorSession session, Page page)
+            private RowIterator(ConnectorSession session, List<Type> types, Page page)
             {
                 this.session = session;
-                cursors = new BlockCursor[page.getChannelCount()];
-                for (int channel = 0; channel < cursors.length; channel++) {
-                    cursors[channel] = page.getBlock(channel).cursor();
-                }
+                this.types = types;
+                this.page = page;
             }
 
             @Override
             protected List<Object> computeNext()
             {
-                List<Object> row = new ArrayList<>(cursors.length);
-                for (BlockCursor cursor : cursors) {
-                    if (!cursor.advanceNextPosition()) {
-                        Preconditions.checkState(row.isEmpty(), "Page is unaligned");
-                        return endOfData();
-                    }
-
-                    row.add(cursor.getObjectValue(session));
+                position++;
+                if (position >= page.getPositionCount()) {
+                    return endOfData();
                 }
-                return row;
+
+                List<Object> values = new ArrayList<>(page.getChannelCount());
+                for (int channel = 0; channel < page.getChannelCount(); channel++) {
+                    Type type = types.get(channel);
+                    Block block = page.getBlock(channel);
+                    values.add(type.getObjectValue(session, block, position));
+                }
+                return Collections.unmodifiableList(values);
             }
         }
     }
@@ -685,17 +824,18 @@ public class StatementResource
                 // from the query manager.  Then we remove only the queries in the snapshot and
                 // not live queries set.  If we did this in the other order, a query could be
                 // registered between fetching the live queries and inspecting the queryIds set.
+                for (QueryId queryId : ImmutableSet.copyOf(queries.keySet())) {
+                    Query query = queries.get(queryId);
+                    Optional<QueryState> state = queryManager.getQueryState(queryId);
 
-                Set<QueryId> queryIdsSnapshot = ImmutableSet.copyOf(queries.keySet());
-                // do not call queryManager.getQueryInfo() since it updates the heartbeat time
-                Set<QueryId> liveQueries = ImmutableSet.copyOf(transform(queryManager.getAllQueryInfo(), queryIdGetter()));
+                    // free up resources if the query completed
+                    if (!state.isPresent() || state.get() == QueryState.FAILED) {
+                        query.dispose();
+                    }
 
-                Set<QueryId> deadQueries = Sets.difference(queryIdsSnapshot, liveQueries);
-                for (QueryId deadQueryId : deadQueries) {
-                    Query query = queries.remove(deadQueryId);
-                    if (query != null) {
-                        query.close();
-                        log.info("Removed expired query %s", deadQueryId);
+                    // forget about this query if the query manager is no longer tracking it
+                    if (!state.isPresent()) {
+                        queries.remove(queryId);
                     }
                 }
             }

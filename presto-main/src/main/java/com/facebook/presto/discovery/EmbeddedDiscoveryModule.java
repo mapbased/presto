@@ -13,11 +13,12 @@
  */
 package com.facebook.presto.discovery;
 
-import com.facebook.presto.guice.AbstractConfigurationAwareModule;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.util.concurrent.ListenableFuture;
 import com.google.inject.Binder;
 import com.google.inject.Scopes;
+import io.airlift.configuration.AbstractConfigurationAwareModule;
 import io.airlift.discovery.client.ServiceDescriptor;
 import io.airlift.discovery.client.ServiceInventory;
 import io.airlift.discovery.client.ServiceSelector;
@@ -39,10 +40,12 @@ import javax.inject.Inject;
 import java.util.List;
 import java.util.Set;
 
-import static com.google.common.base.Preconditions.checkNotNull;
-import static io.airlift.configuration.ConfigurationModule.bindConfig;
+import static com.google.common.util.concurrent.Futures.immediateFuture;
+import static io.airlift.configuration.ConfigBinder.configBinder;
 import static io.airlift.discovery.client.DiscoveryBinder.discoveryBinder;
+import static io.airlift.jaxrs.JaxrsBinder.jaxrsBinder;
 import static io.airlift.json.JsonCodecBinder.jsonCodecBinder;
+import static java.util.Objects.requireNonNull;
 
 public class EmbeddedDiscoveryModule
         extends AbstractConfigurationAwareModule
@@ -54,8 +57,8 @@ public class EmbeddedDiscoveryModule
             return;
         }
 
-        bindConfig(binder).to(DiscoveryConfig.class);
-        binder.bind(ServiceResource.class).in(Scopes.SINGLETON);
+        configBinder(binder).bindConfig(DiscoveryConfig.class);
+        jaxrsBinder(binder).bind(ServiceResource.class);
 
         discoveryBinder(binder).bindHttpAnnouncement("discovery");
 
@@ -65,7 +68,7 @@ public class EmbeddedDiscoveryModule
         binder.bind(ServiceSelector.class).to(DiscoveryServiceSelector.class);
         binder.bind(StaticStore.class).to(EmptyStaticStore.class);
 
-        binder.bind(DynamicAnnouncementResource.class).in(Scopes.SINGLETON);
+        jaxrsBinder(binder).bind(DynamicAnnouncementResource.class);
         binder.bind(DynamicStore.class).to(ReplicatedDynamicStore.class).in(Scopes.SINGLETON);
         binder.install(new ReplicatedStoreModule("dynamic", ForDynamicStore.class, InMemoryStore.class));
     }
@@ -79,8 +82,8 @@ public class EmbeddedDiscoveryModule
         @Inject
         public DiscoveryServiceSelector(NodeInfo nodeInfo, ServiceInventory inventory)
         {
-            this.nodeInfo = checkNotNull(nodeInfo, "nodeInfo is null");
-            this.inventory = checkNotNull(inventory, "inventory is null");
+            this.nodeInfo = requireNonNull(nodeInfo, "nodeInfo is null");
+            this.inventory = requireNonNull(inventory, "inventory is null");
         }
 
         @Override
@@ -99,6 +102,14 @@ public class EmbeddedDiscoveryModule
         public List<ServiceDescriptor> selectAllServices()
         {
             return ImmutableList.copyOf(inventory.getServiceDescriptors(getType()));
+        }
+
+        @Override
+        public ListenableFuture<List<ServiceDescriptor>> refresh()
+        {
+            // todo modify Service inventory to be async
+            inventory.updateServiceInventory();
+            return immediateFuture(selectAllServices());
         }
     }
 

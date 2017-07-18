@@ -16,15 +16,15 @@ package com.facebook.presto.sql.planner.plan;
 import com.facebook.presto.sql.planner.Symbol;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.google.common.base.Optional;
-import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.Iterables;
 
 import javax.annotation.concurrent.Immutable;
 
 import java.util.List;
+import java.util.Optional;
 
-import static com.google.common.base.Preconditions.checkNotNull;
+import static java.util.Objects.requireNonNull;
 
 @Immutable
 public class MarkDistinctNode
@@ -32,25 +32,22 @@ public class MarkDistinctNode
 {
     private final PlanNode source;
     private final Symbol markerSymbol;
+
+    private final Optional<Symbol> hashSymbol;
     private final List<Symbol> distinctSymbols;
-    private final Optional<Symbol> sampleWeightSymbol;
 
     @JsonCreator
     public MarkDistinctNode(@JsonProperty("id") PlanNodeId id,
             @JsonProperty("source") PlanNode source,
             @JsonProperty("markerSymbol") Symbol markerSymbol,
             @JsonProperty("distinctSymbols") List<Symbol> distinctSymbols,
-            @JsonProperty("sampleWeightSymbol") Optional<Symbol> sampleWeightSymbol)
+            @JsonProperty("hashSymbol") Optional<Symbol> hashSymbol)
     {
         super(id);
         this.source = source;
         this.markerSymbol = markerSymbol;
-        this.distinctSymbols = ImmutableList.copyOf(checkNotNull(distinctSymbols, "distinctSymbols is null"));
-        this.sampleWeightSymbol = checkNotNull(sampleWeightSymbol, "sampleWeightSymbol is null");
-
-        if (sampleWeightSymbol.isPresent()) {
-            Preconditions.checkArgument(source.getOutputSymbols().contains(sampleWeightSymbol.get()), "source does not output sample weight");
-        }
+        this.hashSymbol = requireNonNull(hashSymbol, "hashSymbol is null");
+        this.distinctSymbols = ImmutableList.copyOf(requireNonNull(distinctSymbols, "distinctSymbols is null"));
     }
 
     @Override
@@ -66,12 +63,6 @@ public class MarkDistinctNode
     public List<PlanNode> getSources()
     {
         return ImmutableList.of(source);
-    }
-
-    @JsonProperty
-    public Optional<Symbol> getSampleWeightSymbol()
-    {
-        return sampleWeightSymbol;
     }
 
     @JsonProperty
@@ -92,8 +83,21 @@ public class MarkDistinctNode
         return distinctSymbols;
     }
 
-    public <C, R> R accept(PlanVisitor<C, R> visitor, C context)
+    @JsonProperty
+    public Optional<Symbol> getHashSymbol()
+    {
+        return hashSymbol;
+    }
+
+    @Override
+    public <R, C> R accept(PlanVisitor<R, C> visitor, C context)
     {
         return visitor.visitMarkDistinct(this, context);
+    }
+
+    @Override
+    public PlanNode replaceChildren(List<PlanNode> newChildren)
+    {
+        return new MarkDistinctNode(getId(), Iterables.getOnlyElement(newChildren), markerSymbol, distinctSymbols, hashSymbol);
     }
 }

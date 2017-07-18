@@ -14,38 +14,34 @@
 package com.facebook.presto.operator.index;
 
 import com.facebook.presto.operator.LookupSource;
-import com.facebook.presto.operator.PageBuilder;
-import com.facebook.presto.spi.block.BlockCursor;
+import com.facebook.presto.spi.Page;
+import com.facebook.presto.spi.PageBuilder;
 
 import javax.annotation.concurrent.Immutable;
 
-import static com.google.common.base.Preconditions.checkNotNull;
+import static java.util.Objects.requireNonNull;
 
 @Immutable
 public class IndexSnapshot
+        implements IndexedData
 {
-    public static final long UNLOADED_INDEX_KEY = -2;
-    public static final long NO_MORE_POSITIONS = -1;
+    private static final Page EMPTY_PAGE = new Page(0);
 
     private final LookupSource values;
     private final LookupSource missingKeys;
 
     public IndexSnapshot(LookupSource values, LookupSource missingKeys)
     {
-        this.values = checkNotNull(values, "values is null");
-        this.missingKeys = checkNotNull(missingKeys, "missingKeys is null");
+        this.values = requireNonNull(values, "values is null");
+        this.missingKeys = requireNonNull(missingKeys, "missingKeys is null");
     }
 
-    /**
-     * Returns UNLOADED_INDEX_KEY if the key has not been loaded.
-     * Returns NO_MORE_POSITIONS if the key has been loaded, but has no values.
-     * Returns a valid address if the key has been loaded and has values.
-     */
-    public long getJoinPosition(BlockCursor... cursors)
+    @Override
+    public long getJoinPosition(int position, Page page)
     {
-        long joinPosition = values.getJoinPosition(cursors);
+        long joinPosition = values.getJoinPosition(position, page, page);
         if (joinPosition < 0) {
-            if (missingKeys.getJoinPosition(cursors) < 0) {
+            if (missingKeys.getJoinPosition(position, page, page) < 0) {
                 return UNLOADED_INDEX_KEY;
             }
             else {
@@ -55,17 +51,20 @@ public class IndexSnapshot
         return joinPosition;
     }
 
-    /**
-     * Returns the next address to join.
-     * Returns NO_MORE_POSITIONS if there are no more values to join.
-     */
+    @Override
     public long getNextJoinPosition(long currentPosition)
     {
-        return values.getNextJoinPosition(currentPosition);
+        return values.getNextJoinPosition(currentPosition, -1, EMPTY_PAGE);
     }
 
+    @Override
     public void appendTo(long position, PageBuilder pageBuilder, int outputChannelOffset)
     {
         values.appendTo(position, pageBuilder, outputChannelOffset);
+    }
+
+    @Override
+    public void close()
+    {
     }
 }

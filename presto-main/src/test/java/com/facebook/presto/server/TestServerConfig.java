@@ -15,12 +15,14 @@ package com.facebook.presto.server;
 
 import com.google.common.collect.ImmutableMap;
 import io.airlift.configuration.testing.ConfigAssertions;
+import io.airlift.units.Duration;
 import org.testng.annotations.Test;
 
 import java.util.Map;
 
 import static io.airlift.configuration.testing.ConfigAssertions.assertFullMapping;
 import static io.airlift.configuration.testing.ConfigAssertions.assertRecordedDefaults;
+import static java.util.concurrent.TimeUnit.MINUTES;
 
 public class TestServerConfig
 {
@@ -30,7 +32,9 @@ public class TestServerConfig
         assertRecordedDefaults(ConfigAssertions.recordDefaults(ServerConfig.class)
                 .setCoordinator(true)
                 .setPrestoVersion(null)
-                .setDataSources(null));
+                .setDataSources(null)
+                .setIncludeExceptionInResponse(true)
+                .setGracePeriod(new Duration(2, MINUTES)));
     }
 
     @Test
@@ -40,12 +44,16 @@ public class TestServerConfig
                 .put("coordinator", "false")
                 .put("presto.version", "test")
                 .put("datasources", "jmx")
+                .put("http.include-exception-in-response", "false")
+                .put("shutdown.grace-period", "5m")
                 .build();
 
         ServerConfig expected = new ServerConfig()
                 .setCoordinator(false)
                 .setPrestoVersion("test")
-                .setDataSources("jmx");
+                .setDataSources("jmx")
+                .setIncludeExceptionInResponse(false)
+                .setGracePeriod(new Duration(5, MINUTES));
 
         assertFullMapping(properties, expected);
     }

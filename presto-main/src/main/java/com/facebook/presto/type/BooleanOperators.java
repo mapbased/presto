@@ -13,23 +13,26 @@
  */
 package com.facebook.presto.type;
 
-import com.facebook.presto.operator.scalar.ScalarOperator;
-import com.facebook.presto.spi.type.BigintType;
-import com.facebook.presto.spi.type.BooleanType;
-import com.facebook.presto.spi.type.DoubleType;
-import com.facebook.presto.spi.type.VarcharType;
+import com.facebook.presto.spi.function.IsNull;
+import com.facebook.presto.spi.function.LiteralParameters;
+import com.facebook.presto.spi.function.ScalarFunction;
+import com.facebook.presto.spi.function.ScalarOperator;
+import com.facebook.presto.spi.function.SqlType;
+import com.facebook.presto.spi.type.StandardTypes;
 import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
 
-import static com.facebook.presto.metadata.OperatorType.BETWEEN;
-import static com.facebook.presto.metadata.OperatorType.CAST;
-import static com.facebook.presto.metadata.OperatorType.EQUAL;
-import static com.facebook.presto.metadata.OperatorType.GREATER_THAN;
-import static com.facebook.presto.metadata.OperatorType.GREATER_THAN_OR_EQUAL;
-import static com.facebook.presto.metadata.OperatorType.HASH_CODE;
-import static com.facebook.presto.metadata.OperatorType.LESS_THAN;
-import static com.facebook.presto.metadata.OperatorType.LESS_THAN_OR_EQUAL;
-import static com.facebook.presto.metadata.OperatorType.NOT_EQUAL;
+import static com.facebook.presto.spi.function.OperatorType.BETWEEN;
+import static com.facebook.presto.spi.function.OperatorType.CAST;
+import static com.facebook.presto.spi.function.OperatorType.EQUAL;
+import static com.facebook.presto.spi.function.OperatorType.GREATER_THAN;
+import static com.facebook.presto.spi.function.OperatorType.GREATER_THAN_OR_EQUAL;
+import static com.facebook.presto.spi.function.OperatorType.HASH_CODE;
+import static com.facebook.presto.spi.function.OperatorType.IS_DISTINCT_FROM;
+import static com.facebook.presto.spi.function.OperatorType.LESS_THAN;
+import static com.facebook.presto.spi.function.OperatorType.LESS_THAN_OR_EQUAL;
+import static com.facebook.presto.spi.function.OperatorType.NOT_EQUAL;
+import static java.lang.Float.floatToRawIntBits;
 import static java.nio.charset.StandardCharsets.US_ASCII;
 
 public final class BooleanOperators
@@ -42,78 +45,132 @@ public final class BooleanOperators
     }
 
     @ScalarOperator(EQUAL)
-    @SqlType(BooleanType.class)
-    public static boolean equal(@SqlType(BooleanType.class) boolean left, @SqlType(BooleanType.class) boolean right)
+    @SqlType(StandardTypes.BOOLEAN)
+    public static boolean equal(@SqlType(StandardTypes.BOOLEAN) boolean left, @SqlType(StandardTypes.BOOLEAN) boolean right)
     {
         return left == right;
     }
 
     @ScalarOperator(NOT_EQUAL)
-    @SqlType(BooleanType.class)
-    public static boolean notEqual(@SqlType(BooleanType.class) boolean left, @SqlType(BooleanType.class) boolean right)
+    @SqlType(StandardTypes.BOOLEAN)
+    public static boolean notEqual(@SqlType(StandardTypes.BOOLEAN) boolean left, @SqlType(StandardTypes.BOOLEAN) boolean right)
     {
         return left != right;
     }
 
     @ScalarOperator(LESS_THAN)
-    @SqlType(BooleanType.class)
-    public static boolean lessThan(@SqlType(BooleanType.class) boolean left, @SqlType(BooleanType.class) boolean right)
+    @SqlType(StandardTypes.BOOLEAN)
+    public static boolean lessThan(@SqlType(StandardTypes.BOOLEAN) boolean left, @SqlType(StandardTypes.BOOLEAN) boolean right)
     {
         return !left && right;
     }
 
     @ScalarOperator(LESS_THAN_OR_EQUAL)
-    @SqlType(BooleanType.class)
-    public static boolean lessThanOrEqual(@SqlType(BooleanType.class) boolean left, @SqlType(BooleanType.class) boolean right)
+    @SqlType(StandardTypes.BOOLEAN)
+    public static boolean lessThanOrEqual(@SqlType(StandardTypes.BOOLEAN) boolean left, @SqlType(StandardTypes.BOOLEAN) boolean right)
     {
         return !left || right;
     }
 
     @ScalarOperator(GREATER_THAN)
-    @SqlType(BooleanType.class)
-    public static boolean greaterThan(@SqlType(BooleanType.class) boolean left, @SqlType(BooleanType.class) boolean right)
+    @SqlType(StandardTypes.BOOLEAN)
+    public static boolean greaterThan(@SqlType(StandardTypes.BOOLEAN) boolean left, @SqlType(StandardTypes.BOOLEAN) boolean right)
     {
         return left && !right;
     }
 
     @ScalarOperator(GREATER_THAN_OR_EQUAL)
-    @SqlType(BooleanType.class)
-    public static boolean greaterThanOrEqual(@SqlType(BooleanType.class) boolean left, @SqlType(BooleanType.class) boolean right)
+    @SqlType(StandardTypes.BOOLEAN)
+    public static boolean greaterThanOrEqual(@SqlType(StandardTypes.BOOLEAN) boolean left, @SqlType(StandardTypes.BOOLEAN) boolean right)
     {
         return left || !right;
     }
 
     @ScalarOperator(BETWEEN)
-    @SqlType(BooleanType.class)
-    public static boolean between(@SqlType(BooleanType.class) boolean value, @SqlType(BooleanType.class) boolean min, @SqlType(BooleanType.class) boolean max)
+    @SqlType(StandardTypes.BOOLEAN)
+    public static boolean between(@SqlType(StandardTypes.BOOLEAN) boolean value, @SqlType(StandardTypes.BOOLEAN) boolean min, @SqlType(StandardTypes.BOOLEAN) boolean max)
     {
         return (value && max) || (!value && !min);
     }
 
     @ScalarOperator(CAST)
-    @SqlType(DoubleType.class)
-    public static double castToDouble(@SqlType(BooleanType.class) boolean value)
+    @SqlType(StandardTypes.DOUBLE)
+    public static double castToDouble(@SqlType(StandardTypes.BOOLEAN) boolean value)
     {
         return value ? 1 : 0;
     }
 
     @ScalarOperator(CAST)
-    @SqlType(BigintType.class)
-    public static long castToBigint(@SqlType(BooleanType.class) boolean value)
+    @SqlType(StandardTypes.REAL)
+    public static long castToReal(@SqlType(StandardTypes.BOOLEAN) boolean value)
+    {
+        return value ? floatToRawIntBits(1.0f) : floatToRawIntBits(0.0f);
+    }
+
+    @ScalarOperator(CAST)
+    @SqlType(StandardTypes.BIGINT)
+    public static long castToBigint(@SqlType(StandardTypes.BOOLEAN) boolean value)
     {
         return value ? 1 : 0;
     }
 
     @ScalarOperator(CAST)
-    @SqlType(VarcharType.class)
-    public static Slice castToVarchar(@SqlType(BooleanType.class) boolean value)
+    @SqlType(StandardTypes.INTEGER)
+    public static long castToInteger(@SqlType(StandardTypes.BOOLEAN) boolean value)
+    {
+        return value ? 1 : 0;
+    }
+
+    @ScalarOperator(CAST)
+    @SqlType(StandardTypes.SMALLINT)
+    public static long castToSmallint(@SqlType(StandardTypes.BOOLEAN) boolean value)
+    {
+        return value ? 1 : 0;
+    }
+
+    @ScalarOperator(CAST)
+    @SqlType(StandardTypes.TINYINT)
+    public static long castToTinyint(@SqlType(StandardTypes.BOOLEAN) boolean value)
+    {
+        return value ? 1 : 0;
+    }
+
+    @ScalarOperator(CAST)
+    @LiteralParameters("x")
+    @SqlType("varchar(x)")
+    public static Slice castToVarchar(@SqlType(StandardTypes.BOOLEAN) boolean value)
     {
         return value ? TRUE : FALSE;
     }
 
     @ScalarOperator(HASH_CODE)
-    public static int hashCode(@SqlType(BooleanType.class) boolean value)
+    @SqlType(StandardTypes.BIGINT)
+    public static long hashCode(@SqlType(StandardTypes.BOOLEAN) boolean value)
     {
         return value ? 1231 : 1237;
+    }
+
+    @SqlType(StandardTypes.BOOLEAN)
+    @ScalarFunction(hidden = true) // TODO: this should not be callable from SQL
+    public static boolean not(@SqlType(StandardTypes.BOOLEAN) boolean value)
+    {
+        return !value;
+    }
+
+    @ScalarOperator(IS_DISTINCT_FROM)
+    @SqlType(StandardTypes.BOOLEAN)
+    public static boolean isDistinctFrom(
+            @SqlType(StandardTypes.BOOLEAN) boolean left,
+            @IsNull boolean leftNull,
+            @SqlType(StandardTypes.BOOLEAN) boolean right,
+            @IsNull boolean rightNull)
+    {
+        if (leftNull != rightNull) {
+            return true;
+        }
+        if (leftNull) {
+            return false;
+        }
+        return notEqual(left, right);
     }
 }

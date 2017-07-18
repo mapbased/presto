@@ -13,141 +13,176 @@
  */
 package com.facebook.presto.tests;
 
-import com.facebook.presto.client.ClientSession;
-import com.facebook.presto.client.Column;
-import com.facebook.presto.client.QueryError;
-import com.facebook.presto.client.QueryResults;
-import com.facebook.presto.client.StatementClient;
+import com.facebook.presto.Session;
+import com.facebook.presto.connector.ConnectorId;
+import com.facebook.presto.cost.CostCalculator;
+import com.facebook.presto.execution.QueryInfo;
+import com.facebook.presto.execution.QueryManager;
 import com.facebook.presto.metadata.AllNodes;
+import com.facebook.presto.metadata.Catalog;
 import com.facebook.presto.metadata.Metadata;
-import com.facebook.presto.metadata.QualifiedTableName;
-import com.facebook.presto.metadata.QualifiedTablePrefix;
-import com.facebook.presto.metadata.TableHandle;
+import com.facebook.presto.metadata.QualifiedObjectName;
+import com.facebook.presto.metadata.SessionPropertyManager;
 import com.facebook.presto.server.testing.TestingPrestoServer;
-import com.facebook.presto.spi.ConnectorSession;
 import com.facebook.presto.spi.Node;
 import com.facebook.presto.spi.Plugin;
-import com.facebook.presto.spi.type.TimeZoneKey;
-import com.facebook.presto.spi.type.Type;
+import com.facebook.presto.spi.QueryId;
+import com.facebook.presto.sql.parser.SqlParserOptions;
+import com.facebook.presto.sql.planner.Plan;
 import com.facebook.presto.testing.MaterializedResult;
-import com.facebook.presto.testing.MaterializedRow;
 import com.facebook.presto.testing.QueryRunner;
-import com.google.common.base.Function;
-import com.google.common.base.Optional;
+import com.facebook.presto.testing.TestingAccessControlManager;
+import com.facebook.presto.transaction.TransactionManager;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
-import com.google.inject.Module;
-import io.airlift.http.client.AsyncHttpClient;
-import io.airlift.http.client.HttpClientConfig;
-import io.airlift.http.client.jetty.JettyHttpClient;
-import io.airlift.json.JsonCodec;
+import com.google.common.io.Closer;
 import io.airlift.log.Logger;
 import io.airlift.testing.Assertions;
-import io.airlift.testing.Closeables;
 import io.airlift.units.Duration;
 import org.intellij.lang.annotations.Language;
 
+import java.io.IOException;
 import java.net.URI;
-import java.sql.Date;
-import java.sql.Time;
-import java.sql.Timestamp;
-import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
-import static com.facebook.presto.spi.type.BigintType.BIGINT;
-import static com.facebook.presto.spi.type.BooleanType.BOOLEAN;
-import static com.facebook.presto.spi.type.DateTimeEncoding.unpackMillisUtc;
-import static com.facebook.presto.spi.type.DateType.DATE;
-import static com.facebook.presto.spi.type.DoubleType.DOUBLE;
-import static com.facebook.presto.spi.type.TimeType.TIME;
-import static com.facebook.presto.spi.type.TimeWithTimeZoneType.TIME_WITH_TIME_ZONE;
-import static com.facebook.presto.spi.type.TimestampType.TIMESTAMP;
-import static com.facebook.presto.spi.type.TimestampWithTimeZoneType.TIMESTAMP_WITH_TIME_ZONE;
-import static com.facebook.presto.spi.type.VarcharType.VARCHAR;
-import static com.facebook.presto.testing.MaterializedResult.DEFAULT_PRECISION;
-import static com.facebook.presto.util.DateTimeUtils.parseDate;
-import static com.facebook.presto.util.DateTimeUtils.parseTime;
-import static com.facebook.presto.util.DateTimeUtils.parseTimeWithTimeZone;
-import static com.facebook.presto.util.DateTimeUtils.parseTimestamp;
-import static com.facebook.presto.util.DateTimeUtils.parseTimestampWithTimeZone;
-import static com.google.common.base.Preconditions.checkArgument;
-import static com.google.common.base.Preconditions.checkNotNull;
-import static com.google.common.collect.Iterables.transform;
-import static io.airlift.json.JsonCodec.jsonCodec;
+import static com.facebook.presto.testing.TestingSession.TESTING_CATALOG;
+import static com.facebook.presto.testing.TestingSession.createBogusTestingCatalog;
+import static com.facebook.presto.tests.AbstractTestQueries.TEST_CATALOG_PROPERTIES;
+import static com.facebook.presto.tests.AbstractTestQueries.TEST_SYSTEM_PROPERTIES;
+import static com.google.common.collect.Iterables.getOnlyElement;
 import static io.airlift.units.Duration.nanosSince;
+import static java.util.Objects.requireNonNull;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.concurrent.TimeUnit.SECONDS;
 
 public class DistributedQueryRunner
-    implements QueryRunner
+        implements QueryRunner
 {
-    private static final Logger log = Logger.get("TestQueries");
-
+    private static final Logger log = Logger.get(DistributedQueryRunner.class);
     private static final String ENVIRONMENT = "testing";
-    private static final JsonCodec<QueryResults> QUERY_RESULTS_CODEC = jsonCodec(QueryResults.class);
 
     private final TestingDiscoveryServer discoveryServer;
     private final TestingPrestoServer coordinator;
     private final List<TestingPrestoServer> servers;
-    private final AsyncHttpClient httpClient;
-    private final ConnectorSession session;
 
-    public DistributedQueryRunner(ConnectorSession defaultSession, int workersCount)
+    private final Closer closer = Closer.create();
+
+    private final TestingPrestoClient prestoClient;
+
+    private final ReadWriteLock lock = new ReentrantReadWriteLock();
+
+    public DistributedQueryRunner(Session defaultSession, int workersCount)
             throws Exception
     {
-        session = checkNotNull(defaultSession, "defaultSession is null");
+        this(defaultSession, workersCount, ImmutableMap.of());
+    }
+
+    public DistributedQueryRunner(Session defaultSession, int workersCount, Map<String, String> extraProperties)
+            throws Exception
+    {
+        this(defaultSession, workersCount, extraProperties, ImmutableMap.of(), new SqlParserOptions());
+    }
+
+    public DistributedQueryRunner(
+            Session defaultSession,
+            int workersCount,
+            Map<String, String> extraProperties,
+            Map<String, String> coordinatorProperties,
+            SqlParserOptions parserOptions)
+            throws Exception
+    {
+        requireNonNull(defaultSession, "defaultSession is null");
 
         try {
-            discoveryServer = new TestingDiscoveryServer(ENVIRONMENT);
+            long start = System.nanoTime();
+            discoveryServer = closer.register(new TestingDiscoveryServer(ENVIRONMENT));
+            log.info("Created TestingDiscoveryServer in %s", nanosSince(start).convertToMostSuccinctTimeUnit());
 
             ImmutableList.Builder<TestingPrestoServer> servers = ImmutableList.builder();
-            coordinator = createTestingPrestoServer(discoveryServer.getBaseUrl(), true);
-            servers.add(coordinator);
 
             for (int i = 1; i < workersCount; i++) {
-                servers.add(createTestingPrestoServer(discoveryServer.getBaseUrl(), false));
+                TestingPrestoServer worker = closer.register(createTestingPrestoServer(discoveryServer.getBaseUrl(), false, extraProperties, parserOptions));
+                servers.add(worker);
             }
+
+            Map<String, String> extraCoordinatorProperties = ImmutableMap.<String, String>builder()
+                    .put("optimizer.optimize-mixed-distinct-aggregations", "true")
+                    .put("experimental.iterative-optimizer-enabled", "true")
+                    .putAll(extraProperties)
+                    .putAll(coordinatorProperties)
+                    .build();
+            coordinator = closer.register(createTestingPrestoServer(discoveryServer.getBaseUrl(), true, extraCoordinatorProperties, parserOptions));
+            servers.add(coordinator);
+
             this.servers = servers.build();
         }
         catch (Exception e) {
-            close();
-            throw e;
+            try {
+                throw closer.rethrow(e, Exception.class);
+            }
+            finally {
+                closer.close();
+            }
         }
 
-        this.httpClient = new JettyHttpClient(
-                new HttpClientConfig()
-                        .setConnectTimeout(new Duration(1, TimeUnit.DAYS))
-                        .setReadTimeout(new Duration(10, TimeUnit.DAYS)));
+        // copy session using property manager in coordinator
+        defaultSession = defaultSession.toSessionRepresentation().toSession(coordinator.getMetadata().getSessionPropertyManager());
+        this.prestoClient = closer.register(new TestingPrestoClient(coordinator, defaultSession));
 
         long start = System.nanoTime();
         while (!allNodesGloballyVisible()) {
             Assertions.assertLessThan(nanosSince(start), new Duration(10, SECONDS));
             MILLISECONDS.sleep(10);
         }
+        log.info("Announced servers in %s", nanosSince(start).convertToMostSuccinctTimeUnit());
 
+        start = System.nanoTime();
         for (TestingPrestoServer server : servers) {
             server.getMetadata().addFunctions(AbstractTestQueries.CUSTOM_FUNCTIONS);
         }
+        log.info("Added functions in %s", nanosSince(start).convertToMostSuccinctTimeUnit());
+
+        for (TestingPrestoServer server : servers) {
+            // add bogus catalog for testing procedures and session properties
+            Catalog bogusTestingCatalog = createBogusTestingCatalog(TESTING_CATALOG);
+            server.getCatalogManager().registerCatalog(bogusTestingCatalog);
+
+            SessionPropertyManager sessionPropertyManager = server.getMetadata().getSessionPropertyManager();
+            sessionPropertyManager.addSystemSessionProperties(TEST_SYSTEM_PROPERTIES);
+            sessionPropertyManager.addConnectorSessionProperties(bogusTestingCatalog.getConnectorId(), TEST_CATALOG_PROPERTIES);
+        }
     }
 
-    private static TestingPrestoServer createTestingPrestoServer(URI discoveryUri, boolean coordinator)
+    private static TestingPrestoServer createTestingPrestoServer(URI discoveryUri, boolean coordinator, Map<String, String> extraProperties, SqlParserOptions parserOptions)
             throws Exception
     {
-        ImmutableMap.Builder<String, String> properties = ImmutableMap.<String, String>builder()
+        long start = System.nanoTime();
+        ImmutableMap.Builder<String, String> propertiesBuilder = ImmutableMap.<String, String>builder()
                 .put("query.client.timeout", "10m")
-                .put("exchange.http-client.read-timeout", "1h")
+                .put("exchange.http-client.idle-timeout", "1h")
                 .put("compiler.interpreter-enabled", "false")
-                .put("datasources", "system");
+                .put("task.max-index-memory", "16kB") // causes index joins to fault load
+                .put("datasources", "system")
+                .put("distributed-index-joins-enabled", "true")
+                .put("optimizer.optimize-mixed-distinct-aggregations", "true");
         if (coordinator) {
-            properties.put("node-scheduler.include-coordinator", "false");
+            propertiesBuilder.put("node-scheduler.include-coordinator", "true");
+            propertiesBuilder.put("distributed-joins-enabled", "true");
         }
+        HashMap<String, String> properties = new HashMap<>(propertiesBuilder.build());
+        properties.putAll(extraProperties);
 
-        TestingPrestoServer server = new TestingPrestoServer(coordinator, properties.build(), ENVIRONMENT, discoveryUri, ImmutableList.<Module>of());
+        TestingPrestoServer server = new TestingPrestoServer(coordinator, properties, ENVIRONMENT, discoveryUri, parserOptions, ImmutableList.of());
+
+        log.info("Created TestingPrestoServer in %s", nanosSince(start).convertToMostSuccinctTimeUnit());
 
         return server;
     }
@@ -164,6 +199,11 @@ public class DistributedQueryRunner
         return true;
     }
 
+    public TestingPrestoClient getClient()
+    {
+        return prestoClient;
+    }
+
     @Override
     public int getNodeCount()
     {
@@ -171,9 +211,33 @@ public class DistributedQueryRunner
     }
 
     @Override
-    public ConnectorSession getDefaultSession()
+    public Session getDefaultSession()
     {
-        return session;
+        return prestoClient.getDefaultSession();
+    }
+
+    @Override
+    public TransactionManager getTransactionManager()
+    {
+        return coordinator.getTransactionManager();
+    }
+
+    @Override
+    public Metadata getMetadata()
+    {
+        return coordinator.getMetadata();
+    }
+
+    @Override
+    public CostCalculator getCostCalculator()
+    {
+        return coordinator.getCostCalculator();
+    }
+
+    @Override
+    public TestingAccessControlManager getAccessControl()
+    {
+        return coordinator.getAccessControl();
     }
 
     public TestingPrestoServer getCoordinator()
@@ -181,28 +245,41 @@ public class DistributedQueryRunner
         return coordinator;
     }
 
+    public List<TestingPrestoServer> getServers()
+    {
+        return ImmutableList.copyOf(servers);
+    }
+
+    @Override
     public void installPlugin(Plugin plugin)
     {
+        long start = System.nanoTime();
         for (TestingPrestoServer server : servers) {
             server.installPlugin(plugin);
         }
+        log.info("Installed plugin %s in %s", plugin.getClass().getSimpleName(), nanosSince(start).convertToMostSuccinctTimeUnit());
     }
 
     public void createCatalog(String catalogName, String connectorName)
     {
-        createCatalog(catalogName, connectorName, ImmutableMap.<String, String>of());
+        createCatalog(catalogName, connectorName, ImmutableMap.of());
     }
 
+    @Override
     public void createCatalog(String catalogName, String connectorName, Map<String, String> properties)
     {
+        long start = System.nanoTime();
+        Set<ConnectorId> connectorIds = new HashSet<>();
         for (TestingPrestoServer server : servers) {
-            server.createCatalog(catalogName, connectorName, properties);
+            connectorIds.add(server.createCatalog(catalogName, connectorName, properties));
         }
+        ConnectorId connectorId = getOnlyElement(connectorIds);
+        log.info("Created catalog %s (%s) in %s", catalogName, connectorId, nanosSince(start));
 
         // wait for all nodes to announce the new catalog
-        long start = System.nanoTime();
-        while (!isConnectionVisibleToAllNodes(catalogName)) {
-            Assertions.assertLessThan(nanosSince(start), new Duration(100, SECONDS), "waiting form connector "  + connectorName + " to be initialized in every node");
+        start = System.nanoTime();
+        while (!isConnectionVisibleToAllNodes(connectorId)) {
+            Assertions.assertLessThan(nanosSince(start), new Duration(100, SECONDS), "waiting for connector " + connectorId + " to be initialized in every node");
             try {
                 MILLISECONDS.sleep(10);
             }
@@ -211,9 +288,10 @@ public class DistributedQueryRunner
                 throw Throwables.propagate(e);
             }
         }
+        log.info("Announced catalog %s (%s) in %s", catalogName, connectorId, nanosSince(start));
     }
 
-    private boolean isConnectionVisibleToAllNodes(String connectorId)
+    private boolean isConnectionVisibleToAllNodes(ConnectorId connectorId)
     {
         for (TestingPrestoServer server : servers) {
             server.refreshNodes();
@@ -226,161 +304,99 @@ public class DistributedQueryRunner
     }
 
     @Override
-    public List<QualifiedTableName> listTables(ConnectorSession session, String catalog, String schema)
+    public List<QualifiedObjectName> listTables(Session session, String catalog, String schema)
     {
-        return coordinator.getMetadata().listTables(session, new QualifiedTablePrefix(catalog, schema));
+        lock.readLock().lock();
+        try {
+            return prestoClient.listTables(session, catalog, schema);
+        }
+        finally {
+            lock.readLock().unlock();
+        }
     }
 
     @Override
-    public boolean tableExists(ConnectorSession session, String table)
+    public boolean tableExists(Session session, String table)
     {
-        QualifiedTableName name =  new QualifiedTableName(session.getCatalog(), session.getSchema(), table);
-        Optional<TableHandle> handle = coordinator.getMetadata().getTableHandle(session, name);
-        return handle.isPresent();
+        lock.readLock().lock();
+        try {
+            return prestoClient.tableExists(session, table);
+        }
+        finally {
+            lock.readLock().unlock();
+        }
     }
 
     @Override
     public MaterializedResult execute(@Language("SQL") String sql)
     {
-        return execute(session, sql);
-    }
-
-    @Override
-    public MaterializedResult execute(ConnectorSession session, @Language("SQL") String sql)
-    {
-        try (StatementClient client = new StatementClient(httpClient, QUERY_RESULTS_CODEC, toClientSession(session), sql)) {
-            AtomicBoolean loggedUri = new AtomicBoolean(false);
-            ImmutableList.Builder<MaterializedRow> rows = ImmutableList.builder();
-            List<Type> types = null;
-
-            while (client.isValid()) {
-                QueryResults results = client.current();
-                if (!loggedUri.getAndSet(true)) {
-                    log.info("Query %s: %s?pretty", results.getId(), results.getInfoUri());
-                }
-
-                if ((types == null) && (results.getColumns() != null)) {
-                    types = getTypes(coordinator.getMetadata(), results.getColumns());
-                }
-                if (results.getData() != null) {
-                    rows.addAll(transform(results.getData(), dataToRow(session.getTimeZoneKey(), types)));
-                }
-
-                client.advance();
-            }
-
-            if (!client.isFailed()) {
-                return new MaterializedResult(rows.build(), types);
-            }
-
-            QueryError error = client.finalResults().getError();
-            assert error != null;
-            if (error.getFailureInfo() != null) {
-                throw error.getFailureInfo().toException();
-            }
-            throw new RuntimeException("Query failed: " + error.getMessage());
-
-            // dump query info to console for debugging (NOTE: not pretty printed)
-            // JsonCodec<QueryInfo> queryInfoJsonCodec = createCodecFactory().prettyPrint().jsonCodec(QueryInfo.class);
-            // log.info("\n" + queryInfoJsonCodec.toJson(queryInfo));
+        lock.readLock().lock();
+        try {
+            return prestoClient.execute(sql).getResult();
+        }
+        finally {
+            lock.readLock().unlock();
         }
     }
 
-    private ClientSession toClientSession(ConnectorSession connectorSession)
+    @Override
+    public MaterializedResult execute(Session session, @Language("SQL") String sql)
     {
-        return new ClientSession(
-                coordinator.getBaseUrl(),
-                connectorSession.getUser(),
-                connectorSession.getSource(),
-                connectorSession.getCatalog(),
-                connectorSession.getSchema(),
-                connectorSession.getTimeZoneKey().getId(),
-                connectorSession.getLocale(), true);
+        lock.readLock().lock();
+        try {
+            return prestoClient.execute(session, sql).getResult();
+        }
+        finally {
+            lock.readLock().unlock();
+        }
+    }
+
+    public ResultWithQueryId<MaterializedResult> executeWithQueryId(Session session, @Language("SQL") String sql)
+    {
+        lock.readLock().lock();
+        try {
+            return prestoClient.execute(session, sql);
+        }
+        finally {
+            lock.readLock().unlock();
+        }
+    }
+
+    public QueryInfo getQueryInfo(QueryId queryId)
+    {
+        return coordinator.getQueryManager().getQueryInfo(queryId);
+    }
+
+    public Plan getQueryPlan(QueryId queryId)
+    {
+        return coordinator.getQueryManager().getQueryPlan(queryId);
+    }
+
+    @Override
+    public Lock getExclusiveLock()
+    {
+        return lock.writeLock();
     }
 
     @Override
     public final void close()
     {
-        if (servers != null) {
-            for (TestingPrestoServer server : servers) {
-                Closeables.closeQuietly(server);
+        cancelAllQueries();
+        try {
+            closer.close();
+        }
+        catch (IOException e) {
+            throw Throwables.propagate(e);
+        }
+    }
+
+    private void cancelAllQueries()
+    {
+        QueryManager queryManager = coordinator.getQueryManager();
+        for (QueryInfo queryInfo : queryManager.getAllQueryInfo()) {
+            if (!queryInfo.getState().isDone()) {
+                queryManager.cancelQuery(queryInfo.getQueryId());
             }
         }
-        Closeables.closeQuietly(discoveryServer);
-    }
-
-    private static Function<List<Object>, MaterializedRow> dataToRow(final TimeZoneKey timeZoneKey, final List<Type> types)
-    {
-        return new Function<List<Object>, MaterializedRow>()
-        {
-            @Override
-            public MaterializedRow apply(List<Object> data)
-            {
-                checkArgument(data.size() == types.size(), "columns size does not match types size");
-                List<Object> row = new ArrayList<>();
-                for (int i = 0; i < data.size(); i++) {
-                    Object value = data.get(i);
-                    if (value == null) {
-                        row.add(null);
-                        continue;
-                    }
-
-                    Type type = types.get(i);
-                    if (BOOLEAN.equals(type)) {
-                        row.add(value);
-                    }
-                    else if (BIGINT.equals(type)) {
-                        row.add(((Number) value).longValue());
-                    }
-                    else if (DOUBLE.equals(type)) {
-                        row.add(((Number) value).doubleValue());
-                    }
-                    else if (VARCHAR.equals(type)) {
-                        row.add(value);
-                    }
-                    else if (DATE.equals(type)) {
-                        row.add(new Date(parseDate((String) value)));
-                    }
-                    else if (TIME.equals(type)) {
-                        row.add(new Time(parseTime(timeZoneKey, (String) value)));
-                    }
-                    else if (TIME_WITH_TIME_ZONE.equals(type)) {
-                        row.add(new Time(unpackMillisUtc(parseTimeWithTimeZone((String) value))));
-                    }
-                    else if (TIMESTAMP.equals(type)) {
-                        row.add(new Timestamp(parseTimestamp(timeZoneKey, (String) value)));
-                    }
-                    else if (TIMESTAMP_WITH_TIME_ZONE.equals(type)) {
-                        row.add(new Timestamp(unpackMillisUtc(parseTimestampWithTimeZone((String) value))));
-                    }
-                    else {
-                        throw new AssertionError("unhandled type: " + type);
-                    }
-                }
-                return new MaterializedRow(DEFAULT_PRECISION, row);
-            }
-        };
-    }
-
-    private static List<Type> getTypes(Metadata metadata, List<Column> columns)
-    {
-        return ImmutableList.copyOf(transform(columns, columnTypeGetter(metadata)));
-    }
-
-    private static Function<Column, Type> columnTypeGetter(final Metadata metadata)
-    {
-        return new Function<Column, Type>()
-        {
-            @Override
-            public Type apply(Column column)
-            {
-                String typeName = column.getType();
-                Type type = metadata.getType(typeName);
-                if (type == null) {
-                    throw new AssertionError("Unhandled type: " + typeName);
-                }
-                return type;
-            }
-        };
     }
 }

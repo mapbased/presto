@@ -13,146 +13,97 @@
  */
 package com.facebook.presto.raptor;
 
+import com.facebook.presto.raptor.backup.BackupService;
+import com.facebook.presto.raptor.metadata.BucketShards;
 import com.facebook.presto.raptor.metadata.ShardManager;
-import com.facebook.presto.raptor.metadata.TablePartition;
-import com.facebook.presto.spi.ConnectorColumnHandle;
-import com.facebook.presto.spi.ConnectorPartition;
-import com.facebook.presto.spi.ConnectorPartitionResult;
+import com.facebook.presto.raptor.metadata.ShardNodes;
+import com.facebook.presto.raptor.util.SynchronizedResultIterator;
+import com.facebook.presto.spi.ColumnHandle;
+import com.facebook.presto.spi.ConnectorSession;
 import com.facebook.presto.spi.ConnectorSplit;
-import com.facebook.presto.spi.ConnectorSplitManager;
 import com.facebook.presto.spi.ConnectorSplitSource;
-import com.facebook.presto.spi.ConnectorTableHandle;
-import com.facebook.presto.spi.ConnectorTableMetadata;
-import com.facebook.presto.spi.Domain;
-import com.facebook.presto.spi.FixedSplitSource;
+import com.facebook.presto.spi.ConnectorTableLayoutHandle;
 import com.facebook.presto.spi.HostAddress;
 import com.facebook.presto.spi.Node;
-import com.facebook.presto.spi.NodeManager;
-import com.facebook.presto.spi.PartitionKey;
-import com.facebook.presto.spi.TupleDomain;
-import com.google.common.base.Function;
-import com.google.common.base.Objects;
-import com.google.common.base.Stopwatch;
+import com.facebook.presto.spi.PrestoException;
+import com.facebook.presto.spi.connector.ConnectorSplitManager;
+import com.facebook.presto.spi.connector.ConnectorTransactionHandle;
+import com.facebook.presto.spi.predicate.TupleDomain;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.ImmutableMultimap;
-import com.google.common.collect.Multimap;
-import io.airlift.log.Logger;
-import io.airlift.slice.Slice;
+import org.skife.jdbi.v2.ResultIterator;
 
+import javax.annotation.PreDestroy;
+import javax.annotation.concurrent.GuardedBy;
 import javax.inject.Inject;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.Map.Entry;
+import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.function.Supplier;
 
-import static com.facebook.presto.metadata.PrestoNode.getIdentifierFunction;
-import static com.facebook.presto.util.Types.checkType;
-import static com.google.common.base.Preconditions.checkArgument;
-import static com.google.common.base.Preconditions.checkNotNull;
+import static com.facebook.presto.raptor.RaptorErrorCode.RAPTOR_NO_HOST_FOR_SHARD;
+import static com.facebook.presto.raptor.RaptorSessionProperties.getOneSplitPerBucketThreshold;
+import static com.facebook.presto.spi.StandardErrorCode.NO_NODES_AVAILABLE;
 import static com.google.common.base.Preconditions.checkState;
-import static com.google.common.collect.Iterables.transform;
+import static com.google.common.base.Verify.verify;
+import static com.google.common.collect.Iterables.getOnlyElement;
 import static com.google.common.collect.Maps.uniqueIndex;
-import static io.airlift.slice.Slices.utf8Slice;
+import static io.airlift.concurrent.Threads.daemonThreadsNamed;
+import static java.lang.String.format;
+import static java.util.Objects.requireNonNull;
+import static java.util.concurrent.CompletableFuture.supplyAsync;
+import static java.util.concurrent.Executors.newCachedThreadPool;
+import static java.util.stream.Collectors.toSet;
 
 public class RaptorSplitManager
         implements ConnectorSplitManager
 {
-    private static final Logger log = Logger.get(RaptorSplitManager.class);
-
     private final String connectorId;
-    private final NodeManager nodeManager;
+    private final NodeSupplier nodeSupplier;
     private final ShardManager shardManager;
-    private final RaptorMetadata metadata;
+    private final boolean backupAvailable;
+    private final ExecutorService executor;
 
     @Inject
-    public RaptorSplitManager(RaptorConnectorId connectorId, NodeManager nodeManager, ShardManager shardManager, RaptorMetadata metadata)
+    public RaptorSplitManager(RaptorConnectorId connectorId, NodeSupplier nodeSupplier, ShardManager shardManager, BackupService backupService)
     {
-        this.connectorId = checkNotNull(connectorId, "connectorId is null").toString();
-        this.nodeManager = checkNotNull(nodeManager, "nodeManager is null");
-        this.shardManager = checkNotNull(shardManager, "shardManager is null");
-        this.metadata = checkNotNull(metadata, "metadata is null");
+        this(connectorId, nodeSupplier, shardManager, requireNonNull(backupService, "backupService is null").isBackupAvailable());
+    }
+
+    public RaptorSplitManager(RaptorConnectorId connectorId, NodeSupplier nodeSupplier, ShardManager shardManager, boolean backupAvailable)
+    {
+        this.connectorId = requireNonNull(connectorId, "connectorId is null").toString();
+        this.nodeSupplier = requireNonNull(nodeSupplier, "nodeSupplier is null");
+        this.shardManager = requireNonNull(shardManager, "shardManager is null");
+        this.backupAvailable = backupAvailable;
+        this.executor = newCachedThreadPool(daemonThreadsNamed("raptor-split-" + connectorId + "-%s"));
+    }
+
+    @PreDestroy
+    public void destroy()
+    {
+        executor.shutdownNow();
     }
 
     @Override
-    public String getConnectorId()
+    public ConnectorSplitSource getSplits(ConnectorTransactionHandle transaction, ConnectorSession session, ConnectorTableLayoutHandle layout)
     {
-        return connectorId;
-    }
-
-    @Override
-    public ConnectorPartitionResult getPartitions(ConnectorTableHandle tableHandle, TupleDomain<ConnectorColumnHandle> tupleDomain)
-    {
-        Stopwatch partitionTimer = Stopwatch.createStarted();
-
-        checkType(tableHandle, RaptorTableHandle.class, "table");
-
-        ConnectorTableMetadata tableMetadata = metadata.getTableMetadata(tableHandle);
-
-        checkState(tableMetadata != null, "no metadata for %s found", tableHandle);
-
-        Set<TablePartition> tablePartitions = shardManager.getPartitions(tableHandle);
-
-        log.debug("Partition retrieval, raptor table %s (%d partitions): %dms", tableHandle, tablePartitions.size(), partitionTimer.elapsed(TimeUnit.MILLISECONDS));
-
-        Multimap<String, ? extends PartitionKey> allPartitionKeys = shardManager.getAllPartitionKeys(tableHandle);
-        Map<String, ConnectorColumnHandle> columnHandles = metadata.getColumnHandles(tableHandle);
-
-        log.debug("Partition key retrieval, raptor table %s (%d keys): %dms", tableHandle, allPartitionKeys.size(), partitionTimer.elapsed(TimeUnit.MILLISECONDS));
-
-        List<ConnectorPartition> partitions = ImmutableList.copyOf(transform(tablePartitions, partitionMapper(allPartitionKeys, columnHandles)));
-
-        log.debug("Partition generation, raptor table %s (%d partitions): %dms", tableHandle, partitions.size(), partitionTimer.elapsed(TimeUnit.MILLISECONDS));
-
-        return new ConnectorPartitionResult(partitions, tupleDomain);
-    }
-
-    @Override
-    public ConnectorSplitSource getPartitionSplits(ConnectorTableHandle tableHandle, List<ConnectorPartition> partitions)
-    {
-        Stopwatch splitTimer = Stopwatch.createStarted();
-
-        checkNotNull(partitions, "partitions is null");
-        if (partitions.isEmpty()) {
-            return new FixedSplitSource(connectorId, ImmutableList.<ConnectorSplit>of());
-        }
-
-        Map<String, Node> nodesById = uniqueIndex(nodeManager.getActiveNodes(), getIdentifierFunction());
-
-        List<ConnectorSplit> splits = new ArrayList<>();
-
-        Multimap<Long, Entry<UUID, String>> partitionShardNodes = shardManager.getShardNodesByPartition(tableHandle);
-
-        for (ConnectorPartition partition : partitions) {
-            RaptorPartition raptorPartition = checkType(partition, RaptorPartition.class, "partition");
-
-            ImmutableMultimap.Builder<UUID, String> shardNodes = ImmutableMultimap.builder();
-            for (Entry<UUID, String> shardNode : partitionShardNodes.get(raptorPartition.getRaptorPartitionId())) {
-                shardNodes.put(shardNode.getKey(), shardNode.getValue());
-            }
-
-            for (Map.Entry<UUID, Collection<String>> entry : shardNodes.build().asMap().entrySet()) {
-                List<HostAddress> addresses = getAddressesForNodes(nodesById, entry.getValue());
-                checkState(!addresses.isEmpty(), "no host for shard %s found: %s", entry.getKey(), entry.getValue());
-                ConnectorSplit split = new RaptorSplit(entry.getKey(), addresses);
-                splits.add(split);
-            }
-        }
-
-        log.debug("Split retrieval for %d partitions (%d splits): %dms", partitions.size(), splits.size(), splitTimer.elapsed(TimeUnit.MILLISECONDS));
-
-        // The query engine assumes that splits are returned in a somewhat random fashion. The Raptor split manager,
-        // because it loads the data from a database table, will return the splits somewhat ordered by node ID,
-        // so only a subset of nodes are fired up. Shuffle the splits to ensure random distribution.
-        Collections.shuffle(splits);
-
-        return new FixedSplitSource(connectorId, splits);
+        RaptorTableLayoutHandle handle = (RaptorTableLayoutHandle) layout;
+        RaptorTableHandle table = handle.getTable();
+        TupleDomain<RaptorColumnHandle> effectivePredicate = toRaptorTupleDomain(handle.getConstraint());
+        long tableId = table.getTableId();
+        boolean bucketed = table.getBucketCount().isPresent();
+        boolean merged = bucketed && !table.isDelete() && (table.getBucketCount().getAsInt() >= getOneSplitPerBucketThreshold(session));
+        OptionalLong transactionId = table.getTransactionId();
+        Optional<Map<Integer, String>> bucketToNode = handle.getPartitioning().map(RaptorPartitioningHandle::getBucketToNode);
+        verify(bucketed == bucketToNode.isPresent(), "mismatched bucketCount and bucketToNode presence");
+        return new RaptorSplitSource(tableId, merged, effectivePredicate, transactionId, bucketToNode);
     }
 
     private static List<HostAddress> getAddressesForNodes(Map<String, Node> nodeMap, Iterable<String> nodeIdentifiers)
@@ -167,115 +118,142 @@ public class RaptorSplitManager
         return nodes.build();
     }
 
-    public static class RaptorPartition
-            implements ConnectorPartition
+    @SuppressWarnings("unchecked")
+    private static TupleDomain<RaptorColumnHandle> toRaptorTupleDomain(TupleDomain<ColumnHandle> tupleDomain)
     {
-        private final long partitionId;
-        private final TupleDomain<ConnectorColumnHandle> tupleDomain;
-
-        public RaptorPartition(long partitionId, TupleDomain<ConnectorColumnHandle> tupleDomain)
-        {
-            this.partitionId = partitionId;
-            this.tupleDomain = checkNotNull(tupleDomain, "tupleDomain is null");
-        }
-
-        @Override
-        public String getPartitionId()
-        {
-            return Long.toString(partitionId);
-        }
-
-        public long getRaptorPartitionId()
-        {
-            return partitionId;
-        }
-
-        @Override
-        public TupleDomain<ConnectorColumnHandle> getTupleDomain()
-        {
-            return tupleDomain;
-        }
-
-        @Override
-        public int hashCode()
-        {
-            return Objects.hashCode(partitionId, tupleDomain);
-        }
-
-        @Override
-        public boolean equals(Object obj)
-        {
-            if (this == obj) {
-                return true;
-            }
-            if (obj == null || getClass() != obj.getClass()) {
-                return false;
-            }
-            RaptorPartition other = (RaptorPartition) obj;
-            return this.partitionId == other.partitionId
-                    && Objects.equal(this.tupleDomain, other.tupleDomain);
-        }
-
-        @Override
-        public String toString()
-        {
-            return Objects.toStringHelper(this)
-                    .add("partitionId", partitionId)
-                    .add("tupleDomain", tupleDomain)
-                    .toString();
-        }
+        return tupleDomain.transform(handle -> (RaptorColumnHandle) handle);
     }
 
-    private static Function<TablePartition, ConnectorPartition> partitionMapper(
-            final Multimap<String, ? extends PartitionKey> allPartitionKeys,
-            final Map<String, ConnectorColumnHandle> columnHandles)
+    private static <T> T selectRandom(Iterable<T> elements)
     {
-        return new Function<TablePartition, ConnectorPartition>()
+        List<T> list = ImmutableList.copyOf(elements);
+        return list.get(ThreadLocalRandom.current().nextInt(list.size()));
+    }
+
+    private class RaptorSplitSource
+            implements ConnectorSplitSource
+    {
+        private final Map<String, Node> nodesById = uniqueIndex(nodeSupplier.getWorkerNodes(), Node::getNodeIdentifier);
+        private final long tableId;
+        private final TupleDomain<RaptorColumnHandle> effectivePredicate;
+        private final OptionalLong transactionId;
+        private final Optional<Map<Integer, String>> bucketToNode;
+        private final ResultIterator<BucketShards> iterator;
+
+        @GuardedBy("this")
+        private CompletableFuture<List<ConnectorSplit>> future;
+
+        public RaptorSplitSource(
+                long tableId,
+                boolean merged,
+                TupleDomain<RaptorColumnHandle> effectivePredicate,
+                OptionalLong transactionId,
+                Optional<Map<Integer, String>> bucketToNode)
         {
-            @Override
-            public ConnectorPartition apply(TablePartition tablePartition)
-            {
-                String partitionName = tablePartition.getPartitionName();
+            this.tableId = tableId;
+            this.effectivePredicate = requireNonNull(effectivePredicate, "effectivePredicate is null");
+            this.transactionId = requireNonNull(transactionId, "transactionId is null");
+            this.bucketToNode = requireNonNull(bucketToNode, "bucketToNode is null");
 
-                ImmutableMap.Builder<ConnectorColumnHandle, Domain> builder = ImmutableMap.builder();
-                for (PartitionKey partitionKey : allPartitionKeys.get(partitionName)) {
-                    ConnectorColumnHandle columnHandle = columnHandles.get(partitionKey.getName());
-                    checkArgument(columnHandle != null, "Invalid partition key for column %s in partition %s", partitionKey.getName(), tablePartition.getPartitionName());
+            ResultIterator<BucketShards> iterator;
+            if (bucketToNode.isPresent()) {
+                iterator = shardManager.getShardNodesBucketed(tableId, merged, bucketToNode.get(), effectivePredicate);
+            }
+            else {
+                iterator = shardManager.getShardNodes(tableId, effectivePredicate);
+            }
+            this.iterator = new SynchronizedResultIterator<>(iterator);
+        }
 
-                    String value = partitionKey.getValue();
-                    Class<?> javaType = partitionKey.getType().getJavaType();
+        @Override
+        public synchronized CompletableFuture<List<ConnectorSplit>> getNextBatch(int maxSize)
+        {
+            checkState((future == null) || future.isDone(), "previous batch not completed");
+            future = supplyAsync(batchSupplier(maxSize), executor);
+            return future;
+        }
 
-                    if (javaType == boolean.class) {
-                        if (value.isEmpty()) {
-                            builder.put(columnHandle, Domain.singleValue(false));
-                        }
-                        else {
-                            builder.put(columnHandle, Domain.singleValue(Boolean.parseBoolean(value)));
-                        }
+        @Override
+        public synchronized void close()
+        {
+            if (future != null) {
+                future.cancel(true);
+                future = null;
+            }
+            executor.execute(iterator::close);
+        }
+
+        @Override
+        public boolean isFinished()
+        {
+            return !iterator.hasNext();
+        }
+
+        private Supplier<List<ConnectorSplit>> batchSupplier(int maxSize)
+        {
+            return () -> {
+                ImmutableList.Builder<ConnectorSplit> list = ImmutableList.builder();
+                for (int i = 0; i < maxSize; i++) {
+                    if (Thread.currentThread().isInterrupted()) {
+                        throw new RuntimeException("Split batch fetch was interrupted");
                     }
-                    else if (javaType == long.class) {
-                        if (value.isEmpty()) {
-                            builder.put(columnHandle, Domain.singleValue(0L));
-                        }
-                        else {
-                            builder.put(columnHandle, Domain.singleValue(Long.parseLong(value)));
-                        }
+                    if (!iterator.hasNext()) {
+                        break;
                     }
-                    else if (javaType == double.class) {
-                        if (value.isEmpty()) {
-                            builder.put(columnHandle, Domain.singleValue(0.0));
-                        }
-                        else {
-                            builder.put(columnHandle, Domain.singleValue(Double.parseDouble(value)));
-                        }
-                    }
-                    else if (javaType == Slice.class) {
-                        builder.put(columnHandle, Domain.singleValue(utf8Slice(value)));
-                    }
+                    list.add(createSplit(iterator.next()));
+                }
+                return list.build();
+            };
+        }
+
+        private ConnectorSplit createSplit(BucketShards bucketShards)
+        {
+            if (bucketShards.getBucketNumber().isPresent()) {
+                return createBucketSplit(bucketShards.getBucketNumber().getAsInt(), bucketShards.getShards());
+            }
+
+            verify(bucketShards.getShards().size() == 1, "wrong shard count for non-bucketed table");
+            ShardNodes shard = getOnlyElement(bucketShards.getShards());
+            UUID shardId = shard.getShardUuid();
+            Set<String> nodeIds = shard.getNodeIdentifiers();
+
+            List<HostAddress> addresses = getAddressesForNodes(nodesById, nodeIds);
+            if (addresses.isEmpty()) {
+                if (!backupAvailable) {
+                    throw new PrestoException(RAPTOR_NO_HOST_FOR_SHARD, format("No host for shard %s found: %s", shardId, nodeIds));
                 }
 
-                return new RaptorPartition(tablePartition.getPartitionId(), TupleDomain.withColumnDomains(builder.build()));
+                // Pick a random node and optimistically assign the shard to it.
+                // That node will restore the shard from the backup location.
+                Set<Node> availableNodes = nodeSupplier.getWorkerNodes();
+                if (availableNodes.isEmpty()) {
+                    throw new PrestoException(NO_NODES_AVAILABLE, "No nodes available to run query");
+                }
+                Node node = selectRandom(availableNodes);
+                shardManager.assignShard(tableId, shardId, node.getNodeIdentifier(), true);
+                addresses = ImmutableList.of(node.getHostAndPort());
             }
-        };
+
+            return new RaptorSplit(connectorId, shardId, addresses, effectivePredicate, transactionId);
+        }
+
+        private ConnectorSplit createBucketSplit(int bucketNumber, Set<ShardNodes> shards)
+        {
+            // Bucket splits contain all the shards for the bucket
+            // and run on the node assigned to the bucket.
+
+            String nodeId = bucketToNode.get().get(bucketNumber);
+            Node node = nodesById.get(nodeId);
+            if (node == null) {
+                throw new PrestoException(NO_NODES_AVAILABLE, "Node for bucket is offline: " + nodeId);
+            }
+
+            Set<UUID> shardUuids = shards.stream()
+                    .map(ShardNodes::getShardUuid)
+                    .collect(toSet());
+            HostAddress address = node.getHostAndPort();
+
+            return new RaptorSplit(connectorId, shardUuids, bucketNumber, address, effectivePredicate, transactionId);
+        }
     }
 }

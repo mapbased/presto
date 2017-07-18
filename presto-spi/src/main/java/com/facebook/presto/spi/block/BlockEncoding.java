@@ -13,7 +13,6 @@
  */
 package com.facebook.presto.spi.block;
 
-import com.facebook.presto.spi.type.Type;
 import io.airlift.slice.SliceInput;
 import io.airlift.slice.SliceOutput;
 
@@ -25,11 +24,6 @@ public interface BlockEncoding
     String getName();
 
     /**
-     * Gets the type this encoding supports.
-     */
-    Type getType();
-
-    /**
      * Read a block from the specified input.  The returned
      * block should begin at the specified position.
      */
@@ -39,4 +33,9 @@ public interface BlockEncoding
      * Write the specified block to the specified output
      */
     void writeBlock(SliceOutput sliceOutput, Block block);
+
+    /**
+     * Return associated factory
+     */
+    BlockEncodingFactory getFactory();
 }

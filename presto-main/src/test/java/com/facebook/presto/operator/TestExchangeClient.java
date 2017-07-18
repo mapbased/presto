@@ -14,6 +14,9 @@
 package com.facebook.presto.operator;
 
 import com.facebook.presto.block.BlockAssertions;
+import com.facebook.presto.execution.buffer.PagesSerde;
+import com.facebook.presto.execution.buffer.SerializedPage;
+import com.facebook.presto.spi.Page;
 import com.google.common.collect.ImmutableMap;
 import io.airlift.http.client.testing.TestingHttpClient;
 import io.airlift.units.DataSize;
@@ -27,14 +30,14 @@ import java.net.URI;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
-import static com.facebook.presto.operator.PageBufferClientStatus.uriGetter;
-import static com.facebook.presto.testing.TestingBlockEncodingManager.createTestingBlockEncodingManager;
+import static com.facebook.presto.execution.buffer.TestingPagesSerdeFactory.testingPagesSerde;
 import static com.google.common.collect.Maps.uniqueIndex;
 import static com.google.common.util.concurrent.Uninterruptibles.sleepUninterruptibly;
 import static io.airlift.concurrent.Threads.daemonThreadsNamed;
 import static io.airlift.testing.Assertions.assertLessThan;
 import static java.util.concurrent.Executors.newCachedThreadPool;
 import static java.util.concurrent.Executors.newScheduledThreadPool;
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertNotNull;
 import static org.testng.Assert.assertNull;
@@ -44,6 +47,8 @@ import static org.testng.Assert.assertTrue;
 public class TestExchangeClient
 {
     private ScheduledExecutorService executor;
+
+    private static final PagesSerde PAGES_SERDE = testingPagesSerde();
 
     @BeforeClass
     public void setUp()
@@ -74,13 +79,7 @@ public class TestExchangeClient
         processor.setComplete(location);
 
         @SuppressWarnings("resource")
-        ExchangeClient exchangeClient = new ExchangeClient(createTestingBlockEncodingManager(),
-                new DataSize(32, Unit.MEGABYTE),
-                maxResponseSize,
-                1,
-                new Duration(1, TimeUnit.MINUTES),
-                new TestingHttpClient(processor, executor),
-                executor);
+        ExchangeClient exchangeClient = new ExchangeClient(new DataSize(32, Unit.MEGABYTE), maxResponseSize, 1, new Duration(1, TimeUnit.MINUTES), new Duration(1, TimeUnit.MINUTES), new TestingHttpClient(processor, executor), executor, deltaMemoryInBytes -> { });
 
         exchangeClient.addLocation(location);
         exchangeClient.noMoreLocations();
@@ -99,10 +98,10 @@ public class TestExchangeClient
         assertTrue(exchangeClient.getStatus().getBufferedBytes() == 0);
 
         // client should have sent only 2 requests: one to get all pages and once to get the done signal
-        assertStatus(exchangeClient.getStatus().getPageBufferClientStatuses().get(0), location, "closed", 3, 2, 2, "not scheduled");
+        assertStatus(exchangeClient.getStatus().getPageBufferClientStatuses().get(0), location, "closed", 3, 3, 3, "not scheduled");
     }
 
-    @Test
+    @Test(timeOut = 10000)
     public void testAddLocation()
             throws Exception
     {
@@ -110,13 +109,7 @@ public class TestExchangeClient
         MockExchangeRequestProcessor processor = new MockExchangeRequestProcessor(maxResponseSize);
 
         @SuppressWarnings("resource")
-        ExchangeClient exchangeClient = new ExchangeClient(createTestingBlockEncodingManager(),
-                new DataSize(32, Unit.MEGABYTE),
-                maxResponseSize,
-                1,
-                new Duration(1, TimeUnit.MINUTES),
-                new TestingHttpClient(processor, newCachedThreadPool(daemonThreadsNamed("test-%s"))),
-                executor);
+        ExchangeClient exchangeClient = new ExchangeClient(new DataSize(32, Unit.MEGABYTE), maxResponseSize, 1, new Duration(1, TimeUnit.MINUTES), new Duration(1, TimeUnit.MINUTES), new TestingHttpClient(processor, newCachedThreadPool(daemonThreadsNamed("test-%s"))), executor, deltaMemoryInBytes -> { });
 
         URI location1 = URI.create("http://localhost:8081/foo");
         processor.addPage(location1, createPage(1));
@@ -132,7 +125,7 @@ public class TestExchangeClient
         assertEquals(exchangeClient.isClosed(), false);
         assertPageEquals(exchangeClient.getNextPage(new Duration(1, TimeUnit.SECONDS)), createPage(3));
 
-        assertNull(exchangeClient.getNextPage(new Duration(10, TimeUnit.MILLISECONDS)));
+        assertNull(exchangeClient.getNextPage(new Duration(10, MILLISECONDS)));
         assertEquals(exchangeClient.isClosed(), false);
 
         URI location2 = URI.create("http://localhost:8082/bar");
@@ -149,15 +142,19 @@ public class TestExchangeClient
         assertEquals(exchangeClient.isClosed(), false);
         assertPageEquals(exchangeClient.getNextPage(new Duration(1, TimeUnit.SECONDS)), createPage(6));
 
-        assertNull(exchangeClient.getNextPage(new Duration(10, TimeUnit.MILLISECONDS)));
+        assertNull(exchangeClient.getNextPage(new Duration(10, MILLISECONDS)));
         assertEquals(exchangeClient.isClosed(), false);
 
         exchangeClient.noMoreLocations();
-        assertEquals(exchangeClient.isClosed(), true);
+        // The transition to closed may happen asynchronously, since it requires that all the HTTP clients
+        // receive a final GONE response, so just spin until it's closed or the test times out.
+        while (!exchangeClient.isClosed()) {
+            Thread.sleep(1);
+        }
 
-        ImmutableMap<URI, PageBufferClientStatus> statuses = uniqueIndex(exchangeClient.getStatus().getPageBufferClientStatuses(), uriGetter());
-        assertStatus(statuses.get(location1), location1, "closed", 3, 2, 2, "not scheduled");
-        assertStatus(statuses.get(location2), location2, "closed", 3, 2, 2, "not scheduled");
+        ImmutableMap<URI, PageBufferClientStatus> statuses = uniqueIndex(exchangeClient.getStatus().getPageBufferClientStatuses(), PageBufferClientStatus::getUri);
+        assertStatus(statuses.get(location1), location1, "closed", 3, 3, 3, "not scheduled");
+        assertStatus(statuses.get(location2), location2, "closed", 3, 3, 3, "not scheduled");
     }
 
     @Test
@@ -167,21 +164,7 @@ public class TestExchangeClient
         DataSize maxResponseSize = new DataSize(1, Unit.BYTE);
         MockExchangeRequestProcessor processor = new MockExchangeRequestProcessor(maxResponseSize);
 
-        @SuppressWarnings("resource")
-        ExchangeClient exchangeClient = new ExchangeClient(createTestingBlockEncodingManager(),
-                new DataSize(1, Unit.BYTE),
-                maxResponseSize,
-                1,
-                new Duration(1, TimeUnit.MINUTES),
-                new TestingHttpClient(processor, newCachedThreadPool(daemonThreadsNamed("test-%s"))),
-                executor);
-
         URI location = URI.create("http://localhost:8080");
-        exchangeClient.addLocation(location);
-        exchangeClient.noMoreLocations();
-        assertEquals(exchangeClient.isClosed(), false);
-
-        long start = System.nanoTime();
 
         // add a pages
         processor.addPage(location, createPage(1));
@@ -189,13 +172,22 @@ public class TestExchangeClient
         processor.addPage(location, createPage(3));
         processor.setComplete(location);
 
+        @SuppressWarnings("resource")
+        ExchangeClient exchangeClient = new ExchangeClient(new DataSize(1, Unit.BYTE), maxResponseSize, 1, new Duration(1, TimeUnit.MINUTES), new Duration(1, TimeUnit.MINUTES), new TestingHttpClient(processor, newCachedThreadPool(daemonThreadsNamed("test-%s"))), executor, deltaMemoryInBytes -> { });
+
+        exchangeClient.addLocation(location);
+        exchangeClient.noMoreLocations();
+        assertEquals(exchangeClient.isClosed(), false);
+
+        long start = System.nanoTime();
+
         // start fetching pages
         exchangeClient.scheduleRequestIfNecessary();
         // wait for a page to be fetched
         do {
             // there is no thread coordination here, so sleep is the best we can do
             assertLessThan(Duration.nanosSince(start), new Duration(5, TimeUnit.SECONDS));
-            sleepUninterruptibly(100, TimeUnit.MILLISECONDS);
+            sleepUninterruptibly(100, MILLISECONDS);
         }
         while (exchangeClient.getStatus().getBufferedPages() == 0);
 
@@ -208,7 +200,7 @@ public class TestExchangeClient
         assertPageEquals(exchangeClient.getNextPage(new Duration(0, TimeUnit.SECONDS)), createPage(1));
         do {
             assertLessThan(Duration.nanosSince(start), new Duration(5, TimeUnit.SECONDS));
-            sleepUninterruptibly(100, TimeUnit.MILLISECONDS);
+            sleepUninterruptibly(100, MILLISECONDS);
         }
         while (exchangeClient.getStatus().getBufferedPages() == 0);
 
@@ -221,7 +213,7 @@ public class TestExchangeClient
         assertPageEquals(exchangeClient.getNextPage(new Duration(0, TimeUnit.SECONDS)), createPage(2));
         do {
             assertLessThan(Duration.nanosSince(start), new Duration(5, TimeUnit.SECONDS));
-            sleepUninterruptibly(100, TimeUnit.MILLISECONDS);
+            sleepUninterruptibly(100, MILLISECONDS);
         }
         while (exchangeClient.getStatus().getBufferedPages() == 0);
 
@@ -238,7 +230,7 @@ public class TestExchangeClient
         assertEquals(exchangeClient.getStatus().getBufferedPages(), 0);
         assertTrue(exchangeClient.getStatus().getBufferedBytes() == 0);
         assertEquals(exchangeClient.isClosed(), true);
-        assertStatus(exchangeClient.getStatus().getPageBufferClientStatuses().get(0), location, "closed", 3, 4, 4, "not scheduled");
+        assertStatus(exchangeClient.getStatus().getPageBufferClientStatuses().get(0), location, "closed", 3, 5, 5, "not scheduled");
     }
 
     @Test
@@ -254,12 +246,7 @@ public class TestExchangeClient
         processor.addPage(location, createPage(3));
 
         @SuppressWarnings("resource")
-        ExchangeClient exchangeClient = new ExchangeClient(createTestingBlockEncodingManager(),
-                new DataSize(1, Unit.BYTE),
-                maxResponseSize, 1,
-                new Duration(1, TimeUnit.MINUTES),
-                new TestingHttpClient(processor, newCachedThreadPool(daemonThreadsNamed("test-%s"))),
-                executor);
+        ExchangeClient exchangeClient = new ExchangeClient(new DataSize(1, Unit.BYTE), maxResponseSize, 1, new Duration(1, TimeUnit.MINUTES), new Duration(1, TimeUnit.MINUTES), new TestingHttpClient(processor, newCachedThreadPool(daemonThreadsNamed("test-%s"))), executor, deltaMemoryInBytes -> { });
         exchangeClient.addLocation(location);
         exchangeClient.noMoreLocations();
 
@@ -269,6 +256,9 @@ public class TestExchangeClient
 
         // close client while pages are still available
         exchangeClient.close();
+        while (!exchangeClient.isFinished()) {
+            MILLISECONDS.sleep(10);
+        }
         assertEquals(exchangeClient.isClosed(), true);
         assertNull(exchangeClient.getNextPage(new Duration(0, TimeUnit.SECONDS)));
         assertEquals(exchangeClient.getStatus().getBufferedPages(), 0);
@@ -286,11 +276,11 @@ public class TestExchangeClient
         return new Page(BlockAssertions.createLongSequenceBlock(0, size));
     }
 
-    private static void assertPageEquals(Page actualPage, Page expectedPage)
+    private static void assertPageEquals(SerializedPage actualPage, Page expectedPage)
     {
         assertNotNull(actualPage);
         assertEquals(actualPage.getPositionCount(), expectedPage.getPositionCount());
-        assertEquals(actualPage.getChannelCount(), expectedPage.getChannelCount());
+        assertEquals(PAGES_SERDE.deserialize(actualPage).getChannelCount(), expectedPage.getChannelCount());
     }
 
     private static void assertStatus(PageBufferClientStatus clientStatus,

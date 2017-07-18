@@ -13,324 +13,106 @@
  */
 package com.facebook.presto.operator.aggregation;
 
-import com.facebook.presto.spi.block.Block;
+import com.facebook.presto.operator.aggregation.state.VarianceState;
 import com.facebook.presto.spi.block.BlockBuilder;
-import com.facebook.presto.spi.block.BlockCursor;
-import com.facebook.presto.operator.GroupByIdBlock;
-import com.facebook.presto.spi.type.Type;
-import com.facebook.presto.util.array.DoubleBigArray;
-import com.facebook.presto.util.array.LongBigArray;
-import com.google.common.base.Optional;
-import io.airlift.slice.Slice;
-import io.airlift.slice.Slices;
+import com.facebook.presto.spi.function.AggregationFunction;
+import com.facebook.presto.spi.function.AggregationState;
+import com.facebook.presto.spi.function.CombineFunction;
+import com.facebook.presto.spi.function.Description;
+import com.facebook.presto.spi.function.InputFunction;
+import com.facebook.presto.spi.function.OutputFunction;
+import com.facebook.presto.spi.function.SqlType;
+import com.facebook.presto.spi.type.StandardTypes;
 
-import static com.facebook.presto.spi.type.BigintType.BIGINT;
+import static com.facebook.presto.operator.aggregation.AggregationUtils.mergeVarianceState;
+import static com.facebook.presto.operator.aggregation.AggregationUtils.updateVarianceState;
 import static com.facebook.presto.spi.type.DoubleType.DOUBLE;
-import static com.facebook.presto.spi.type.VarcharType.VARCHAR;
-import static com.google.common.base.Preconditions.checkArgument;
-import static com.google.common.base.Preconditions.checkState;
 
-public class VarianceAggregation
-        extends SimpleAggregationFunction
+@AggregationFunction
+@Description("Returns the variance of the argument")
+public final class VarianceAggregation
 {
-    protected final boolean population;
-    protected final boolean inputIsLong;
-    protected final boolean standardDeviation;
+    private VarianceAggregation() {}
 
-    public VarianceAggregation(Type parameterType,
-            boolean population,
-            boolean standardDeviation)
+    @InputFunction
+    public static void doubleInput(@AggregationState VarianceState state, @SqlType(StandardTypes.DOUBLE) double value)
     {
-        // Intermediate type should be a fixed width structure
-        super(DOUBLE, VARCHAR, parameterType);
-        this.population = population;
-        if (parameterType == BIGINT) {
-            this.inputIsLong = true;
-        }
-        else if (parameterType == DOUBLE) {
-            this.inputIsLong = false;
+        updateVarianceState(state, value);
+    }
+
+    @InputFunction
+    public static void bigintInput(@AggregationState VarianceState state, @SqlType(StandardTypes.BIGINT) long value)
+    {
+        updateVarianceState(state, (double) value);
+    }
+
+    @CombineFunction
+    public static void combine(@AggregationState VarianceState state, @AggregationState VarianceState otherState)
+    {
+        mergeVarianceState(state, otherState);
+    }
+
+    @AggregationFunction(value = "variance", alias = "var_samp")
+    @Description("Returns the sample variance of the argument")
+    @OutputFunction(StandardTypes.DOUBLE)
+    public static void variance(@AggregationState VarianceState state, BlockBuilder out)
+    {
+        long count = state.getCount();
+        if (count < 2) {
+            out.appendNull();
         }
         else {
-            throw new IllegalArgumentException("Expected parameter type to be BIGINT or DOUBLE, but was " + parameterType);
-        }
-        this.standardDeviation = standardDeviation;
-    }
-
-    @Override
-    protected GroupedAccumulator createGroupedAccumulator(Optional<Integer> maskChannel, Optional<Integer> sampleWeightChannel, double confidence, int valueChannel)
-    {
-        checkArgument(confidence == 1.0, "variance does not support approximate queries");
-        return new VarianceGroupedAccumulator(valueChannel, inputIsLong, population, standardDeviation, maskChannel, sampleWeightChannel);
-    }
-
-    public static class VarianceGroupedAccumulator
-            extends SimpleGroupedAccumulator
-    {
-        private final boolean inputIsLong;
-        private final boolean population;
-        private final boolean standardDeviation;
-
-        private final LongBigArray counts;
-        private final DoubleBigArray means;
-        private final DoubleBigArray m2s;
-
-        private VarianceGroupedAccumulator(int valueChannel, boolean inputIsLong, boolean population, boolean standardDeviation, Optional<Integer> maskChannel, Optional<Integer> sampleWeightChannel)
-        {
-            super(valueChannel, DOUBLE, VARCHAR, maskChannel, sampleWeightChannel);
-
-            this.inputIsLong = inputIsLong;
-            this.population = population;
-            this.standardDeviation = standardDeviation;
-
-            this.counts = new LongBigArray();
-            this.means = new DoubleBigArray();
-            this.m2s = new DoubleBigArray();
-        }
-
-        @Override
-        public long getEstimatedSize()
-        {
-            return counts.sizeOf() + means.sizeOf() + m2s.sizeOf();
-        }
-
-        @Override
-        protected void processInput(GroupByIdBlock groupIdsBlock, Block valuesBlock, Optional<Block> maskBlock, Optional<Block> sampleWeightBlock)
-        {
-            counts.ensureCapacity(groupIdsBlock.getGroupCount());
-            means.ensureCapacity(groupIdsBlock.getGroupCount());
-            m2s.ensureCapacity(groupIdsBlock.getGroupCount());
-
-            BlockCursor values = valuesBlock.cursor();
-            BlockCursor masks = null;
-            if (maskBlock.isPresent()) {
-                masks = maskBlock.get().cursor();
-            }
-            BlockCursor sampleWeights = null;
-            if (sampleWeightBlock.isPresent()) {
-                sampleWeights = sampleWeightBlock.get().cursor();
-            }
-
-            OnlineVarianceCalculator calculator = new OnlineVarianceCalculator();
-            for (int position = 0; position < groupIdsBlock.getPositionCount(); position++) {
-                checkState(values.advanceNextPosition());
-                checkState(masks == null || masks.advanceNextPosition());
-                checkState(sampleWeights == null || sampleWeights.advanceNextPosition());
-
-                long sampleWeight = computeSampleWeight(masks, sampleWeights);
-                if (!values.isNull() && sampleWeight > 0) {
-                    long groupId = groupIdsBlock.getGroupId(position);
-                    double inputValue;
-                    if (inputIsLong) {
-                        inputValue = values.getLong();
-                    }
-                    else {
-                        inputValue = values.getDouble();
-                    }
-
-                    calculator.reinitialize(counts.get(groupId), means.get(groupId), m2s.get(groupId));
-
-                    for (int i = 0; i < sampleWeight; i++) {
-                        calculator.add(inputValue);
-                    }
-
-                    // write values back out
-                    counts.set(groupId, calculator.getCount());
-                    means.set(groupId, calculator.getMean());
-                    m2s.set(groupId, calculator.getM2());
-                }
-            }
-            checkState(!values.advanceNextPosition());
-        }
-
-        @Override
-        protected void processIntermediate(GroupByIdBlock groupIdsBlock, Block valuesBlock)
-        {
-            counts.ensureCapacity(groupIdsBlock.getGroupCount());
-            means.ensureCapacity(groupIdsBlock.getGroupCount());
-            m2s.ensureCapacity(groupIdsBlock.getGroupCount());
-
-            BlockCursor values = valuesBlock.cursor();
-
-            OnlineVarianceCalculator calculator = new OnlineVarianceCalculator();
-            for (int position = 0; position < groupIdsBlock.getPositionCount(); position++) {
-                checkState(values.advanceNextPosition());
-
-                if (!values.isNull()) {
-                    long groupId = groupIdsBlock.getGroupId(position);
-                    Slice slice = values.getSlice();
-                    calculator.deserializeFrom(slice, 0);
-                    calculator.merge(counts.get(groupId), means.get(groupId), m2s.get(groupId));
-
-                    counts.set(groupId, calculator.getCount());
-                    means.set(groupId, calculator.getMean());
-                    m2s.set(groupId, calculator.getM2());
-                }
-            }
-            checkState(!values.advanceNextPosition());
-        }
-
-        @Override
-        public void evaluateIntermediate(int groupId, BlockBuilder output)
-        {
-            OnlineVarianceCalculator calculator = new OnlineVarianceCalculator();
-            calculator.merge(counts.get(groupId), means.get(groupId), m2s.get(groupId));
-
-            output.appendSlice(createIntermediate(calculator));
-        }
-
-        @Override
-        public void evaluateFinal(int groupId, BlockBuilder output)
-        {
-            long count = counts.get((long) groupId);
-            if (population) {
-                if (count == 0) {
-                    output.appendNull();
-                }
-                else {
-                    double m2 = m2s.get((long) groupId);
-                    double result = m2 / count;
-                    if (standardDeviation) {
-                        result = Math.sqrt(result);
-                    }
-                    output.appendDouble(result);
-                }
-            }
-            else {
-                if (count < 2) {
-                    output.appendNull();
-                }
-                else {
-                    double m2 = m2s.get((long) groupId);
-                    double result = m2 / (count - 1);
-                    if (standardDeviation) {
-                        result = Math.sqrt(result);
-                    }
-                    output.appendDouble(result);
-                }
-            }
+            double m2 = state.getM2();
+            double result = m2 / (count - 1);
+            DOUBLE.writeDouble(out, result);
         }
     }
 
-    @Override
-    protected Accumulator createAccumulator(Optional<Integer> maskChannel, Optional<Integer> sampleWeightChannel, double confidence, int valueChannel)
+    @AggregationFunction("var_pop")
+    @Description("Returns the population variance of the argument")
+    @OutputFunction(StandardTypes.DOUBLE)
+    public static void variancePop(@AggregationState VarianceState state, BlockBuilder out)
     {
-        checkArgument(confidence == 1.0, "variance does not support approximate queries");
-        return new VarianceAccumulator(valueChannel, inputIsLong, population, standardDeviation, maskChannel, sampleWeightChannel);
-    }
-
-    public static class VarianceAccumulator
-            extends SimpleAccumulator
-    {
-        private final boolean inputIsLong;
-        private final boolean population;
-        private final boolean standardDeviation;
-
-        private final OnlineVarianceCalculator calculator = new OnlineVarianceCalculator();
-
-        private VarianceAccumulator(int valueChannel, boolean inputIsLong, boolean population, boolean standardDeviation, Optional<Integer> maskChannel, Optional<Integer> sampleWeightChannel)
-        {
-            super(valueChannel, DOUBLE, VARCHAR, maskChannel, sampleWeightChannel);
-
-            this.inputIsLong = inputIsLong;
-            this.population = population;
-            this.standardDeviation = standardDeviation;
+        long count = state.getCount();
+        if (count == 0) {
+            out.appendNull();
         }
-
-        @Override
-        protected void processInput(Block block, Optional<Block> maskBlock, Optional<Block> sampleWeightBlock)
-        {
-            BlockCursor values = block.cursor();
-            BlockCursor masks = null;
-            if (maskBlock.isPresent()) {
-                masks = maskBlock.get().cursor();
-            }
-            BlockCursor sampleWeights = null;
-            if (sampleWeightBlock.isPresent()) {
-                sampleWeights = sampleWeightBlock.get().cursor();
-            }
-
-            for (int position = 0; position < block.getPositionCount(); position++) {
-                checkState(values.advanceNextPosition());
-                checkState(masks == null || masks.advanceNextPosition());
-                checkState(sampleWeights == null || sampleWeights.advanceNextPosition());
-
-                long sampleWeight = computeSampleWeight(masks, sampleWeights);
-                if (!values.isNull() && sampleWeight > 0) {
-                    double inputValue;
-                    if (inputIsLong) {
-                        inputValue = values.getLong();
-                    }
-                    else {
-                        inputValue = values.getDouble();
-                    }
-
-                    // TODO: remove support for sample weights, since this is an exact aggregation
-                    for (int i = 0; i < sampleWeight; i++) {
-                        calculator.add(inputValue);
-                    }
-                }
-            }
-            checkState(!values.advanceNextPosition());
-        }
-
-        @Override
-        protected void processIntermediate(Block block)
-        {
-            BlockCursor values = block.cursor();
-
-            OnlineVarianceCalculator calculator = new OnlineVarianceCalculator();
-            for (int position = 0; position < block.getPositionCount(); position++) {
-                checkState(values.advanceNextPosition());
-
-                if (!values.isNull()) {
-                    Slice slice = values.getSlice();
-                    calculator.deserializeFrom(slice, 0);
-                    this.calculator.merge(calculator);
-                }
-            }
-            checkState(!values.advanceNextPosition());
-        }
-
-        @Override
-        public void evaluateIntermediate(BlockBuilder output)
-        {
-            output.appendSlice(createIntermediate(calculator));
-        }
-
-        @Override
-        public void evaluateFinal(BlockBuilder output)
-        {
-            if (population) {
-                if (calculator.getCount() == 0) {
-                    output.appendNull();
-                }
-                else {
-                    double result = calculator.getPopulationVariance();
-                    if (standardDeviation) {
-                        result = Math.sqrt(result);
-                    }
-                    output.appendDouble(result);
-                }
-            }
-            else {
-                if (calculator.getCount() < 2) {
-                    output.appendNull();
-                }
-                else {
-                    double result = calculator.getSampleVariance();
-                    if (standardDeviation) {
-                        result = Math.sqrt(result);
-                    }
-                    output.appendDouble(result);
-                }
-            }
+        else {
+            double m2 = state.getM2();
+            double result = m2 / count;
+            DOUBLE.writeDouble(out, result);
         }
     }
 
-    private static Slice createIntermediate(OnlineVarianceCalculator calculator)
+    @AggregationFunction(value = "stddev", alias = "stddev_samp")
+    @OutputFunction(StandardTypes.DOUBLE)
+    public static void stddev(@AggregationState VarianceState state, BlockBuilder out)
     {
-        Slice slice = Slices.allocate(calculator.sizeOf());
-        calculator.serializeTo(slice, 0);
-        return slice;
+        long count = state.getCount();
+        if (count < 2) {
+            out.appendNull();
+        }
+        else {
+            double m2 = state.getM2();
+            double result = m2 / (count - 1);
+            result = Math.sqrt(result);
+            DOUBLE.writeDouble(out, result);
+        }
+    }
+
+    @AggregationFunction("stddev_pop")
+    @OutputFunction(StandardTypes.DOUBLE)
+    public static void stddevPop(@AggregationState VarianceState state, BlockBuilder out)
+    {
+        long count = state.getCount();
+        if (count == 0) {
+            out.appendNull();
+        }
+        else {
+            double m2 = state.getM2();
+            double result = m2 / count;
+            result = Math.sqrt(result);
+            DOUBLE.writeDouble(out, result);
+        }
     }
 }

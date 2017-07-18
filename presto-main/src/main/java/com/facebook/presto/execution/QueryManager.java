@@ -13,10 +13,14 @@
  */
 package com.facebook.presto.execution;
 
-import com.facebook.presto.spi.ConnectorSession;
+import com.facebook.presto.server.SessionSupplier;
+import com.facebook.presto.spi.QueryId;
+import com.facebook.presto.spi.resourceGroups.ResourceGroupId;
+import com.facebook.presto.sql.planner.Plan;
 import io.airlift.units.Duration;
 
 import java.util.List;
+import java.util.Optional;
 
 public interface QueryManager
 {
@@ -27,9 +31,19 @@ public interface QueryManager
 
     QueryInfo getQueryInfo(QueryId queryId);
 
-    QueryInfo createQuery(ConnectorSession session, String query);
+    Optional<ResourceGroupId> getQueryResourceGroup(QueryId queryId);
+
+    Plan getQueryPlan(QueryId queryId);
+
+    Optional<QueryState> getQueryState(QueryId queryId);
+
+    void recordHeartbeat(QueryId queryId);
+
+    QueryInfo createQuery(SessionSupplier sessionSupplier, String query);
 
     void cancelQuery(QueryId queryId);
 
     void cancelStage(StageId stageId);
+
+    SqlQueryManagerStats getStats();
 }

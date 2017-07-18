@@ -14,149 +14,69 @@
 package com.facebook.presto.ml.type;
 
 import com.facebook.presto.spi.ConnectorSession;
+import com.facebook.presto.spi.block.Block;
 import com.facebook.presto.spi.block.BlockBuilder;
-import com.facebook.presto.spi.block.BlockBuilderStatus;
-import com.facebook.presto.spi.block.BlockCursor;
-import com.facebook.presto.spi.block.BlockEncodingFactory;
-import com.facebook.presto.spi.block.VariableWidthBlockBuilder;
-import com.facebook.presto.spi.block.VariableWidthBlockEncoding;
-import com.facebook.presto.spi.type.VariableWidthType;
-import com.fasterxml.jackson.annotation.JsonCreator;
+import com.facebook.presto.spi.type.AbstractVariableWidthType;
+import com.facebook.presto.spi.type.TypeSignature;
 import io.airlift.slice.Slice;
-import io.airlift.slice.SliceOutput;
 
-import static io.airlift.slice.SizeOf.SIZE_OF_INT;
+import static java.lang.String.format;
 
 // Layout is <size>:<model>, where
 //   size: is an int describing the length of the model bytes
 //   model: is the serialized model
 public class ModelType
-        implements VariableWidthType
+        extends AbstractVariableWidthType
 {
     public static final ModelType MODEL = new ModelType();
 
-    public static final BlockEncodingFactory<?> BLOCK_ENCODING_FACTORY = new VariableWidthBlockEncoding.VariableWidthBlockEncodingFactory(MODEL);
-
-    @JsonCreator
-    public ModelType()
+    private ModelType()
     {
+        super(new TypeSignature("Model"), Slice.class);
     }
 
-    public static ModelType getInstance()
+    protected ModelType(TypeSignature signature)
     {
-        return MODEL;
-    }
-
-    @Override
-    public String getName()
-    {
-        return "Model";
+        super(signature, Slice.class);
     }
 
     @Override
-    public Class<?> getJavaType()
+    public void appendTo(Block block, int position, BlockBuilder blockBuilder)
     {
-        return Slice.class;
-    }
-
-    @Override
-    public int getLength(Slice slice, int offset)
-    {
-        return getValueSize(slice, offset) + SIZE_OF_INT;
-    }
-
-    @Override
-    public Slice getSlice(Slice slice, int offset)
-    {
-        return slice.slice(offset + SIZE_OF_INT, getValueSize(slice, offset));
-    }
-
-    @Override
-    public int writeSlice(SliceOutput sliceOutput, Slice value, int offset, int length)
-    {
-        sliceOutput.writeInt(length);
-        sliceOutput.writeBytes(value, offset, length);
-        return length + SIZE_OF_INT;
-    }
-
-    @Override
-    public boolean equalTo(Slice leftSlice, int leftOffset, Slice rightSlice, int rightOffset)
-    {
-        throw new UnsupportedOperationException(String.format("%s type is not comparable", getName()));
-    }
-
-    @Override
-    public boolean equalTo(Slice leftSlice, int leftOffset, BlockCursor rightCursor)
-    {
-        throw new UnsupportedOperationException(String.format("%s type is not comparable", getName()));
-    }
-
-    @Override
-    public int hash(Slice slice, int offset)
-    {
-        throw new UnsupportedOperationException(String.format("%s type is not comparable", getName()));
-    }
-
-    @Override
-    public int compareTo(Slice leftSlice, int leftOffset, Slice rightSlice, int rightOffset)
-    {
-        throw new UnsupportedOperationException(String.format("%s type is not ordered", getName()));
-    }
-
-    @Override
-    public void appendTo(Slice slice, int offset, BlockBuilder blockBuilder)
-    {
-        int length = getValueSize(slice, offset);
-        blockBuilder.appendSlice(slice, offset + SIZE_OF_INT, length);
-    }
-
-    @Override
-    public void appendTo(Slice slice, int offset, SliceOutput sliceOutput)
-    {
-        // copy full value including length
-        int length = getLength(slice, offset);
-        sliceOutput.writeBytes(slice, offset, length);
-    }
-
-    @Override
-    public Object getObjectValue(ConnectorSession session, Slice slice, int offset)
-    {
-        return String.format("<%s>", getName());
-    }
-
-    @Override
-    public BlockBuilder createBlockBuilder(BlockBuilderStatus blockBuilderStatus)
-    {
-        return new VariableWidthBlockBuilder(this, blockBuilderStatus);
-    }
-
-    @Override
-    public boolean equals(Object o)
-    {
-        if (this == o) {
-            return true;
+        if (block.isNull(position)) {
+            blockBuilder.appendNull();
         }
-        if (o == null || getClass() != o.getClass()) {
-            return false;
+        else {
+            block.writeBytesTo(position, 0, block.getSliceLength(position), blockBuilder);
+            blockBuilder.closeEntry();
+        }
+    }
+
+    @Override
+    public Slice getSlice(Block block, int position)
+    {
+        return block.getSlice(position, 0, block.getSliceLength(position));
+    }
+
+    @Override
+    public void writeSlice(BlockBuilder blockBuilder, Slice value)
+    {
+        writeSlice(blockBuilder, value, 0, value.length());
+    }
+
+    @Override
+    public void writeSlice(BlockBuilder blockBuilder, Slice value, int offset, int length)
+    {
+        blockBuilder.writeBytes(value, offset, length).closeEntry();
+    }
+
+    @Override
+    public Object getObjectValue(ConnectorSession session, Block block, int position)
+    {
+        if (block.isNull(position)) {
+            return null;
         }
 
-        return true;
-    }
-
-    @Override
-    public int hashCode()
-    {
-        return getClass().hashCode();
-    }
-
-    private static int getValueSize(Slice slice, int offset)
-    {
-        return slice.getInt(offset);
-    }
-
-    @Override
-    public String toString()
-    {
-        return getName();
+        return format("<%s>", getTypeSignature()).getBytes();
     }
 }

@@ -14,124 +14,156 @@
 package com.facebook.presto.spi.type;
 
 import com.facebook.presto.spi.ConnectorSession;
+import com.facebook.presto.spi.block.Block;
 import com.facebook.presto.spi.block.BlockBuilder;
-import com.facebook.presto.spi.block.BlockBuilderStatus;
-import com.facebook.presto.spi.block.BlockCursor;
-import com.facebook.presto.spi.block.BlockEncodingFactory;
-import com.facebook.presto.spi.block.VariableWidthBlockBuilder;
-import com.facebook.presto.spi.block.VariableWidthBlockEncoding.VariableWidthBlockEncodingFactory;
-import com.fasterxml.jackson.annotation.JsonCreator;
 import io.airlift.slice.Slice;
-import io.airlift.slice.SliceOutput;
+import io.airlift.slice.Slices;
 
-import static io.airlift.slice.SizeOf.SIZE_OF_INT;
-import static java.nio.charset.StandardCharsets.UTF_8;
+import java.util.Objects;
 
-public class VarcharType
-        implements VariableWidthType
+import static java.util.Collections.singletonList;
+
+public final class VarcharType
+        extends AbstractVariableWidthType
 {
-    public static final VarcharType VARCHAR = new VarcharType();
+    public static final int UNBOUNDED_LENGTH = Integer.MAX_VALUE;
+    public static final int MAX_LENGTH = Integer.MAX_VALUE - 1;
+    public static final VarcharType VARCHAR = new VarcharType(UNBOUNDED_LENGTH);
 
-    public static VarcharType getInstance()
+    public static VarcharType createUnboundedVarcharType()
     {
         return VARCHAR;
     }
 
-    public static final BlockEncodingFactory<?> BLOCK_ENCODING_FACTORY = new VariableWidthBlockEncodingFactory(VARCHAR);
-
-    @JsonCreator
-    public VarcharType()
+    public static VarcharType createVarcharType(int length)
     {
+        if (length > MAX_LENGTH || length < 0) {
+            // Use createUnboundedVarcharType for unbounded VARCHAR.
+            throw new IllegalArgumentException("Invalid VARCHAR length " + length);
+        }
+        return new VarcharType(length);
+    }
+
+    public static TypeSignature getParametrizedVarcharSignature(String param)
+    {
+        return new TypeSignature(StandardTypes.VARCHAR, TypeSignatureParameter.of(param));
+    }
+
+    private final int length;
+
+    private VarcharType(int length)
+    {
+        super(
+                new TypeSignature(
+                        StandardTypes.VARCHAR,
+                        singletonList(TypeSignatureParameter.of((long) length))),
+                Slice.class);
+
+        if (length < 0) {
+            throw new IllegalArgumentException("Invalid VARCHAR length " + length);
+        }
+        this.length = length;
+    }
+
+    @Deprecated
+    public int getLength()
+    {
+        return length;
+    }
+
+    public int getLengthSafe()
+    {
+        if (isUnbounded()) {
+            throw new IllegalStateException("Cannot get size of unbounded VARCHAR.");
+        }
+        return length;
+    }
+
+    public boolean isUnbounded()
+    {
+        return length == UNBOUNDED_LENGTH;
     }
 
     @Override
-    public String getName()
+    public boolean isComparable()
     {
-        return "varchar";
+        return true;
     }
 
     @Override
-    public Class<?> getJavaType()
+    public boolean isOrderable()
     {
-        return Slice.class;
+        return true;
     }
 
     @Override
-    public Object getObjectValue(ConnectorSession session, Slice slice, int offset)
+    public Object getObjectValue(ConnectorSession session, Block block, int position)
     {
-        return slice.toString(offset + SIZE_OF_INT, getValueSize(slice, offset), UTF_8);
+        if (block.isNull(position)) {
+            return null;
+        }
+
+        return block.getSlice(position, 0, block.getSliceLength(position)).toStringUtf8();
     }
 
     @Override
-    public int getLength(Slice slice, int offset)
+    public boolean equalTo(Block leftBlock, int leftPosition, Block rightBlock, int rightPosition)
     {
-        return getValueSize(slice, offset) + SIZE_OF_INT;
+        int leftLength = leftBlock.getSliceLength(leftPosition);
+        int rightLength = rightBlock.getSliceLength(rightPosition);
+        if (leftLength != rightLength) {
+            return false;
+        }
+        return leftBlock.equals(leftPosition, 0, rightBlock, rightPosition, 0, leftLength);
     }
 
     @Override
-    public Slice getSlice(Slice slice, int offset)
+    public long hash(Block block, int position)
     {
-        return slice.slice(offset + SIZE_OF_INT, getValueSize(slice, offset));
+        return block.hash(position, 0, block.getSliceLength(position));
     }
 
     @Override
-    public int writeSlice(SliceOutput sliceOutput, Slice value, int offset, int length)
+    public int compareTo(Block leftBlock, int leftPosition, Block rightBlock, int rightPosition)
     {
-        sliceOutput.writeInt(length);
-        sliceOutput.writeBytes(value, offset, length);
-        return length + SIZE_OF_INT;
+        int leftLength = leftBlock.getSliceLength(leftPosition);
+        int rightLength = rightBlock.getSliceLength(rightPosition);
+        return leftBlock.compareTo(leftPosition, 0, leftLength, rightBlock, rightPosition, 0, rightLength);
     }
 
     @Override
-    public BlockBuilder createBlockBuilder(BlockBuilderStatus blockBuilderStatus)
+    public void appendTo(Block block, int position, BlockBuilder blockBuilder)
     {
-        return new VariableWidthBlockBuilder(this, blockBuilderStatus);
+        if (block.isNull(position)) {
+            blockBuilder.appendNull();
+        }
+        else {
+            block.writeBytesTo(position, 0, block.getSliceLength(position), blockBuilder);
+            blockBuilder.closeEntry();
+        }
     }
 
     @Override
-    public boolean equalTo(Slice leftSlice, int leftOffset, Slice rightSlice, int rightOffset)
+    public Slice getSlice(Block block, int position)
     {
-        int leftLength = getValueSize(leftSlice, leftOffset);
-        int rightLength = getValueSize(rightSlice, rightOffset);
-        return leftSlice.equals(leftOffset + SIZE_OF_INT, leftLength, rightSlice, rightOffset + SIZE_OF_INT, rightLength);
+        return block.getSlice(position, 0, block.getSliceLength(position));
+    }
+
+    public void writeString(BlockBuilder blockBuilder, String value)
+    {
+        writeSlice(blockBuilder, Slices.utf8Slice(value));
     }
 
     @Override
-    public boolean equalTo(Slice leftSlice, int leftOffset, BlockCursor rightCursor)
+    public void writeSlice(BlockBuilder blockBuilder, Slice value)
     {
-        int leftLength = getValueSize(leftSlice, leftOffset);
-        Slice rightSlice = rightCursor.getSlice();
-        return leftSlice.equals(leftOffset + SIZE_OF_INT, leftLength, rightSlice, 0, rightSlice.length());
+        writeSlice(blockBuilder, value, 0, value.length());
     }
 
     @Override
-    public int hash(Slice slice, int offset)
+    public void writeSlice(BlockBuilder blockBuilder, Slice value, int offset, int length)
     {
-        int length = getValueSize(slice, offset);
-        return slice.hashCode(offset + SIZE_OF_INT, length);
-    }
-
-    @Override
-    public int compareTo(Slice leftSlice, int leftOffset, Slice rightSlice, int rightOffset)
-    {
-        int leftLength = getValueSize(leftSlice, leftOffset);
-        int rightLength = getValueSize(rightSlice, rightOffset);
-        return leftSlice.compareTo(leftOffset + SIZE_OF_INT, leftLength, rightSlice, rightOffset + SIZE_OF_INT, rightLength);
-    }
-
-    @Override
-    public void appendTo(Slice slice, int offset, BlockBuilder blockBuilder)
-    {
-        int length = getValueSize(slice, offset);
-        blockBuilder.appendSlice(slice, offset + SIZE_OF_INT, length);
-    }
-
-    @Override
-    public void appendTo(Slice slice, int offset, SliceOutput sliceOutput)
-    {
-        // copy full value including length
-        int length = getLength(slice, offset);
-        sliceOutput.writeBytes(slice, offset, length);
+        blockBuilder.writeBytes(value, offset, length).closeEntry();
     }
 
     @Override
@@ -144,23 +176,30 @@ public class VarcharType
             return false;
         }
 
-        return true;
+        VarcharType other = (VarcharType) o;
+
+        return Objects.equals(this.length, other.length);
     }
 
     @Override
     public int hashCode()
     {
-        return getClass().hashCode();
+        return Objects.hash(length);
+    }
+
+    @Override
+    public String getDisplayName()
+    {
+        if (length == UNBOUNDED_LENGTH) {
+            return getTypeSignature().getBase();
+        }
+
+        return getTypeSignature().toString();
     }
 
     @Override
     public String toString()
     {
-        return getName();
-    }
-
-    private static int getValueSize(Slice slice, int offset)
-    {
-        return slice.getInt(offset);
+        return getDisplayName();
     }
 }

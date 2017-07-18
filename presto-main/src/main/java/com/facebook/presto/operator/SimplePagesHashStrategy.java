@@ -13,63 +13,120 @@
  */
 package com.facebook.presto.operator;
 
-import com.facebook.presto.spi.block.BlockCursor;
-import com.facebook.presto.spi.block.RandomAccessBlock;
+import com.facebook.presto.spi.Page;
+import com.facebook.presto.spi.PageBuilder;
+import com.facebook.presto.spi.block.Block;
+import com.facebook.presto.spi.type.Type;
+import com.facebook.presto.sql.planner.SortExpressionExtractor.SortExpression;
+import com.facebook.presto.type.TypeUtils;
 import com.google.common.collect.ImmutableList;
+import org.openjdk.jol.info.ClassLayout;
 
 import java.util.List;
+import java.util.Optional;
+
+import static com.facebook.presto.spi.type.BigintType.BIGINT;
+import static com.google.common.base.Preconditions.checkArgument;
+import static java.util.Objects.requireNonNull;
 
 public class SimplePagesHashStrategy
         implements PagesHashStrategy
 {
-    private final List<List<RandomAccessBlock>> channels;
-    private final List<List<RandomAccessBlock>> hashChannels;
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(SimplePagesHashStrategy.class).instanceSize();
+    private final List<Type> types;
+    private final List<Integer> outputChannels;
+    private final List<List<Block>> channels;
+    private final List<Integer> hashChannels;
+    private final List<Block> precomputedHashChannel;
+    private final Optional<SortExpression> sortChannel;
 
-    public SimplePagesHashStrategy(List<List<RandomAccessBlock>> channels, List<Integer> hashChannels)
+    public SimplePagesHashStrategy(
+            List<Type> types,
+            List<Integer> outputChannels,
+            List<List<Block>> channels,
+            List<Integer> hashChannels,
+            Optional<Integer> precomputedHashChannel,
+            Optional<SortExpression> sortChannel)
     {
-        this.channels = ImmutableList.copyOf(channels);
+        this.types = ImmutableList.copyOf(requireNonNull(types, "types is null"));
+        this.outputChannels = ImmutableList.copyOf(requireNonNull(outputChannels, "outputChannels is null"));
+        this.channels = ImmutableList.copyOf(requireNonNull(channels, "channels is null"));
 
-        ImmutableList.Builder<List<RandomAccessBlock>> hashChannelsBuilder = ImmutableList.builder();
-        for (int hashChannel : hashChannels) {
-            hashChannelsBuilder.add(channels.get(hashChannel));
+        checkArgument(types.size() == channels.size(), "Expected types and channels to be the same length");
+        this.hashChannels = ImmutableList.copyOf(requireNonNull(hashChannels, "hashChannels is null"));
+        if (precomputedHashChannel.isPresent()) {
+            this.precomputedHashChannel = channels.get(precomputedHashChannel.get());
         }
-        this.hashChannels = hashChannelsBuilder.build();
+        else {
+            this.precomputedHashChannel = null;
+        }
+        this.sortChannel = requireNonNull(sortChannel, "sortChannel is null");
     }
 
     @Override
     public int getChannelCount()
     {
-        return channels.size();
+        return outputChannels.size();
     }
 
     @Override
-    public void appendTo(int blockIndex, int blockPosition, PageBuilder pageBuilder, int outputChannelOffset)
+    public long getSizeInBytes()
     {
-        for (List<RandomAccessBlock> channel : channels) {
-            RandomAccessBlock block = channel.get(blockIndex);
-            block.appendTo(blockPosition, pageBuilder.getBlockBuilder(outputChannelOffset));
+        return INSTANCE_SIZE + channels.stream()
+                .flatMap(List::stream)
+                .mapToLong(Block::getRetainedSizeInBytes)
+                .sum();
+    }
+
+    @Override
+    public void appendTo(int blockIndex, int position, PageBuilder pageBuilder, int outputChannelOffset)
+    {
+        for (int outputIndex : outputChannels) {
+            Type type = types.get(outputIndex);
+            List<Block> channel = channels.get(outputIndex);
+            Block block = channel.get(blockIndex);
+            type.appendTo(block, position, pageBuilder.getBlockBuilder(outputChannelOffset));
             outputChannelOffset++;
         }
     }
 
     @Override
-    public int hashPosition(int blockIndex, int blockPosition)
+    public long hashPosition(int blockIndex, int position)
     {
-        int result = 0;
-        for (List<RandomAccessBlock> channel : hashChannels) {
-            RandomAccessBlock block = channel.get(blockIndex);
-            result = result * 31 + block.hash(blockPosition);
+        if (precomputedHashChannel != null) {
+            return BIGINT.getLong(precomputedHashChannel.get(blockIndex), position);
+        }
+        long result = 0;
+        for (int hashChannel : hashChannels) {
+            Type type = types.get(hashChannel);
+            Block block = channels.get(hashChannel).get(blockIndex);
+            result = result * 31 + TypeUtils.hashPosition(type, block, position);
         }
         return result;
     }
 
     @Override
-    public boolean positionEqualsCursors(int blockIndex, int blockPosition, BlockCursor[] cursors)
+    public long hashRow(int position, Page page)
+    {
+        long result = 0;
+        for (int i = 0; i < hashChannels.size(); i++) {
+            int hashChannel = hashChannels.get(i);
+            Type type = types.get(hashChannel);
+            Block block = page.getBlock(i);
+            result = result * 31 + TypeUtils.hashPosition(type, block, position);
+        }
+        return result;
+    }
+
+    @Override
+    public boolean rowEqualsRow(int leftPosition, Page leftPage, int rightPosition, Page rightPage)
     {
         for (int i = 0; i < hashChannels.size(); i++) {
-            List<RandomAccessBlock> channel = hashChannels.get(i);
-            RandomAccessBlock block = channel.get(blockIndex);
-            if (!block.equalTo(blockPosition, cursors[i])) {
+            int hashChannel = hashChannels.get(i);
+            Type type = types.get(hashChannel);
+            Block leftBlock = leftPage.getBlock(i);
+            Block rightBlock = rightPage.getBlock(i);
+            if (!TypeUtils.positionEqualsPosition(type, leftBlock, leftPosition, rightBlock, rightPosition)) {
                 return false;
             }
         }
@@ -77,16 +134,120 @@ public class SimplePagesHashStrategy
     }
 
     @Override
-    public boolean positionEqualsPosition(int leftBlockIndex, int leftBlockPosition, int rightBlockIndex, int rightBlockPosition)
+    public boolean positionEqualsRow(int leftBlockIndex, int leftPosition, int rightPosition, Page rightPage)
     {
-        for (List<RandomAccessBlock> channel : hashChannels) {
-            RandomAccessBlock leftBlock = channel.get(leftBlockIndex);
-            RandomAccessBlock rightBlock = channel.get(rightBlockIndex);
-            if (!leftBlock.equalTo(leftBlockPosition, rightBlock, rightBlockPosition)) {
+        for (int i = 0; i < hashChannels.size(); i++) {
+            int hashChannel = hashChannels.get(i);
+            Type type = types.get(hashChannel);
+            Block leftBlock = channels.get(hashChannel).get(leftBlockIndex);
+            Block rightBlock = rightPage.getBlock(i);
+            if (!TypeUtils.positionEqualsPosition(type, leftBlock, leftPosition, rightBlock, rightPosition)) {
                 return false;
             }
         }
-
         return true;
+    }
+
+    @Override
+    public boolean positionEqualsRowIgnoreNulls(int leftBlockIndex, int leftPosition, int rightPosition, Page rightPage)
+    {
+        for (int i = 0; i < hashChannels.size(); i++) {
+            int hashChannel = hashChannels.get(i);
+            Type type = types.get(hashChannel);
+            Block leftBlock = channels.get(hashChannel).get(leftBlockIndex);
+            Block rightBlock = rightPage.getBlock(i);
+            if (!type.equalTo(leftBlock, leftPosition, rightBlock, rightPosition)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    @Override
+    public boolean positionEqualsRow(int leftBlockIndex, int leftPosition, int rightPosition, Page page, int[] rightHashChannels)
+    {
+        for (int i = 0; i < hashChannels.size(); i++) {
+            int hashChannel = hashChannels.get(i);
+            Type type = types.get(hashChannel);
+            Block leftBlock = channels.get(hashChannel).get(leftBlockIndex);
+            Block rightBlock = page.getBlock(rightHashChannels[i]);
+            if (!TypeUtils.positionEqualsPosition(type, leftBlock, leftPosition, rightBlock, rightPosition)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    @Override
+    public boolean positionEqualsPosition(int leftBlockIndex, int leftPosition, int rightBlockIndex, int rightPosition)
+    {
+        for (int hashChannel : hashChannels) {
+            Type type = types.get(hashChannel);
+            List<Block> channel = channels.get(hashChannel);
+            Block leftBlock = channel.get(leftBlockIndex);
+            Block rightBlock = channel.get(rightBlockIndex);
+            if (!TypeUtils.positionEqualsPosition(type, leftBlock, leftPosition, rightBlock, rightPosition)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    @Override
+    public boolean positionEqualsPositionIgnoreNulls(int leftBlockIndex, int leftPosition, int rightBlockIndex, int rightPosition)
+    {
+        for (int hashChannel : hashChannels) {
+            Type type = types.get(hashChannel);
+            List<Block> channel = channels.get(hashChannel);
+            Block leftBlock = channel.get(leftBlockIndex);
+            Block rightBlock = channel.get(rightBlockIndex);
+            if (!type.equalTo(leftBlock, leftPosition, rightBlock, rightPosition)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    @Override
+    public boolean isPositionNull(int blockIndex, int blockPosition)
+    {
+        for (int hashChannel : hashChannels) {
+            if (isChannelPositionNull(hashChannel, blockIndex, blockPosition)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    @Override
+    public int compareSortChannelPositions(int leftBlockIndex, int leftBlockPosition, int rightBlockIndex, int rightBlockPosition)
+    {
+        int channel = getSortChannel();
+
+        Block leftBlock = channels.get(channel).get(leftBlockIndex);
+        Block rightBlock = channels.get(channel).get(rightBlockIndex);
+
+        return types.get(channel).compareTo(leftBlock, leftBlockPosition, rightBlock, rightBlockPosition);
+    }
+
+    @Override
+    public boolean isSortChannelPositionNull(int blockIndex, int blockPosition)
+    {
+        return isChannelPositionNull(getSortChannel(), blockIndex, blockPosition);
+    }
+
+    private boolean isChannelPositionNull(int channelIndex, int blockIndex, int blockPosition)
+    {
+        List<Block> channel = channels.get(channelIndex);
+        Block block = channel.get(blockIndex);
+        return block.isNull(blockPosition);
+    }
+
+    private int getSortChannel()
+    {
+        if (!sortChannel.isPresent()) {
+            throw new UnsupportedOperationException();
+        }
+        return sortChannel.get().getChannel();
     }
 }

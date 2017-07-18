@@ -13,17 +13,21 @@
  */
 package com.facebook.presto.tpch;
 
+import com.facebook.presto.spi.ColumnHandle;
 import com.facebook.presto.spi.ConnectorSplit;
 import com.facebook.presto.spi.HostAddress;
+import com.facebook.presto.spi.predicate.TupleDomain;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.google.common.base.Objects;
 import com.google.common.collect.ImmutableList;
 
 import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
 
-import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.MoreObjects.toStringHelper;
 import static com.google.common.base.Preconditions.checkState;
+import static java.util.Objects.requireNonNull;
 
 // Right now, splits are just the entire TPCH table
 public class TpchSplit
@@ -33,21 +37,24 @@ public class TpchSplit
     private final int totalParts;
     private final int partNumber;
     private final List<HostAddress> addresses;
+    private final Optional<TupleDomain<ColumnHandle>> predicate;
 
     @JsonCreator
     public TpchSplit(@JsonProperty("tableHandle") TpchTableHandle tableHandle,
             @JsonProperty("partNumber") int partNumber,
             @JsonProperty("totalParts") int totalParts,
-            @JsonProperty("addresses") List<HostAddress> addresses)
+            @JsonProperty("addresses") List<HostAddress> addresses,
+            @JsonProperty("predicate") Optional<TupleDomain<ColumnHandle>> predicate)
     {
         checkState(partNumber >= 0, "partNumber must be >= 0");
         checkState(totalParts >= 1, "totalParts must be >= 1");
         checkState(totalParts > partNumber, "totalParts must be > partNumber");
 
-        this.tableHandle = checkNotNull(tableHandle, "tableHandle is null");
+        this.tableHandle = requireNonNull(tableHandle, "tableHandle is null");
         this.partNumber = partNumber;
         this.totalParts = totalParts;
-        this.addresses = ImmutableList.copyOf(checkNotNull(addresses, "addresses is null"));
+        this.addresses = ImmutableList.copyOf(requireNonNull(addresses, "addresses is null"));
+        this.predicate = requireNonNull(predicate, "predicate is null");
     }
 
     @JsonProperty
@@ -87,40 +94,42 @@ public class TpchSplit
         return addresses;
     }
 
-    @Override
-    public boolean equals(Object o)
+    @JsonProperty
+    public Optional<TupleDomain<ColumnHandle>> getPredicate()
     {
-        if (this == o) {
+        return predicate;
+    }
+
+    @Override
+    public boolean equals(Object obj)
+    {
+        if (this == obj) {
             return true;
         }
-        if (!(o instanceof TpchSplit)) {
+        if ((obj == null) || (getClass() != obj.getClass())) {
             return false;
         }
-
-        TpchSplit tpchSplit = (TpchSplit) o;
-
-        if (tableHandle.equals(tpchSplit.tableHandle)
-                && partNumber == tpchSplit.partNumber
-                && totalParts == tpchSplit.totalParts) {
-            return true;
-        }
-
-        return false;
+        TpchSplit other = (TpchSplit) obj;
+        return Objects.equals(this.tableHandle, other.tableHandle) &&
+                Objects.equals(this.totalParts, other.totalParts) &&
+                Objects.equals(this.partNumber, other.partNumber) &&
+                Objects.equals(this.predicate, other.predicate);
     }
 
     @Override
     public int hashCode()
     {
-        return Objects.hashCode(tableHandle, partNumber, totalParts);
+        return Objects.hash(tableHandle, totalParts, partNumber);
     }
 
     @Override
     public String toString()
     {
-        return Objects.toStringHelper(this)
+        return toStringHelper(this)
                 .add("tableHandle", tableHandle)
                 .add("partNumber", partNumber)
                 .add("totalParts", totalParts)
+                .add("predicate", predicate)
                 .toString();
     }
 }

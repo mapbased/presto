@@ -13,34 +13,35 @@
  */
 package com.facebook.presto.cassandra;
 
-import com.facebook.presto.spi.ConnectorColumnHandle;
-import com.facebook.presto.spi.ConnectorPartition;
-import com.facebook.presto.spi.TupleDomain;
+import com.facebook.presto.spi.ColumnHandle;
+import com.facebook.presto.spi.predicate.TupleDomain;
 
 import java.nio.ByteBuffer;
 
 public class CassandraPartition
-        implements ConnectorPartition
 {
     static final String UNPARTITIONED_ID = "<UNPARTITIONED>";
     public static final CassandraPartition UNPARTITIONED = new CassandraPartition();
 
     private final String partitionId;
     private final byte[] key;
-    private final TupleDomain<ConnectorColumnHandle> tupleDomain;
+    private final TupleDomain<ColumnHandle> tupleDomain;
+    private final boolean indexedColumnPredicatePushdown;
 
     private CassandraPartition()
     {
         partitionId = UNPARTITIONED_ID;
         tupleDomain = TupleDomain.all();
         key = null;
+        indexedColumnPredicatePushdown = false;
     }
 
-    public CassandraPartition(byte[] key, String partitionId, TupleDomain<ConnectorColumnHandle> tupleDomain)
+    public CassandraPartition(byte[] key, String partitionId, TupleDomain<ColumnHandle> tupleDomain, boolean indexedColumnPredicatePushdown)
     {
         this.key = key;
         this.partitionId = partitionId;
         this.tupleDomain = tupleDomain;
+        this.indexedColumnPredicatePushdown = indexedColumnPredicatePushdown;
     }
 
     public boolean isUnpartitioned()
@@ -48,8 +49,12 @@ public class CassandraPartition
         return partitionId.equals(UNPARTITIONED_ID);
     }
 
-    @Override
-    public TupleDomain<ConnectorColumnHandle> getTupleDomain()
+    public boolean isIndexedColumnPredicatePushdown()
+    {
+        return indexedColumnPredicatePushdown;
+    }
+
+    public TupleDomain<ColumnHandle> getTupleDomain()
     {
         return tupleDomain;
     }
@@ -68,5 +73,10 @@ public class CassandraPartition
     public ByteBuffer getKeyAsByteBuffer()
     {
         return ByteBuffer.wrap(key);
+    }
+
+    public byte[] getKey()
+    {
+        return key;
     }
 }

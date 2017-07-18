@@ -18,24 +18,22 @@ import com.facebook.presto.spi.type.Type;
 import com.google.common.base.Splitter;
 import com.google.common.base.Strings;
 import com.google.common.base.Throwables;
+import com.google.common.io.ByteSource;
 import com.google.common.io.CountingInputStream;
-import com.google.common.io.InputSupplier;
 import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
 
 import java.io.IOException;
-import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
 import java.util.Iterator;
 import java.util.List;
 
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
 import static com.facebook.presto.spi.type.BooleanType.BOOLEAN;
 import static com.facebook.presto.spi.type.DoubleType.DOUBLE;
-import static com.facebook.presto.spi.type.VarcharType.VARCHAR;
+import static com.facebook.presto.spi.type.VarcharType.createUnboundedVarcharType;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
-import static com.google.common.io.ByteStreams.asByteSource;
+import static java.nio.charset.StandardCharsets.UTF_8;
 
 public class ExampleRecordCursor
         implements RecordCursor
@@ -50,7 +48,7 @@ public class ExampleRecordCursor
 
     private List<String> fields;
 
-    public ExampleRecordCursor(List<ExampleColumnHandle> columnHandles, InputSupplier<InputStream> inputStreamSupplier)
+    public ExampleRecordCursor(List<ExampleColumnHandle> columnHandles, ByteSource byteSource)
     {
         this.columnHandles = columnHandles;
 
@@ -60,8 +58,8 @@ public class ExampleRecordCursor
             fieldToColumnIndex[i] = columnHandle.getOrdinalPosition();
         }
 
-        try (CountingInputStream input = new CountingInputStream(inputStreamSupplier.getInput())) {
-            lines = asByteSource(inputStreamSupplier).asCharSource(StandardCharsets.UTF_8).readLines().iterator();
+        try (CountingInputStream input = new CountingInputStream(byteSource.openStream())) {
+            lines = byteSource.asCharSource(UTF_8).readLines().iterator();
             totalBytes = input.getCount();
         }
         catch (IOException e) {
@@ -108,7 +106,7 @@ public class ExampleRecordCursor
 
     private String getFieldValue(int field)
     {
-        checkState(fields != null, "Cursor has not been advanced yes");
+        checkState(fields != null, "Cursor has not been advanced yet");
 
         int columnIndex = fieldToColumnIndex[field];
         return fields.get(columnIndex);
@@ -138,8 +136,14 @@ public class ExampleRecordCursor
     @Override
     public Slice getSlice(int field)
     {
-        checkFieldType(field, VARCHAR);
+        checkFieldType(field, createUnboundedVarcharType());
         return Slices.utf8Slice(getFieldValue(field));
+    }
+
+    @Override
+    public Object getObject(int field)
+    {
+        throw new UnsupportedOperationException();
     }
 
     @Override

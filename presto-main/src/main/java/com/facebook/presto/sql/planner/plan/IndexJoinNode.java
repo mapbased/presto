@@ -16,14 +16,15 @@ package com.facebook.presto.sql.planner.plan;
 import com.facebook.presto.sql.planner.Symbol;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.google.common.base.Function;
 import com.google.common.collect.ImmutableList;
 
 import javax.annotation.concurrent.Immutable;
 
 import java.util.List;
+import java.util.Optional;
 
-import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.Preconditions.checkArgument;
+import static java.util.Objects.requireNonNull;
 
 @Immutable
 public class IndexJoinNode
@@ -33,6 +34,8 @@ public class IndexJoinNode
     private final PlanNode probeSource;
     private final PlanNode indexSource;
     private final List<EquiJoinClause> criteria;
+    private final Optional<Symbol> probeHashSymbol;
+    private final Optional<Symbol> indexHashSymbol;
 
     @JsonCreator
     public IndexJoinNode(
@@ -40,14 +43,17 @@ public class IndexJoinNode
             @JsonProperty("type") Type type,
             @JsonProperty("probeSource") PlanNode probeSource,
             @JsonProperty("indexSource") PlanNode indexSource,
-            @JsonProperty("criteria") List<EquiJoinClause> criteria)
+            @JsonProperty("criteria") List<EquiJoinClause> criteria,
+            @JsonProperty("probeHashSymbol") Optional<Symbol> probeHashSymbol,
+            @JsonProperty("indexHashSymbol") Optional<Symbol> indexHashSymbol)
     {
         super(id);
-
-        this.type = checkNotNull(type, "type is null");
-        this.probeSource = checkNotNull(probeSource, "probeSource is null");
-        this.indexSource = checkNotNull(indexSource, "indexSource is null");
-        this.criteria = ImmutableList.copyOf(checkNotNull(criteria, "criteria is null"));
+        this.type = requireNonNull(type, "type is null");
+        this.probeSource = requireNonNull(probeSource, "probeSource is null");
+        this.indexSource = requireNonNull(indexSource, "indexSource is null");
+        this.criteria = ImmutableList.copyOf(requireNonNull(criteria, "criteria is null"));
+        this.probeHashSymbol = requireNonNull(probeHashSymbol, "probeHashSymbol is null");
+        this.indexHashSymbol = requireNonNull(indexHashSymbol, "indexHashSymbol is null");
     }
 
     public enum Type
@@ -92,10 +98,22 @@ public class IndexJoinNode
         return criteria;
     }
 
+    @JsonProperty("probeHashSymbol")
+    public Optional<Symbol> getProbeHashSymbol()
+    {
+        return probeHashSymbol;
+    }
+
+    @JsonProperty("indexHashSymbol")
+    public Optional<Symbol> getIndexHashSymbol()
+    {
+        return indexHashSymbol;
+    }
+
     @Override
     public List<PlanNode> getSources()
     {
-        return ImmutableList.of(probeSource);
+        return ImmutableList.of(probeSource, indexSource);
     }
 
     @Override
@@ -108,9 +126,16 @@ public class IndexJoinNode
     }
 
     @Override
-    public <C, R> R accept(PlanVisitor<C, R> visitor, C context)
+    public <R, C> R accept(PlanVisitor<R, C> visitor, C context)
     {
         return visitor.visitIndexJoin(this, context);
+    }
+
+    @Override
+    public PlanNode replaceChildren(List<PlanNode> newChildren)
+    {
+        checkArgument(newChildren.size() == 2, "expected newChildren to contain 2 nodes");
+        return new IndexJoinNode(getId(), type, newChildren.get(0), newChildren.get(1), criteria, probeHashSymbol, indexHashSymbol);
     }
 
     public static class EquiJoinClause
@@ -121,8 +146,8 @@ public class IndexJoinNode
         @JsonCreator
         public EquiJoinClause(@JsonProperty("probe") Symbol probe, @JsonProperty("index") Symbol index)
         {
-            this.probe = checkNotNull(probe, "probe is null");
-            this.index = checkNotNull(index, "index is null");
+            this.probe = requireNonNull(probe, "probe is null");
+            this.index = requireNonNull(index, "index is null");
         }
 
         @JsonProperty("probe")
@@ -135,30 +160,6 @@ public class IndexJoinNode
         public Symbol getIndex()
         {
             return index;
-        }
-
-        public static Function<EquiJoinClause, Symbol> probeGetter()
-        {
-            return new Function<EquiJoinClause, Symbol>()
-            {
-                @Override
-                public Symbol apply(EquiJoinClause input)
-                {
-                    return input.getProbe();
-                }
-            };
-        }
-
-        public static Function<EquiJoinClause, Symbol> indexGetter()
-        {
-            return new Function<EquiJoinClause, Symbol>()
-            {
-                @Override
-                public Symbol apply(EquiJoinClause input)
-                {
-                    return input.getIndex();
-                }
-            };
         }
     }
 }

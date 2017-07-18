@@ -13,27 +13,50 @@
  */
 package com.facebook.presto.benchmark;
 
+import com.facebook.presto.Session;
+import com.facebook.presto.SystemSessionProperties;
 import com.facebook.presto.operator.Driver;
 import com.facebook.presto.operator.DriverFactory;
 import com.facebook.presto.operator.HashBuilderOperator.HashBuilderOperatorFactory;
 import com.facebook.presto.operator.LookupJoinOperators;
 import com.facebook.presto.operator.OperatorFactory;
+import com.facebook.presto.operator.PagesIndex;
 import com.facebook.presto.operator.TaskContext;
+import com.facebook.presto.sql.gen.JoinProbeCompiler;
+import com.facebook.presto.sql.planner.plan.PlanNodeId;
 import com.facebook.presto.testing.LocalQueryRunner;
 import com.facebook.presto.testing.NullOutputOperator.NullOutputOperatorFactory;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.primitives.Ints;
 
 import java.util.List;
+import java.util.Optional;
+import java.util.OptionalInt;
 
 import static com.facebook.presto.benchmark.BenchmarkQueryRunner.createLocalQueryRunner;
+import static com.facebook.presto.benchmark.BenchmarkQueryRunner.createLocalQueryRunnerHashEnabled;
+import static com.facebook.presto.spi.type.BigintType.BIGINT;
+import static com.facebook.presto.spi.type.DoubleType.DOUBLE;
+import static com.facebook.presto.testing.TestingSession.testSessionBuilder;
 
 public class HashBuildAndJoinBenchmark
         extends AbstractOperatorBenchmark
 {
-    public HashBuildAndJoinBenchmark(LocalQueryRunner localQueryRunner)
+    private final boolean hashEnabled;
+    private final OperatorFactory ordersTableScan = createTableScanOperator(0, new PlanNodeId("test"), "orders", "orderkey", "totalprice");
+    private final OperatorFactory lineItemTableScan = createTableScanOperator(0, new PlanNodeId("test"), "lineitem", "orderkey", "quantity");
+    private static final LookupJoinOperators LOOKUP_JOIN_OPERATORS = new LookupJoinOperators(new JoinProbeCompiler());
+
+    public HashBuildAndJoinBenchmark(Session session, LocalQueryRunner localQueryRunner)
     {
-        super(localQueryRunner, "hash_build_and_join", 4, 5);
+        super(session, localQueryRunner, "hash_build_and_join_hash_enabled_" + isHashEnabled(session), 4, 5);
+        this.hashEnabled = isHashEnabled(session);
+    }
+
+    private static boolean isHashEnabled(Session session)
+    {
+        return SystemSessionProperties.isOptimizeHashGenerationEnabled(session);
     }
 
     /*
@@ -43,28 +66,47 @@ public class HashBuildAndJoinBenchmark
     @Override
     protected List<Driver> createDrivers(TaskContext taskContext)
     {
-        // hash build
-        OperatorFactory ordersTableScan = createTableScanOperator(0, "orders", "orderkey", "totalprice");
-        HashBuilderOperatorFactory hashBuilder = new HashBuilderOperatorFactory(1, ordersTableScan.getTypes(), Ints.asList(0), 1_500_000);
+        ImmutableList.Builder<OperatorFactory> driversBuilder = ImmutableList.builder();
+        driversBuilder.add(ordersTableScan);
+        OperatorFactory source = ordersTableScan;
+        Optional<Integer> hashChannel = Optional.empty();
+        if (hashEnabled) {
+            source = createHashProjectOperator(1, new PlanNodeId("test"), ImmutableList.of(BIGINT, DOUBLE));
+            driversBuilder.add(source);
+            hashChannel = Optional.of(2);
+        }
 
-        DriverFactory hashBuildDriverFactory = new DriverFactory(true, false, ordersTableScan, hashBuilder);
-        Driver hashBuildDriver = hashBuildDriverFactory.createDriver(taskContext.addPipelineContext(true, false).addDriverContext());
+        // hash build
+        HashBuilderOperatorFactory hashBuilder = new HashBuilderOperatorFactory(2, new PlanNodeId("test"), source.getTypes(), ImmutableList.of(0, 1), ImmutableMap.of(), Ints.asList(0), hashChannel, false, Optional.empty(), 1_500_000, 1, new PagesIndex.TestingFactory());
+        driversBuilder.add(hashBuilder);
+        DriverFactory hashBuildDriverFactory = new DriverFactory(0, true, false, driversBuilder.build(), OptionalInt.empty());
+        Driver hashBuildDriver = hashBuildDriverFactory.createDriver(taskContext.addPipelineContext(0, true, false).addDriverContext());
+        hashBuildDriverFactory.close();
 
         // join
-        OperatorFactory lineItemTableScan = createTableScanOperator(0, "lineitem", "orderkey", "quantity");
+        ImmutableList.Builder<OperatorFactory> joinDriversBuilder = ImmutableList.builder();
+        joinDriversBuilder.add(lineItemTableScan);
+        source = lineItemTableScan;
+        hashChannel = Optional.empty();
+        if (hashEnabled) {
+            source = createHashProjectOperator(1, new PlanNodeId("test"), ImmutableList.of(BIGINT, BIGINT));
+            joinDriversBuilder.add(source);
+            hashChannel = Optional.of(2);
+        }
 
-        OperatorFactory joinOperator = LookupJoinOperators.innerJoin(1, hashBuilder.getLookupSourceSupplier(), lineItemTableScan.getTypes(), Ints.asList(0));
-
-        NullOutputOperatorFactory output = new NullOutputOperatorFactory(2, joinOperator.getTypes());
-
-        DriverFactory joinDriverFactory = new DriverFactory(true, true, lineItemTableScan, joinOperator, output);
-        Driver joinDriver = joinDriverFactory.createDriver(taskContext.addPipelineContext(true, true).addDriverContext());
+        OperatorFactory joinOperator = LOOKUP_JOIN_OPERATORS.innerJoin(2, new PlanNodeId("test"), hashBuilder.getLookupSourceFactory(), source.getTypes(), Ints.asList(0), hashChannel, Optional.empty());
+        joinDriversBuilder.add(joinOperator);
+        joinDriversBuilder.add(new NullOutputOperatorFactory(3, new PlanNodeId("test"), joinOperator.getTypes()));
+        DriverFactory joinDriverFactory = new DriverFactory(1, true, true, joinDriversBuilder.build(), OptionalInt.empty());
+        Driver joinDriver = joinDriverFactory.createDriver(taskContext.addPipelineContext(1, true, true).addDriverContext());
+        joinDriverFactory.close();
 
         return ImmutableList.of(hashBuildDriver, joinDriver);
     }
 
     public static void main(String[] args)
     {
-        new HashBuildAndJoinBenchmark(createLocalQueryRunner()).runBenchmark(new SimpleLineBenchmarkResultWriter(System.out));
+        new HashBuildAndJoinBenchmark(testSessionBuilder().build(), createLocalQueryRunner()).runBenchmark(new SimpleLineBenchmarkResultWriter(System.out));
+        new HashBuildAndJoinBenchmark(testSessionBuilder().build(), createLocalQueryRunnerHashEnabled()).runBenchmark(new SimpleLineBenchmarkResultWriter(System.out));
     }
 }

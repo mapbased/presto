@@ -13,41 +13,12 @@
  */
 package com.facebook.presto.operator.aggregation;
 
-import com.facebook.presto.spi.block.Block;
-import com.facebook.presto.spi.block.BlockBuilder;
-import com.facebook.presto.spi.block.BlockBuilderStatus;
-
-import static com.facebook.presto.operator.aggregation.BooleanMinAggregation.BOOLEAN_MIN;
-import static com.facebook.presto.spi.type.BooleanType.BOOLEAN;
-import static java.lang.Boolean.FALSE;
-import static java.lang.Boolean.TRUE;
-
 public class TestBooleanMinAggregation
-        extends AbstractTestAggregationFunction
+        extends TestBooleanAndAggregation
 {
     @Override
-    public Block getSequenceBlock(int start, int length)
+    protected String getFunctionName()
     {
-        BlockBuilder blockBuilder = BOOLEAN.createBlockBuilder(new BlockBuilderStatus());
-        for (int i = start; i < start + length; i++) {
-            // true, false, true, false...
-            blockBuilder.appendBoolean(i % 2 == 0);
-        }
-        return blockBuilder.build();
-    }
-
-    @Override
-    public AggregationFunction getFunction()
-    {
-        return BOOLEAN_MIN;
-    }
-
-    @Override
-    public Boolean getExpectedValue(int start, int length)
-    {
-        if (length == 0) {
-            return null;
-        }
-        return length > 1 ? FALSE : TRUE;
+        return "min";
     }
 }

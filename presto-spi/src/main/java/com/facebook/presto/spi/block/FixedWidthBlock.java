@@ -13,27 +13,44 @@
  */
 package com.facebook.presto.spi.block;
 
-import com.facebook.presto.spi.type.FixedWidthType;
 import io.airlift.slice.Slice;
+import io.airlift.slice.SliceOutput;
+import io.airlift.slice.Slices;
+import org.openjdk.jol.info.ClassLayout;
 
-import java.util.Objects;
+import java.util.List;
+import java.util.function.BiConsumer;
+
+import static com.facebook.presto.spi.block.BlockUtil.checkValidPositions;
+import static java.util.Objects.requireNonNull;
 
 public class FixedWidthBlock
         extends AbstractFixedWidthBlock
 {
-    private final Slice slice;
-    private final int positionCount;
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(FixedWidthBlock.class).instanceSize();
 
-    public FixedWidthBlock(FixedWidthType type, int positionCount, Slice slice)
+    private final int positionCount;
+    private final Slice slice;
+    private final Slice valueIsNull;
+
+    public FixedWidthBlock(int fixedSize, int positionCount, Slice slice, Slice valueIsNull)
     {
-        super(type);
+        super(fixedSize);
 
         if (positionCount < 0) {
             throw new IllegalArgumentException("positionCount is negative");
         }
         this.positionCount = positionCount;
 
-        this.slice = Objects.requireNonNull(slice, "slice is null");
+        this.slice = requireNonNull(slice, "slice is null");
+        if (slice.length() < fixedSize * positionCount) {
+            throw new IllegalArgumentException("slice length is less n positionCount * fixedSize");
+        }
+
+        if (valueIsNull.length() < positionCount) {
+            throw new IllegalArgumentException("valueIsNull length is less than positionCount");
+        }
+        this.valueIsNull = valueIsNull;
     }
 
     @Override
@@ -43,9 +60,74 @@ public class FixedWidthBlock
     }
 
     @Override
+    protected boolean isEntryNull(int position)
+    {
+        return valueIsNull.getByte(position) != 0;
+    }
+
+    @Override
     public int getPositionCount()
     {
         return positionCount;
+    }
+
+    @Override
+    public long getSizeInBytes()
+    {
+        return getRawSlice().length() + (long) valueIsNull.length();
+    }
+
+    @Override
+    public long getRetainedSizeInBytes()
+    {
+        return INSTANCE_SIZE + getRawSlice().getRetainedSize() + valueIsNull.getRetainedSize();
+    }
+
+    @Override
+    public void retainedBytesForEachPart(BiConsumer<Object, Long> consumer)
+    {
+        consumer.accept(slice, (long) slice.getRetainedSize());
+        consumer.accept(valueIsNull, (long) valueIsNull.getRetainedSize());
+        consumer.accept(this, (long) INSTANCE_SIZE);
+    }
+
+    @Override
+    public Block copyPositions(List<Integer> positions)
+    {
+        checkValidPositions(positions, positionCount);
+
+        SliceOutput newSlice = Slices.allocate(positions.size() * fixedSize).getOutput();
+        SliceOutput newValueIsNull = Slices.allocate(positions.size()).getOutput();
+
+        for (int position : positions) {
+            newSlice.writeBytes(slice, position * fixedSize, fixedSize);
+            newValueIsNull.writeByte(valueIsNull.getByte(position));
+        }
+        return new FixedWidthBlock(fixedSize, positions.size(), newSlice.slice(), newValueIsNull.slice());
+    }
+
+    @Override
+    public Block getRegion(int positionOffset, int length)
+    {
+        if (positionOffset < 0 || length < 0 || positionOffset + length > positionCount) {
+            throw new IndexOutOfBoundsException("Invalid position " + positionOffset + " in block with " + positionCount + " positions");
+        }
+
+        Slice newSlice = slice.slice(positionOffset * fixedSize, length * fixedSize);
+        Slice newValueIsNull = valueIsNull.slice(positionOffset, length);
+        return new FixedWidthBlock(fixedSize, length, newSlice, newValueIsNull);
+    }
+
+    @Override
+    public Block copyRegion(int positionOffset, int length)
+    {
+        if (positionOffset < 0 || length < 0 || positionOffset + length > positionCount) {
+            throw new IndexOutOfBoundsException("Invalid position " + positionOffset + " in block with " + positionCount + " positions");
+        }
+
+        Slice newSlice = Slices.copyOf(slice, positionOffset * fixedSize, length * fixedSize);
+        Slice newValueIsNull = Slices.copyOf(valueIsNull, positionOffset, length);
+        return new FixedWidthBlock(fixedSize, length, newSlice, newValueIsNull);
     }
 
     @Override
@@ -53,6 +135,7 @@ public class FixedWidthBlock
     {
         StringBuilder sb = new StringBuilder("FixedWidthBlock{");
         sb.append("positionCount=").append(positionCount);
+        sb.append(", fixedSize=").append(fixedSize);
         sb.append(", slice=").append(slice);
         sb.append('}');
         return sb.toString();

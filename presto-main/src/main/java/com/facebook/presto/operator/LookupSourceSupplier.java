@@ -13,14 +13,12 @@
  */
 package com.facebook.presto.operator;
 
-import com.facebook.presto.spi.type.Type;
-import com.google.common.util.concurrent.ListenableFuture;
-
-import java.util.List;
+import java.util.function.Supplier;
 
 public interface LookupSourceSupplier
+        extends Supplier<LookupSource>
 {
-    List<Type> getTypes();
+    long getHashCollisions();
 
-    ListenableFuture<LookupSource> getLookupSource(OperatorContext operatorContext);
+    double getExpectedHashCollisions();
 }

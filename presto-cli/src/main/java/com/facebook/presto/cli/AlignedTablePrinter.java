@@ -13,6 +13,7 @@
  */
 package com.facebook.presto.cli;
 
+import com.google.common.base.Joiner;
 import com.google.common.base.Splitter;
 import com.google.common.collect.ImmutableList;
 import org.fusesource.jansi.AnsiString;
@@ -22,16 +23,23 @@ import java.io.Writer;
 import java.util.ArrayList;
 import java.util.List;
 
-import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.base.Strings.repeat;
+import static com.google.common.collect.Iterables.partition;
+import static com.google.common.collect.Iterables.transform;
+import static com.google.common.io.BaseEncoding.base16;
 import static java.lang.Math.max;
 import static java.lang.String.format;
+import static java.util.Objects.requireNonNull;
+import static jline.console.WCWidth.wcwidth;
 
 public class AlignedTablePrinter
         implements OutputPrinter
 {
     private static final Splitter LINE_SPLITTER = Splitter.on('\n');
+    private static final Splitter HEX_SPLITTER = Splitter.fixedLength(2);
+    private static final Joiner HEX_BYTE_JOINER = Joiner.on(' ');
+    private static final Joiner HEX_LINE_JOINER = Joiner.on('\n');
 
     private final List<String> fieldNames;
     private final Writer writer;
@@ -41,15 +49,15 @@ public class AlignedTablePrinter
 
     public AlignedTablePrinter(List<String> fieldNames, Writer writer)
     {
-        this.fieldNames = ImmutableList.copyOf(checkNotNull(fieldNames, "fieldNames is null"));
-        this.writer = checkNotNull(writer, "writer is null");
+        this.fieldNames = ImmutableList.copyOf(requireNonNull(fieldNames, "fieldNames is null"));
+        this.writer = requireNonNull(writer, "writer is null");
     }
 
     @Override
     public void finish()
             throws IOException
     {
-        printRows(ImmutableList.<List<?>>of(), true);
+        printRows(ImmutableList.of(), true);
         writer.append(format("(%s row%s)%n", rowCount, (rowCount != 1) ? "s" : ""));
         writer.flush();
     }
@@ -63,7 +71,7 @@ public class AlignedTablePrinter
 
         int[] maxWidth = new int[columns];
         for (int i = 0; i < columns; i++) {
-            maxWidth[i] = max(1, fieldNames.get(i).length());
+            maxWidth[i] = max(1, consoleWidth(fieldNames.get(i)));
         }
         for (List<?> row : rows) {
             for (int i = 0; i < row.size(); i++) {
@@ -126,24 +134,60 @@ public class AlignedTablePrinter
 
     static String formatValue(Object o)
     {
-        return (o == null) ? "NULL" : o.toString();
+        if (o == null) {
+            return "NULL";
+        }
+
+        if (o instanceof byte[]) {
+            return formatHexDump((byte[]) o, 16);
+        }
+
+        return o.toString();
+    }
+
+    private static String formatHexDump(byte[] bytes, int bytesPerLine)
+    {
+        // hex pairs: ["61", "62", "63"]
+        Iterable<String> hexPairs = createHexPairs(bytes);
+
+        // hex lines: [["61", "62", "63], [...]]
+        Iterable<List<String>> hexLines = partition(hexPairs, bytesPerLine);
+
+        // lines: ["61 62 63", ...]
+        Iterable<String> lines = transform(hexLines, HEX_BYTE_JOINER::join);
+
+        // joined: "61 62 63\n..."
+        return HEX_LINE_JOINER.join(lines);
+    }
+
+    static String formatHexDump(byte[] bytes)
+    {
+        return HEX_BYTE_JOINER.join(createHexPairs(bytes));
+    }
+
+    private static Iterable<String> createHexPairs(byte[] bytes)
+    {
+        // hex dump: "616263"
+        String hexDump = base16().lowerCase().encode(bytes);
+
+        // hex pairs: ["61", "62", "63"]
+        return HEX_SPLITTER.split(hexDump);
     }
 
     private static String center(String s, int maxWidth, int padding)
     {
-        AnsiString ansiString = new AnsiString(s);
-
-        checkState(ansiString.length() <= maxWidth, "string length is greater than max width");
-        int left = (maxWidth - ansiString.length()) / 2;
-        int right = maxWidth - (left + ansiString.length());
+        int width = consoleWidth(s);
+        checkState(width <= maxWidth, "string width is greater than max width");
+        int left = (maxWidth - width) / 2;
+        int right = maxWidth - (left + width);
         return repeat(" ", left + padding) + s + repeat(" ", right + padding);
     }
 
     private static String align(String s, int maxWidth, int padding, boolean right)
     {
-        AnsiString ansiString = new AnsiString(s);
-        checkState(ansiString.length() <= maxWidth, "string length is greater than max width");
-        String large = repeat(" ", (maxWidth - ansiString.length()) + padding);
+        int width = consoleWidth(s);
+        checkState(width <= maxWidth, "string width is greater than max width");
+        String large = repeat(" ", (maxWidth - width) + padding);
         String small = repeat(" ", padding);
         return right ? (large + s + small) : (small + s + large);
     }
@@ -152,7 +196,22 @@ public class AlignedTablePrinter
     {
         int n = 0;
         for (String line : LINE_SPLITTER.split(s)) {
-            n = max(n, new AnsiString(line).length());
+            n = max(n, consoleWidth(line));
+        }
+        return n;
+    }
+
+    static int consoleWidth(String s)
+    {
+        return consoleWidth(new AnsiString(s));
+    }
+
+    private static int consoleWidth(AnsiString s)
+    {
+        CharSequence plain = s.getPlain();
+        int n = 0;
+        for (int i = 0; i < plain.length(); i++) {
+            n += max(wcwidth(plain.charAt(i)), 0);
         }
         return n;
     }

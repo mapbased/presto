@@ -4,6 +4,34 @@ Migrating From Hive
 
 Presto uses ANSI SQL syntax and semantics, whereas Hive uses a SQL-like language called HiveQL which is loosely modeled after MySQL (which itself has many differences from ANSI SQL).
 
+Use subscript for accessing a dynamic index of an array instead of a udf
+------------------------------------------------------------------------
+
+The subscript operator in SQL supports full expressions, unlike Hive (which only supports constants). Therefore you can write queries like::
+
+    SELECT my_array[CARDINALITY(my_array)] as last_element
+    FROM ...
+
+Avoid out of bounds access of arrays
+------------------------------------
+
+Accessing out of bounds elements of an array will result in an exception. You can avoid this with an ``if`` as follows::
+
+    SELECT IF(CARDINALITY(my_array) >= 3, my_array[3], NULL)
+    FROM ...
+
+Use ANSI SQL syntax for arrays
+------------------------------
+
+Arrays are indexed starting from 1, not from 0::
+
+    SELECT my_array[1] AS first_element
+    FROM ...
+
+Construct arrays with ANSI syntax::
+
+    SELECT ARRAY[1, 2, 3] AS my_array
+
 Use ANSI SQL syntax for identifiers and strings
 -----------------------------------------------
 
@@ -64,25 +92,20 @@ When you want to re-use a complex output expression as a filter, use either an i
     FROM a
     WHERE x = 'foo'
 
-Outer Join Differences
-----------------------
+Use UNNEST to expand arrays and maps
+------------------------------------
 
-Adhering to the ANSI SQL spec, Presto respects the abstract concept that the *whole* ``ON`` clause is evaluated to determine whether or not a row from the left table will be joined with a right table row. In a ``LEFT JOIN``, all the rows of the left table are always returned out of the join, vice versa for a ``RIGHT JOIN``. In contrast, Hive will *first* apply any constant filters in the ``ON`` clause *then* perform the join. This can produce very different results when ``ON`` clause predicates refer to the outer table.
-
-When you want to convert a Hive ``OUTER JOIN`` query to Presto, remember that Hive treats the ``ON`` clause predicates as if it were part of the ``WHERE`` clause. So to get the equivalent behavior in Presto, you need to move your ``ON`` clause predicates into the ``WHERE`` clause.
+Presto supports :ref:`unnest` for expanding arrays and maps.
+Use ``UNNEST`` instead of ``LATERAL VIEW explode()``.
 
 Hive query::
 
-    SELECT a.id, b.userid
-    FROM a
-    LEFT JOIN b
-    ON a.id = b.id AND a.ds = '2013-11-11'
+    SELECT student, score
+    FROM tests
+    LATERAL VIEW explode(scores) t AS score;
 
 Presto query::
 
-    SELECT a.id, b.userid
-    FROM a
-    LEFT JOIN b
-    ON a.id = b.id
-    WHERE a.ds = '2013-11-11'
-
+    SELECT student, score
+    FROM tests
+    CROSS JOIN UNNEST(scores) AS t (score);

@@ -15,58 +15,41 @@ package com.facebook.presto.type;
 
 import com.facebook.presto.operator.scalar.ColorFunctions;
 import com.facebook.presto.spi.ConnectorSession;
-import com.facebook.presto.spi.block.BlockBuilder;
-import com.facebook.presto.spi.block.BlockBuilderStatus;
-import com.facebook.presto.spi.block.BlockCursor;
-import com.facebook.presto.spi.block.BlockEncodingFactory;
-import com.facebook.presto.spi.block.FixedWidthBlockUtil;
-import com.facebook.presto.spi.type.FixedWidthType;
-import com.google.common.base.Preconditions;
-import io.airlift.slice.Slice;
-import io.airlift.slice.SliceOutput;
-
-import static com.facebook.presto.spi.block.FixedWidthBlockUtil.createIsolatedFixedWidthBlockBuilderFactory;
-import static io.airlift.slice.SizeOf.SIZE_OF_INT;
+import com.facebook.presto.spi.block.Block;
+import com.facebook.presto.spi.type.AbstractIntType;
+import com.facebook.presto.spi.type.TypeSignature;
 
 public class ColorType
-        implements FixedWidthType
+        extends AbstractIntType
 {
     public static final ColorType COLOR = new ColorType();
-
-    private static final FixedWidthBlockUtil.FixedWidthBlockBuilderFactory BLOCK_BUILDER_FACTORY = createIsolatedFixedWidthBlockBuilderFactory(COLOR);
-    public static final BlockEncodingFactory<?> BLOCK_ENCODING_FACTORY = BLOCK_BUILDER_FACTORY.getBlockEncodingFactory();
-
-    public static ColorType getInstance()
-    {
-        return COLOR;
-    }
+    public static final String NAME = "color";
 
     private ColorType()
     {
+        super(new TypeSignature(NAME));
     }
 
     @Override
-    public String getName()
+    public boolean isOrderable()
     {
-        return "color";
+        return false;
     }
 
     @Override
-    public Class<?> getJavaType()
+    public int compareTo(Block leftBlock, int leftPosition, Block rightBlock, int rightPosition)
     {
-        return long.class;
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public int getFixedSize()
+    public Object getObjectValue(ConnectorSession session, Block block, int position)
     {
-        return (int) SIZE_OF_INT;
-    }
+        if (block.isNull(position)) {
+            return null;
+        }
 
-    @Override
-    public Object getObjectValue(ConnectorSession session, Slice slice, int offset)
-    {
-        int color = slice.getInt(offset);
+        int color = block.getInt(position, 0);
         if (color < 0) {
             return ColorFunctions.SystemColor.valueOf(-(color + 1)).getName();
         }
@@ -78,105 +61,15 @@ public class ColorType
     }
 
     @Override
-    public BlockBuilder createBlockBuilder(BlockBuilderStatus blockBuilderStatus)
+    @SuppressWarnings("EqualsWhichDoesntCheckParameterClass")
+    public boolean equals(Object other)
     {
-        return BLOCK_BUILDER_FACTORY.createFixedWidthBlockBuilder(blockBuilderStatus);
+        return other == COLOR;
     }
 
     @Override
-    public BlockBuilder createFixedSizeBlockBuilder(int positionCount)
+    public int hashCode()
     {
-        return BLOCK_BUILDER_FACTORY.createFixedWidthBlockBuilder(positionCount);
-    }
-
-    @Override
-    public boolean getBoolean(Slice slice, int offset)
-    {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void writeBoolean(SliceOutput sliceOutput, boolean value)
-    {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getLong(Slice slice, int offset)
-    {
-        return slice.getInt(offset);
-    }
-
-    @Override
-    public void writeLong(SliceOutput sliceOutput, long value)
-    {
-        sliceOutput.writeInt((int) value);
-    }
-
-    @Override
-    public double getDouble(Slice slice, int offset)
-    {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void writeDouble(SliceOutput sliceOutput, double value)
-    {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public Slice getSlice(Slice slice, int offset)
-    {
-        return slice.slice(offset, getFixedSize());
-    }
-
-    @Override
-    public void writeSlice(SliceOutput sliceOutput, Slice value, int offset)
-    {
-        Preconditions.checkArgument(value.length() == SIZE_OF_INT);
-        sliceOutput.writeBytes(value, offset, SIZE_OF_INT);
-    }
-
-    @Override
-    public boolean equalTo(Slice leftSlice, int leftOffset, Slice rightSlice, int rightOffset)
-    {
-        return leftSlice.getInt(leftOffset) == rightSlice.getInt(rightOffset);
-    }
-
-    @Override
-    public boolean equalTo(Slice leftSlice, int leftOffset, BlockCursor rightCursor)
-    {
-        return leftSlice.getInt(leftOffset) == (int) rightCursor.getLong();
-    }
-
-    @Override
-    public int hash(Slice slice, int offset)
-    {
-        return slice.getInt(offset);
-    }
-
-    @Override
-    public int compareTo(Slice leftSlice, int leftOffset, Slice rightSlice, int rightOffset)
-    {
-        throw new UnsupportedOperationException("Color is not ordered");
-    }
-
-    @Override
-    public void appendTo(Slice slice, int offset, BlockBuilder blockBuilder)
-    {
-        blockBuilder.appendLong(slice.getInt(offset));
-    }
-
-    @Override
-    public void appendTo(Slice slice, int offset, SliceOutput sliceOutput)
-    {
-        sliceOutput.writeBytes(slice, offset, (int) SIZE_OF_INT);
-    }
-
-    @Override
-    public String toString()
-    {
-        return getName();
+        return getClass().hashCode();
     }
 }

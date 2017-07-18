@@ -13,13 +13,15 @@
  */
 package com.facebook.presto.spi;
 
+import com.facebook.presto.spi.type.Type;
+import io.airlift.slice.Slice;
+
+import java.util.Collection;
+import java.util.List;
+
 public interface RecordSink
 {
-    /**
-     *
-     * @param sampleWeight connectors that don't support sampling can safely ignore this parameter, as it will always be 1
-     */
-    void beginRecord(long sampleWeight);
+    void beginRecord();
 
     void finishRecord();
 
@@ -33,5 +35,11 @@ public interface RecordSink
 
     void appendString(byte[] value);
 
-    String commit();
+    void appendObject(Object value);
+
+    Collection<Slice> commit();
+
+    void rollback();
+
+    List<Type> getColumnTypes();
 }

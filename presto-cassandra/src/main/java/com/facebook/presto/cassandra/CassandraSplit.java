@@ -17,13 +17,13 @@ import com.facebook.presto.spi.ConnectorSplit;
 import com.facebook.presto.spi.HostAddress;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.google.common.base.Objects;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 
 import java.util.List;
 
-import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.MoreObjects.toStringHelper;
+import static java.util.Objects.requireNonNull;
 
 public class CassandraSplit
         implements ConnectorSplit
@@ -44,11 +44,11 @@ public class CassandraSplit
             @JsonProperty("splitCondition") String splitCondition,
             @JsonProperty("addresses") List<HostAddress> addresses)
     {
-        checkNotNull(connectorId, "connectorId is null");
-        checkNotNull(schema, "schema is null");
-        checkNotNull(table, "table is null");
-        checkNotNull(partitionId, "partitionName is null");
-        checkNotNull(addresses, "addresses is null");
+        requireNonNull(connectorId, "connectorId is null");
+        requireNonNull(schema, "schema is null");
+        requireNonNull(table, "table is null");
+        requireNonNull(partitionId, "partitionName is null");
+        requireNonNull(addresses, "addresses is null");
 
         this.connectorId = connectorId;
         this.schema = schema;
@@ -115,7 +115,7 @@ public class CassandraSplit
     @Override
     public String toString()
     {
-        return Objects.toStringHelper(this)
+        return toStringHelper(this)
                 .addValue(table)
                 .addValue(partitionId)
                 .toString();

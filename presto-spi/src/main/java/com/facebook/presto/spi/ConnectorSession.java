@@ -13,130 +13,27 @@
  */
 package com.facebook.presto.spi;
 
+import com.facebook.presto.spi.security.Identity;
 import com.facebook.presto.spi.type.TimeZoneKey;
-import com.fasterxml.jackson.annotation.JsonCreator;
-import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.util.Locale;
 
-import static java.util.Objects.requireNonNull;
-
-public class ConnectorSession
+public interface ConnectorSession
 {
-    private final String user;
-    private final String source;
-    private final TimeZoneKey timeZoneKey;
-    private final Locale locale;
-    private final String remoteUserAddress;
-    private final String userAgent;
-    private final String catalog;
-    private final String schema;
-    private final long startTime;
+    String getQueryId();
 
-    public ConnectorSession(String user, String source, String catalog, String schema, TimeZoneKey timeZoneKey, Locale locale, String remoteUserAddress, String userAgent)
+    default String getUser()
     {
-        this(user, source, catalog, schema, timeZoneKey, locale, remoteUserAddress, userAgent, System.currentTimeMillis());
+        return getIdentity().getUser();
     }
 
-    @JsonCreator
-    public ConnectorSession(
-            @JsonProperty("user") String user,
-            @JsonProperty("source") String source,
-            @JsonProperty("catalog") String catalog,
-            @JsonProperty("schema") String schema,
-            @JsonProperty("timeZoneKey") TimeZoneKey timeZoneKey,
-            @JsonProperty("locale") Locale locale,
-            @JsonProperty("remoteUserAddress") String remoteUserAddress,
-            @JsonProperty("userAgent") String userAgent,
-            @JsonProperty("startTime") long startTime)
-    {
-        this.user = user;
-        this.source = source;
-        this.timeZoneKey = requireNonNull(timeZoneKey, "timeZoneKey is null");
-        this.locale = locale;
-        this.catalog = requireNonNull(catalog, "catalog is null");
-        this.schema = requireNonNull(schema, "schema is null");
-        this.remoteUserAddress = remoteUserAddress;
-        this.userAgent = userAgent;
-        this.startTime = startTime;
-    }
+    Identity getIdentity();
 
-    @JsonProperty
-    public String getUser()
-    {
-        return user;
-    }
+    TimeZoneKey getTimeZoneKey();
 
-    @JsonProperty
-    public String getSource()
-    {
-        return source;
-    }
+    Locale getLocale();
 
-    /**
-     * DO NOT CALL THIS FROM CONNECTORS. IT WILL BE REMOVED SOON.
-     */
-    @Deprecated
-    @JsonProperty
-    public String getCatalog()
-    {
-        return catalog;
-    }
+    long getStartTime();
 
-    /**
-     * DO NOT CALL THIS FROM CONNECTORS. IT WILL BE REMOVED SOON.
-     */
-    @Deprecated
-    @JsonProperty
-    public String getSchema()
-    {
-        return schema;
-    }
-
-    @JsonProperty
-    public TimeZoneKey getTimeZoneKey()
-    {
-        return timeZoneKey;
-    }
-
-    @JsonProperty
-    public Locale getLocale()
-    {
-        return locale;
-    }
-
-    @JsonProperty
-    public String getRemoteUserAddress()
-    {
-        return remoteUserAddress;
-    }
-
-    @JsonProperty
-    public String getUserAgent()
-    {
-        return userAgent;
-    }
-
-    @JsonProperty
-    public long getStartTime()
-    {
-        return startTime;
-    }
-
-    @Override
-    public String toString()
-    {
-        StringBuilder builder = new StringBuilder("Session{");
-        builder.append("user='").append(user).append('\'');
-        builder.append(", source='").append(source).append('\'');
-        builder.append(", remoteUserAddress='").append(remoteUserAddress).append('\'');
-        builder.append(", userAgent='").append(userAgent).append('\'');
-        builder.append(", catalog='").append(catalog).append('\'');
-        builder.append(", schema='").append(schema).append('\'');
-        builder.append(", timeZoneKey=").append(timeZoneKey);
-        builder.append(", locale=").append(locale);
-        builder.append(", startTime=").append(startTime);
-        builder.append('}');
-        return builder.toString();
-    }
+    <T> T getProperty(String name, Class<T> type);
 }

@@ -13,47 +13,56 @@
  */
 package com.facebook.presto.hive;
 
-import com.facebook.presto.spi.Connector;
-import com.facebook.presto.spi.ConnectorFactory;
-import com.facebook.presto.spi.classloader.ClassLoaderSafeConnectorHandleResolver;
-import com.facebook.presto.spi.classloader.ClassLoaderSafeConnectorMetadata;
-import com.facebook.presto.spi.classloader.ClassLoaderSafeConnectorOutputHandleResolver;
-import com.facebook.presto.spi.classloader.ClassLoaderSafeConnectorRecordSetProvider;
-import com.facebook.presto.spi.classloader.ClassLoaderSafeConnectorRecordSinkProvider;
-import com.facebook.presto.spi.classloader.ClassLoaderSafeConnectorSplitManager;
+import com.facebook.presto.hive.authentication.HiveAuthenticationModule;
+import com.facebook.presto.hive.metastore.ExtendedHiveMetastore;
+import com.facebook.presto.hive.metastore.HiveMetastoreModule;
+import com.facebook.presto.hive.security.HiveSecurityModule;
+import com.facebook.presto.spi.ConnectorHandleResolver;
 import com.facebook.presto.spi.classloader.ThreadContextClassLoader;
+import com.facebook.presto.spi.connector.Connector;
+import com.facebook.presto.spi.connector.ConnectorAccessControl;
+import com.facebook.presto.spi.connector.ConnectorContext;
+import com.facebook.presto.spi.connector.ConnectorFactory;
+import com.facebook.presto.spi.connector.ConnectorNodePartitioningProvider;
+import com.facebook.presto.spi.connector.ConnectorPageSinkProvider;
+import com.facebook.presto.spi.connector.ConnectorPageSourceProvider;
+import com.facebook.presto.spi.connector.ConnectorSplitManager;
+import com.facebook.presto.spi.connector.classloader.ClassLoaderSafeConnectorPageSinkProvider;
+import com.facebook.presto.spi.connector.classloader.ClassLoaderSafeConnectorPageSourceProvider;
+import com.facebook.presto.spi.connector.classloader.ClassLoaderSafeConnectorSplitManager;
+import com.facebook.presto.spi.connector.classloader.ClassLoaderSafeNodePartitioningProvider;
 import com.google.common.base.Throwables;
-import com.google.inject.Binder;
+import com.google.common.collect.ImmutableSet;
 import com.google.inject.Injector;
-import com.google.inject.Module;
 import io.airlift.bootstrap.Bootstrap;
-import io.airlift.discovery.client.DiscoveryModule;
+import io.airlift.bootstrap.LifeCycleManager;
+import io.airlift.event.client.EventModule;
 import io.airlift.json.JsonModule;
-import io.airlift.node.NodeModule;
 import org.weakref.jmx.guice.MBeanModule;
 
 import javax.management.MBeanServer;
 
 import java.lang.management.ManagementFactory;
 import java.util.Map;
+import java.util.Optional;
 
 import static com.google.common.base.Preconditions.checkArgument;
-import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Strings.isNullOrEmpty;
+import static java.util.Objects.requireNonNull;
 
 public class HiveConnectorFactory
         implements ConnectorFactory
 {
     private final String name;
-    private final Map<String, String> optionalConfig;
     private final ClassLoader classLoader;
+    private final ExtendedHiveMetastore metastore;
 
-    public HiveConnectorFactory(String name, Map<String, String> optionalConfig, ClassLoader classLoader)
+    public HiveConnectorFactory(String name, ClassLoader classLoader, ExtendedHiveMetastore metastore)
     {
         checkArgument(!isNullOrEmpty(name), "name is null or empty");
         this.name = name;
-        this.optionalConfig = checkNotNull(optionalConfig, "optionalConfig is null");
-        this.classLoader = checkNotNull(classLoader, "classLoader is null");
+        this.classLoader = requireNonNull(classLoader, "classLoader is null");
+        this.metastore = metastore;
     }
 
     @Override
@@ -63,25 +72,33 @@ public class HiveConnectorFactory
     }
 
     @Override
-    public Connector create(String connectorId, Map<String, String> config)
+    public ConnectorHandleResolver getHandleResolver()
     {
-        checkNotNull(config, "config is null");
+        return new HiveHandleResolver();
+    }
+
+    @Override
+    public Connector create(String connectorId, Map<String, String> config, ConnectorContext context)
+    {
+        requireNonNull(config, "config is null");
 
         try (ThreadContextClassLoader ignored = new ThreadContextClassLoader(classLoader)) {
             Bootstrap app = new Bootstrap(
-                    new NodeModule(),
-                    new DiscoveryModule(),
+                    new EventModule(),
                     new MBeanModule(),
                     new JsonModule(),
-                    new HiveClientModule(connectorId),
-                    new Module()
-                    {
-                        @Override
-                        public void configure(Binder binder)
-                        {
-                            MBeanServer platformMBeanServer = ManagementFactory.getPlatformMBeanServer();
-                            binder.bind(MBeanServer.class).toInstance(new RebindSafeMBeanServer(platformMBeanServer));
-                        }
+                    new HiveClientModule(
+                            connectorId,
+                            context.getTypeManager(),
+                            context.getPageIndexerFactory(),
+                            context.getNodeManager()),
+                    new HiveMetastoreModule(connectorId, Optional.ofNullable(metastore)),
+                    new HiveSecurityModule(),
+                    new HiveAuthenticationModule(),
+                    binder -> {
+                        MBeanServer platformMBeanServer = ManagementFactory.getPlatformMBeanServer();
+                        binder.bind(MBeanServer.class).toInstance(new RebindSafeMBeanServer(platformMBeanServer));
+                        binder.bind(NodeVersion.class).toInstance(new NodeVersion(context.getNodeManager().getCurrentNode().getVersion()));
                     }
             );
 
@@ -89,18 +106,33 @@ public class HiveConnectorFactory
                     .strictConfig()
                     .doNotInitializeLogging()
                     .setRequiredConfigurationProperties(config)
-                    .setOptionalConfigurationProperties(optionalConfig)
                     .initialize();
 
-            HiveClient hiveClient = injector.getInstance(HiveClient.class);
+            LifeCycleManager lifeCycleManager = injector.getInstance(LifeCycleManager.class);
+            HiveMetadataFactory metadataFactory = injector.getInstance(HiveMetadataFactory.class);
+            HiveTransactionManager transactionManager = injector.getInstance(HiveTransactionManager.class);
+            ConnectorSplitManager splitManager = injector.getInstance(ConnectorSplitManager.class);
+            ConnectorPageSourceProvider connectorPageSource = injector.getInstance(ConnectorPageSourceProvider.class);
+            ConnectorPageSinkProvider pageSinkProvider = injector.getInstance(ConnectorPageSinkProvider.class);
+            ConnectorNodePartitioningProvider connectorDistributionProvider = injector.getInstance(ConnectorNodePartitioningProvider.class);
+            HiveSessionProperties hiveSessionProperties = injector.getInstance(HiveSessionProperties.class);
+            HiveTableProperties hiveTableProperties = injector.getInstance(HiveTableProperties.class);
+            ConnectorAccessControl accessControl = injector.getInstance(ConnectorAccessControl.class);
 
             return new HiveConnector(
-                    new ClassLoaderSafeConnectorMetadata(hiveClient, classLoader),
-                    new ClassLoaderSafeConnectorSplitManager(hiveClient, classLoader),
-                    new ClassLoaderSafeConnectorRecordSetProvider(hiveClient, classLoader),
-                    new ClassLoaderSafeConnectorRecordSinkProvider(hiveClient, classLoader),
-                    new ClassLoaderSafeConnectorHandleResolver(hiveClient, classLoader),
-                    new ClassLoaderSafeConnectorOutputHandleResolver(hiveClient, classLoader));
+                    lifeCycleManager,
+                    metadataFactory,
+                    transactionManager,
+                    new ClassLoaderSafeConnectorSplitManager(splitManager, classLoader),
+                    new ClassLoaderSafeConnectorPageSourceProvider(connectorPageSource, classLoader),
+                    new ClassLoaderSafeConnectorPageSinkProvider(pageSinkProvider, classLoader),
+                    new ClassLoaderSafeNodePartitioningProvider(connectorDistributionProvider, classLoader),
+                    ImmutableSet.of(),
+                    hiveSessionProperties.getSessionProperties(),
+                    HiveSchemaProperties.SCHEMA_PROPERTIES,
+                    hiveTableProperties.getTableProperties(),
+                    accessControl,
+                    classLoader);
         }
         catch (Exception e) {
             throw Throwables.propagate(e);

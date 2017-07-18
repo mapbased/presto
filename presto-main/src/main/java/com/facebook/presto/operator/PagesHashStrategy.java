@@ -13,17 +13,93 @@
  */
 package com.facebook.presto.operator;
 
-import com.facebook.presto.spi.block.BlockCursor;
+import com.facebook.presto.spi.Page;
+import com.facebook.presto.spi.PageBuilder;
 
 public interface PagesHashStrategy
 {
+    /**
+     * Gets the number of columns appended by this PagesHashStrategy.
+     */
     int getChannelCount();
 
-    void appendTo(int blockIndex, int blockPosition, PageBuilder pageBuilder, int outputChannelOffset);
+    /**
+     * Get the total of allocated size
+     */
+    long getSizeInBytes();
 
-    int hashPosition(int blockIndex, int blockPosition);
+    /**
+     * Appends all values at the specified position to the page builder starting at {@code outputChannelOffset}.
+     */
+    void appendTo(int blockIndex, int position, PageBuilder pageBuilder, int outputChannelOffset);
 
-    boolean positionEqualsCursors(int blockIndex, int blockPosition, BlockCursor[] cursors);
+    /**
+     * Calculates the hash code the hashed columns in this PagesHashStrategy at the specified position.
+     */
+    long hashPosition(int blockIndex, int position);
 
-    boolean positionEqualsPosition(int leftBlockIndex, int leftBlockPosition, int rightBlockIndex, int rightBlockPosition);
+    /**
+     * Calculates the hash code at {@code position} in {@code page}. Page must have the same number of
+     * Blocks as the hashed columns and each entry is expected to be the same type.
+     */
+    long hashRow(int position, Page page);
+
+    /**
+     * Compares the values in the specified pages. The values are compared positionally, so {@code leftPage}
+     * and {@code rightPage} must have the same number of entries as the hashed columns and each entry
+     * is expected to be the same type.
+     */
+    boolean rowEqualsRow(int leftPosition, Page leftPage, int rightPosition, Page rightPage);
+
+    /**
+     * Compares the hashed columns in this PagesHashStrategy to the values in the specified page. The
+     * values are compared positionally, so {@code rightPage} must have the same number of entries as
+     * the hashed columns and each entry is expected to be the same type.
+     * {@code rightPage} is used if join uses filter function and must contain all columns from probe side of join.
+     */
+    boolean positionEqualsRow(int leftBlockIndex, int leftPosition, int rightPosition, Page rightPage);
+
+    /**
+     * Compares the hashed columns in this PagesHashStrategy to the values in the specified page. The
+     * values are compared positionally, so {@code rightPage} must have the same number of entries as
+     * the hashed columns and each entry is expected to be the same type.
+     * {@code rightPage} is used if join uses filter function and must contain all columns from probe side of join.
+     *
+     * This method does not perform any null checks.
+     */
+    boolean positionEqualsRowIgnoreNulls(int leftBlockIndex, int leftPosition, int rightPosition, Page rightPage);
+
+    /**
+     * Compares the hashed columns in this PagesHashStrategy to the hashed columns in the Page. The
+     * values are compared positionally, so {@code rightChannels} must have the same number of entries as
+     * the hashed columns and each entry is expected to be the same type.
+     */
+    boolean positionEqualsRow(int leftBlockIndex, int leftPosition, int rightPosition, Page page, int[] rightChannels);
+
+    /**
+     * Compares the hashed columns in this PagesHashStrategy at the specified positions.
+     */
+    boolean positionEqualsPosition(int leftBlockIndex, int leftPosition, int rightBlockIndex, int rightPosition);
+
+    /**
+     * Compares the hashed columns in this PagesHashStrategy at the specified positions.
+     *
+     * This method does not perform any null checks.
+     */
+    boolean positionEqualsPositionIgnoreNulls(int leftBlockIndex, int leftPosition, int rightBlockIndex, int rightPosition);
+
+    /**
+     * Checks if any of the hashed columns is null
+     */
+    boolean isPositionNull(int blockIndex, int blockPosition);
+
+    /**
+     * Compares sort channel (if applicable) values at the specified positions.
+     */
+    int compareSortChannelPositions(int leftBlockIndex, int leftBlockPosition, int rightBlockIndex, int rightBlockPosition);
+
+    /**
+     * Checks if sort channel is null at the specified position
+     */
+    boolean isSortChannelPositionNull(int blockIndex, int blockPosition);
 }

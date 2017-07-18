@@ -13,33 +13,71 @@
  */
 package com.facebook.presto.hive;
 
+import com.facebook.presto.hadoop.HadoopFileSystemCache;
+import com.facebook.presto.hadoop.HadoopNative;
+import com.facebook.presto.hive.authentication.GenericExceptionAction;
+import com.facebook.presto.hive.authentication.HdfsAuthentication;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 
 import javax.inject.Inject;
 
-import static com.google.common.base.Preconditions.checkArgument;
-import static com.google.common.base.Preconditions.checkNotNull;
+import java.io.IOException;
+
+import static java.util.Objects.requireNonNull;
 
 public class HdfsEnvironment
 {
+    static {
+        HadoopNative.requireHadoopNative();
+        HadoopFileSystemCache.initialize();
+    }
+
     private final HdfsConfiguration hdfsConfiguration;
+    private final HdfsAuthentication hdfsAuthentication;
+    private final boolean verifyChecksum;
 
     @Inject
-    public HdfsEnvironment(HdfsConfiguration hdfsConfiguration)
+    public HdfsEnvironment(
+            HdfsConfiguration hdfsConfiguration,
+            HiveClientConfig config,
+            HdfsAuthentication hdfsAuthentication)
     {
-        this.hdfsConfiguration = checkNotNull(hdfsConfiguration, "hdfsConfiguration is null");
+        this.hdfsConfiguration = requireNonNull(hdfsConfiguration, "hdfsConfiguration is null");
+        this.verifyChecksum = requireNonNull(config, "config is null").isVerifyChecksum();
+        this.hdfsAuthentication = requireNonNull(hdfsAuthentication, "hdfsAuthentication is null");
     }
 
     public Configuration getConfiguration(Path path)
     {
-        String host = path.toUri().getHost();
-        checkArgument(host != null, "path host is null: %s", path);
-        return hdfsConfiguration.getConfiguration(host);
+        return hdfsConfiguration.getConfiguration(path.toUri());
     }
 
-    public Path wrapInputPath(Path path)
+    public FileSystem getFileSystem(String user, Path path)
+            throws IOException
     {
-        return path;
+        return getFileSystem(user, path, getConfiguration(path));
+    }
+
+    public FileSystem getFileSystem(String user, Path path, Configuration configuration)
+            throws IOException
+    {
+        return hdfsAuthentication.doAs(user, () -> {
+            FileSystem fileSystem = path.getFileSystem(configuration);
+            fileSystem.setVerifyChecksum(verifyChecksum);
+            return fileSystem;
+        });
+    }
+
+    public <R, E extends Exception> R doAs(String user, GenericExceptionAction<R, E> action)
+            throws E
+    {
+        return hdfsAuthentication.doAs(user, action);
+    }
+
+    public void doAs(String user, Runnable action)
+    {
+        hdfsAuthentication.doAs(user, action);
     }
 }

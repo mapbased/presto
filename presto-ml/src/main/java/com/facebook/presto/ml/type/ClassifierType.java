@@ -13,9 +13,16 @@
  */
 package com.facebook.presto.ml.type;
 
-import com.facebook.presto.spi.block.BlockEncodingFactory;
-import com.facebook.presto.spi.block.VariableWidthBlockEncoding;
-import com.fasterxml.jackson.annotation.JsonCreator;
+import com.facebook.presto.spi.type.Type;
+import com.facebook.presto.spi.type.TypeSignature;
+import com.facebook.presto.spi.type.TypeSignatureParameter;
+import com.google.common.collect.ImmutableList;
+
+import java.util.List;
+
+import static com.facebook.presto.spi.type.BigintType.BIGINT;
+import static com.facebook.presto.spi.type.VarcharType.VARCHAR;
+import static com.google.common.base.Preconditions.checkArgument;
 
 // Layout is <size>:<model>, where
 //   size: is an int describing the length of the model bytes
@@ -23,23 +30,21 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 public class ClassifierType
         extends ModelType
 {
-    public static final ClassifierType CLASSIFIER = new ClassifierType();
+    public static final ClassifierType BIGINT_CLASSIFIER = new ClassifierType(BIGINT);
+    public static final ClassifierType VARCHAR_CLASSIFIER = new ClassifierType(VARCHAR);
 
-    public static final BlockEncodingFactory<?> BLOCK_ENCODING_FACTORY = new VariableWidthBlockEncoding.VariableWidthBlockEncodingFactory(CLASSIFIER);
+    private final Type labelType;
 
-    @JsonCreator
-    public ClassifierType()
+    public ClassifierType(Type type)
     {
-    }
-
-    public static ClassifierType getInstance()
-    {
-        return CLASSIFIER;
+        super(new TypeSignature(ClassifierParametricType.NAME, TypeSignatureParameter.of(type.getTypeSignature())));
+        checkArgument(type.isComparable(), "type must be comparable");
+        labelType = type;
     }
 
     @Override
-    public String getName()
+    public List<Type> getTypeParameters()
     {
-        return "Classifier";
+        return ImmutableList.of(labelType);
     }
 }

@@ -13,9 +13,13 @@
  */
 package com.facebook.presto.sql.tree;
 
-import com.google.common.base.Objects;
+import com.google.common.collect.ImmutableList;
 
-import static com.google.common.base.Preconditions.checkNotNull;
+import java.util.List;
+import java.util.Objects;
+
+import static com.google.common.base.MoreObjects.toStringHelper;
+import static java.util.Objects.requireNonNull;
 
 public class JoinOn
         extends JoinCriteria
@@ -24,7 +28,7 @@ public class JoinOn
 
     public JoinOn(Expression expression)
     {
-        this.expression = checkNotNull(expression, "expression is null");
+        this.expression = requireNonNull(expression, "expression is null");
     }
 
     public Expression getExpression()
@@ -42,20 +46,26 @@ public class JoinOn
             return false;
         }
         JoinOn o = (JoinOn) obj;
-        return Objects.equal(expression, o.expression);
+        return Objects.equals(expression, o.expression);
     }
 
     @Override
     public int hashCode()
     {
-        return Objects.hashCode(expression);
+        return Objects.hash(expression);
     }
 
     @Override
     public String toString()
     {
-        return Objects.toStringHelper(this)
+        return toStringHelper(this)
                 .addValue(expression)
                 .toString();
+    }
+
+    @Override
+    public List<Node> getNodes()
+    {
+        return ImmutableList.of(expression);
     }
 }

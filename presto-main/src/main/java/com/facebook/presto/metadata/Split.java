@@ -13,34 +13,45 @@
  */
 package com.facebook.presto.metadata;
 
+import com.facebook.presto.connector.ConnectorId;
 import com.facebook.presto.spi.ConnectorSplit;
 import com.facebook.presto.spi.HostAddress;
+import com.facebook.presto.spi.connector.ConnectorTransactionHandle;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.google.common.base.Function;
 
 import java.util.List;
 
-import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.MoreObjects.toStringHelper;
+import static java.util.Objects.requireNonNull;
 
 public final class Split
 {
-    private final String connectorId;
+    private final ConnectorId connectorId;
+    private final ConnectorTransactionHandle transactionHandle;
     private final ConnectorSplit connectorSplit;
 
     @JsonCreator
     public Split(
-            @JsonProperty("connectorId") String connectorId,
+            @JsonProperty("connectorId") ConnectorId connectorId,
+            @JsonProperty("transactionHandle") ConnectorTransactionHandle transactionHandle,
             @JsonProperty("connectorSplit") ConnectorSplit connectorSplit)
     {
-        this.connectorId = checkNotNull(connectorId, "connectorId is null");
-        this.connectorSplit = checkNotNull(connectorSplit, "connectorSplit is null");
+        this.connectorId = requireNonNull(connectorId, "connectorId is null");
+        this.transactionHandle = requireNonNull(transactionHandle, "transactionHandle is null");
+        this.connectorSplit = requireNonNull(connectorSplit, "connectorSplit is null");
     }
 
     @JsonProperty
-    public String getConnectorId()
+    public ConnectorId getConnectorId()
     {
         return connectorId;
+    }
+
+    @JsonProperty
+    public ConnectorTransactionHandle getTransactionHandle()
+    {
+        return transactionHandle;
     }
 
     @JsonProperty
@@ -64,14 +75,13 @@ public final class Split
         return connectorSplit.isRemotelyAccessible();
     }
 
-    public static Function<ConnectorSplit, Split> fromConnectorSplit(final String connectorId)
+    @Override
+    public String toString()
     {
-        return new Function<ConnectorSplit, Split>() {
-            @Override
-            public Split apply(ConnectorSplit split)
-            {
-                return new Split(connectorId, split);
-            }
-        };
+        return toStringHelper(this)
+                .add("connectorId", connectorId)
+                .add("transactionHandle", transactionHandle)
+                .add("connectorSplit", connectorSplit)
+                .toString();
     }
 }

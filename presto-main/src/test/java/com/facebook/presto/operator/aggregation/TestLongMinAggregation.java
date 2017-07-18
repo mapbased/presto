@@ -16,27 +16,24 @@ package com.facebook.presto.operator.aggregation;
 import com.facebook.presto.spi.block.Block;
 import com.facebook.presto.spi.block.BlockBuilder;
 import com.facebook.presto.spi.block.BlockBuilderStatus;
+import com.facebook.presto.spi.type.StandardTypes;
+import com.google.common.collect.ImmutableList;
 
-import static com.facebook.presto.operator.aggregation.LongMinAggregation.LONG_MIN;
+import java.util.List;
+
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
 
 public class TestLongMinAggregation
         extends AbstractTestAggregationFunction
 {
     @Override
-    public Block getSequenceBlock(int start, int length)
+    public Block[] getSequenceBlocks(int start, int length)
     {
-        BlockBuilder blockBuilder = BIGINT.createBlockBuilder(new BlockBuilderStatus());
+        BlockBuilder blockBuilder = BIGINT.createBlockBuilder(new BlockBuilderStatus(), length);
         for (int i = start; i < start + length; i++) {
-            blockBuilder.appendLong(i);
+            BIGINT.writeLong(blockBuilder, i);
         }
-        return blockBuilder.build();
-    }
-
-    @Override
-    public AggregationFunction getFunction()
-    {
-        return LONG_MIN;
+        return new Block[] {blockBuilder.build()};
     }
 
     @Override
@@ -46,5 +43,17 @@ public class TestLongMinAggregation
             return null;
         }
         return (long) start;
+    }
+
+    @Override
+    protected String getFunctionName()
+    {
+        return "min";
+    }
+
+    @Override
+    protected List<String> getFunctionParameterTypes()
+    {
+        return ImmutableList.of(StandardTypes.BIGINT);
     }
 }

@@ -24,12 +24,12 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
 
-import static com.facebook.presto.ml.type.ClassifierType.CLASSIFIER;
-import static com.google.common.base.Preconditions.checkNotNull;
+import static com.facebook.presto.ml.type.ClassifierType.BIGINT_CLASSIFIER;
+import static java.util.Objects.requireNonNull;
 
 public class SvmClassifier
         extends AbstractSvmModel
-        implements Classifier
+        implements Classifier<Integer>
 {
     public SvmClassifier()
     {
@@ -59,16 +59,16 @@ public class SvmClassifier
     }
 
     @Override
-    public int classify(FeatureVector features)
+    public Integer classify(FeatureVector features)
     {
-        checkNotNull(model, "model is null");
+        requireNonNull(model, "model is null");
         return (int) svm.svm_predict(model, toSvmNodes(features));
     }
 
     @Override
     public ModelType getType()
     {
-        return CLASSIFIER;
+        return BIGINT_CLASSIFIER;
     }
 
     @Override

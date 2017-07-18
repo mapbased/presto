@@ -13,21 +13,17 @@
  */
 package com.facebook.presto.operator;
 
+import com.facebook.presto.spi.Page;
 import com.facebook.presto.spi.block.Block;
-import com.facebook.presto.spi.block.BlockBuilder;
-import com.facebook.presto.spi.block.BlockBuilderStatus;
-import com.facebook.presto.spi.block.BlockCursor;
 import com.facebook.presto.spi.type.Type;
-import com.google.common.base.Optional;
+import com.facebook.presto.sql.planner.plan.PlanNodeId;
 import com.google.common.collect.ImmutableList;
-import com.google.common.util.concurrent.ListenableFuture;
 
 import java.util.List;
 
-import static com.facebook.presto.spi.type.BigintType.BIGINT;
 import static com.google.common.base.Preconditions.checkArgument;
-import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
+import static java.util.Objects.requireNonNull;
 
 public class LimitOperator
         implements Operator
@@ -36,17 +32,17 @@ public class LimitOperator
             implements OperatorFactory
     {
         private final int operatorId;
+        private final PlanNodeId planNodeId;
         private final List<Type> types;
         private final long limit;
-        private final Optional<Integer> sampleWeightChannel;
         private boolean closed;
 
-        public LimitOperatorFactory(int operatorId, List<? extends Type> types, long limit, Optional<Integer> sampleWeightChannel)
+        public LimitOperatorFactory(int operatorId, PlanNodeId planNodeId, List<? extends Type> types, long limit)
         {
             this.operatorId = operatorId;
+            this.planNodeId = requireNonNull(planNodeId, "planNodeId is null");
             this.types = ImmutableList.copyOf(types);
             this.limit = limit;
-            this.sampleWeightChannel = sampleWeightChannel;
         }
 
         @Override
@@ -59,8 +55,8 @@ public class LimitOperator
         public Operator createOperator(DriverContext driverContext)
         {
             checkState(!closed, "Factory is already closed");
-            OperatorContext operatorContext = driverContext.addOperatorContext(operatorId, LimitOperator.class.getSimpleName());
-            return new LimitOperator(operatorContext, types, limit, sampleWeightChannel);
+            OperatorContext operatorContext = driverContext.addOperatorContext(operatorId, planNodeId, LimitOperator.class.getSimpleName());
+            return new LimitOperator(operatorContext, types, limit);
         }
 
         @Override
@@ -68,22 +64,26 @@ public class LimitOperator
         {
             closed = true;
         }
+
+        @Override
+        public OperatorFactory duplicate()
+        {
+            return new LimitOperatorFactory(operatorId, planNodeId, types, limit);
+        }
     }
 
     private final OperatorContext operatorContext;
     private final List<Type> types;
-    private final Optional<Integer> sampleWeightChannel;
     private Page nextPage;
     private long remainingLimit;
 
-    public LimitOperator(OperatorContext operatorContext, List<Type> types, long limit, Optional<Integer> sampleWeightChannel)
+    public LimitOperator(OperatorContext operatorContext, List<Type> types, long limit)
     {
-        this.operatorContext = checkNotNull(operatorContext, "operatorContext is null");
-        this.types = checkNotNull(types, "types is null");
+        this.operatorContext = requireNonNull(operatorContext, "operatorContext is null");
+        this.types = requireNonNull(types, "types is null");
 
         checkArgument(limit >= 0, "limit must be at least zero");
         this.remainingLimit = limit;
-        this.sampleWeightChannel = checkNotNull(sampleWeightChannel, "sampleWeightChannel is null");
     }
 
     @Override
@@ -111,12 +111,6 @@ public class LimitOperator
     }
 
     @Override
-    public ListenableFuture<?> isBlocked()
-    {
-        return NOT_BLOCKED;
-    }
-
-    @Override
     public boolean needsInput()
     {
         return remainingLimit > 0 && nextPage == null;
@@ -127,16 +121,6 @@ public class LimitOperator
     {
         checkState(needsInput());
 
-        if (sampleWeightChannel.isPresent()) {
-            addInputWithSampling(page, sampleWeightChannel.get());
-        }
-        else {
-            addInputWithoutSampling(page);
-        }
-    }
-
-    private void addInputWithoutSampling(Page page)
-    {
         if (page.getPositionCount() <= remainingLimit) {
             remainingLimit -= page.getPositionCount();
             nextPage = page;
@@ -148,43 +132,6 @@ public class LimitOperator
                 blocks[channel] = block.getRegion(0, (int) remainingLimit);
             }
             nextPage = new Page((int) remainingLimit, blocks);
-            remainingLimit = 0;
-        }
-    }
-
-    private void addInputWithSampling(Page page, int sampleWeightChannel)
-    {
-        BlockCursor cursor = page.getBlock(sampleWeightChannel).cursor();
-        BlockBuilder builder = BIGINT.createBlockBuilder(new BlockBuilderStatus());
-
-        int rowsToCopy = 0;
-        // Build the sample weight block, and count how many rows of data to copy
-        while (remainingLimit > 0 && cursor.advanceNextPosition()) {
-            rowsToCopy++;
-            long sampleWeight = cursor.getLong();
-            if (sampleWeight <= remainingLimit) {
-                builder.appendLong(sampleWeight);
-            }
-            else {
-                builder.appendLong(remainingLimit);
-            }
-            remainingLimit -= sampleWeight;
-        }
-
-        if (remainingLimit >= 0 && rowsToCopy == page.getPositionCount()) {
-            nextPage = page;
-        }
-        else {
-            Block[] blocks = new Block[page.getChannelCount()];
-            blocks[sampleWeightChannel] = builder.build();
-            for (int channel = 0; channel < page.getChannelCount(); channel++) {
-                if (channel == sampleWeightChannel) {
-                    continue;
-                }
-                Block block = page.getBlock(channel);
-                blocks[channel] = block.getRegion(0, rowsToCopy);
-            }
-            nextPage = new Page(rowsToCopy, blocks);
             remainingLimit = 0;
         }
     }

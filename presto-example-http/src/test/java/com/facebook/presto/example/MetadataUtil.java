@@ -13,9 +13,9 @@
  */
 package com.facebook.presto.example;
 
+import com.facebook.presto.spi.type.StandardTypes;
 import com.facebook.presto.spi.type.Type;
 import com.fasterxml.jackson.databind.DeserializationContext;
-import com.fasterxml.jackson.databind.JsonDeserializer;
 import com.fasterxml.jackson.databind.deser.std.FromStringDeserializer;
 import com.google.common.collect.ImmutableMap;
 import io.airlift.json.JsonCodec;
@@ -28,8 +28,10 @@ import java.util.Map;
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
 import static com.facebook.presto.spi.type.BooleanType.BOOLEAN;
 import static com.facebook.presto.spi.type.DoubleType.DOUBLE;
-import static com.facebook.presto.spi.type.VarcharType.VARCHAR;
+import static com.facebook.presto.spi.type.IntegerType.INTEGER;
+import static com.facebook.presto.spi.type.VarcharType.createUnboundedVarcharType;
 import static io.airlift.json.JsonCodec.listJsonCodec;
+import static java.util.Locale.ENGLISH;
 
 public final class MetadataUtil
 {
@@ -43,7 +45,7 @@ public final class MetadataUtil
 
     static {
         ObjectMapperProvider objectMapperProvider = new ObjectMapperProvider();
-        objectMapperProvider.setJsonDeserializers(ImmutableMap.<Class<?>, JsonDeserializer<?>>of(Type.class, new TestingTypeDeserializer()));
+        objectMapperProvider.setJsonDeserializers(ImmutableMap.of(Type.class, new TestingTypeDeserializer()));
         JsonCodecFactory codecFactory = new JsonCodecFactory(objectMapperProvider);
         CATALOG_CODEC = codecFactory.mapJsonCodec(String.class, listJsonCodec(ExampleTable.class));
         TABLE_CODEC = codecFactory.jsonCodec(ExampleTable.class);
@@ -54,10 +56,11 @@ public final class MetadataUtil
             extends FromStringDeserializer<Type>
     {
         private final Map<String, Type> types = ImmutableMap.of(
-                BOOLEAN.getName(), BOOLEAN,
-                BIGINT.getName(), BIGINT,
-                DOUBLE.getName(), DOUBLE,
-                VARCHAR.getName(), VARCHAR);
+                StandardTypes.BOOLEAN, BOOLEAN,
+                StandardTypes.BIGINT, BIGINT,
+                StandardTypes.INTEGER, INTEGER,
+                StandardTypes.DOUBLE, DOUBLE,
+                StandardTypes.VARCHAR, createUnboundedVarcharType());
 
         public TestingTypeDeserializer()
         {
@@ -67,7 +70,7 @@ public final class MetadataUtil
         @Override
         protected Type _deserialize(String value, DeserializationContext context)
         {
-            Type type = types.get(value.toLowerCase());
+            Type type = types.get(value.toLowerCase(ENGLISH));
             if (type == null) {
                 throw new IllegalArgumentException(String.valueOf("Unknown type " + value));
             }

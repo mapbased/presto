@@ -14,164 +14,134 @@
 package com.facebook.presto.spi.type;
 
 import com.facebook.presto.spi.ConnectorSession;
+import com.facebook.presto.spi.block.Block;
 import com.facebook.presto.spi.block.BlockBuilder;
 import com.facebook.presto.spi.block.BlockBuilderStatus;
-import com.facebook.presto.spi.block.BlockCursor;
-import com.facebook.presto.spi.block.BlockEncodingFactory;
-import com.facebook.presto.spi.block.FixedWidthBlockUtil.FixedWidthBlockBuilderFactory;
-import io.airlift.slice.Slice;
-import io.airlift.slice.SliceOutput;
+import com.facebook.presto.spi.block.ByteArrayBlockBuilder;
 
-import static com.facebook.presto.spi.block.FixedWidthBlockUtil.createIsolatedFixedWidthBlockBuilderFactory;
-import static io.airlift.slice.SizeOf.SIZE_OF_BYTE;
+import static com.facebook.presto.spi.type.TypeSignature.parseTypeSignature;
 
 public final class BooleanType
+        extends AbstractType
         implements FixedWidthType
 {
     public static final BooleanType BOOLEAN = new BooleanType();
 
-    public static BooleanType getInstance()
-    {
-        return BOOLEAN;
-    }
-
-    private static final FixedWidthBlockBuilderFactory BLOCK_BUILDER_FACTORY = createIsolatedFixedWidthBlockBuilderFactory(BOOLEAN);
-    public static final BlockEncodingFactory<?> BLOCK_ENCODING_FACTORY = BLOCK_BUILDER_FACTORY.getBlockEncodingFactory();
-
     private BooleanType()
     {
-    }
-
-    @Override
-    public String getName()
-    {
-        return "boolean";
-    }
-
-    @Override
-    public Class<?> getJavaType()
-    {
-        return boolean.class;
+        super(parseTypeSignature(StandardTypes.BOOLEAN), boolean.class);
     }
 
     @Override
     public int getFixedSize()
     {
-        return (int) SIZE_OF_BYTE;
+        return Byte.BYTES;
     }
 
     @Override
-    public Object getObjectValue(ConnectorSession session, Slice slice, int offset)
+    public BlockBuilder createBlockBuilder(BlockBuilderStatus blockBuilderStatus, int expectedEntries, int expectedBytesPerEntry)
     {
-        return slice.getByte(offset) != 0;
+        int maxBlockSizeInBytes;
+        if (blockBuilderStatus == null) {
+            maxBlockSizeInBytes = BlockBuilderStatus.DEFAULT_MAX_BLOCK_SIZE_IN_BYTES;
+        }
+        else {
+            maxBlockSizeInBytes = blockBuilderStatus.getMaxBlockSizeInBytes();
+        }
+        return new ByteArrayBlockBuilder(
+                blockBuilderStatus,
+                Math.min(expectedEntries, maxBlockSizeInBytes / Byte.BYTES));
     }
 
     @Override
-    public BlockBuilder createBlockBuilder(BlockBuilderStatus blockBuilderStatus)
+    public BlockBuilder createBlockBuilder(BlockBuilderStatus blockBuilderStatus, int expectedEntries)
     {
-        return BLOCK_BUILDER_FACTORY.createFixedWidthBlockBuilder(blockBuilderStatus);
+        return createBlockBuilder(blockBuilderStatus, expectedEntries, Byte.BYTES);
     }
 
     @Override
     public BlockBuilder createFixedSizeBlockBuilder(int positionCount)
     {
-        return BLOCK_BUILDER_FACTORY.createFixedWidthBlockBuilder(positionCount);
+        return new ByteArrayBlockBuilder(new BlockBuilderStatus(), positionCount);
     }
 
     @Override
-    public boolean getBoolean(Slice slice, int offset)
+    public boolean isComparable()
     {
-        return slice.getByte(offset) != 0;
+        return true;
     }
 
     @Override
-    public void writeBoolean(SliceOutput sliceOutput, boolean value)
+    public boolean isOrderable()
     {
-        sliceOutput.writeByte(value ? 1 : 0);
+        return true;
     }
 
     @Override
-    public long getLong(Slice slice, int offset)
+    public Object getObjectValue(ConnectorSession session, Block block, int position)
     {
-        throw new UnsupportedOperationException();
+        if (block.isNull(position)) {
+            return null;
+        }
+
+        return block.getByte(position, 0) != 0;
     }
 
     @Override
-    public void writeLong(SliceOutput sliceOutput, long value)
+    public boolean equalTo(Block leftBlock, int leftPosition, Block rightBlock, int rightPosition)
     {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public double getDouble(Slice slice, int offset)
-    {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void writeDouble(SliceOutput sliceOutput, double value)
-    {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public Slice getSlice(Slice slice, int offset)
-    {
-        return slice.slice(offset, getFixedSize());
-    }
-
-    @Override
-    public void writeSlice(SliceOutput sliceOutput, Slice value, int offset)
-    {
-        sliceOutput.writeBytes(value, offset, SIZE_OF_BYTE);
-    }
-
-    @Override
-    public boolean equalTo(Slice leftSlice, int leftOffset, Slice rightSlice, int rightOffset)
-    {
-        boolean leftValue = leftSlice.getByte(leftOffset) != 0;
-        boolean rightValue = rightSlice.getByte(rightOffset) != 0;
+        boolean leftValue = leftBlock.getByte(leftPosition, 0) != 0;
+        boolean rightValue = rightBlock.getByte(rightPosition, 0) != 0;
         return leftValue == rightValue;
     }
 
     @Override
-    public boolean equalTo(Slice leftSlice, int leftOffset, BlockCursor rightCursor)
+    public long hash(Block block, int position)
     {
-        boolean leftValue = leftSlice.getByte(leftOffset) != 0;
-        boolean rightValue = rightCursor.getBoolean();
-        return leftValue == rightValue;
+        boolean value = block.getByte(position, 0) != 0;
+        return value ? 1231 : 1237;
     }
 
     @Override
-    public int hash(Slice slice, int offset)
+    public int compareTo(Block leftBlock, int leftPosition, Block rightBlock, int rightPosition)
     {
-        return slice.getByte(offset) != 0 ? 1231 : 1237;
-    }
-
-    @Override
-    public int compareTo(Slice leftSlice, int leftOffset, Slice rightSlice, int rightOffset)
-    {
-        boolean leftValue = leftSlice.getByte(leftOffset) != 0;
-        boolean rightValue = rightSlice.getByte(rightOffset) != 0;
+        boolean leftValue = leftBlock.getByte(leftPosition, 0) != 0;
+        boolean rightValue = rightBlock.getByte(rightPosition, 0) != 0;
         return Boolean.compare(leftValue, rightValue);
     }
 
     @Override
-    public void appendTo(Slice slice, int offset, BlockBuilder blockBuilder)
+    public void appendTo(Block block, int position, BlockBuilder blockBuilder)
     {
-        boolean value = slice.getByte(offset) != 0;
-        blockBuilder.appendBoolean(value);
+        if (block.isNull(position)) {
+            blockBuilder.appendNull();
+        }
+        else {
+            blockBuilder.writeByte(block.getByte(position, 0)).closeEntry();
+        }
     }
 
     @Override
-    public void appendTo(Slice slice, int offset, SliceOutput sliceOutput)
+    public boolean getBoolean(Block block, int position)
     {
-        sliceOutput.writeBytes(slice, offset, (int) SIZE_OF_BYTE);
+        return block.getByte(position, 0) != 0;
     }
 
     @Override
-    public String toString()
+    public void writeBoolean(BlockBuilder blockBuilder, boolean value)
     {
-        return getName();
+        blockBuilder.writeByte(value ? 1 : 0).closeEntry();
+    }
+
+    @Override
+    public boolean equals(Object other)
+    {
+        return other == BOOLEAN;
+    }
+
+    @Override
+    public int hashCode()
+    {
+        return getClass().hashCode();
     }
 }

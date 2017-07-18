@@ -13,21 +13,33 @@
  */
 package com.facebook.presto.spi;
 
-import org.testng.Assert;
 import org.testng.annotations.Test;
+
+import static com.facebook.presto.spi.ErrorType.USER_ERROR;
+import static org.testng.Assert.assertEquals;
 
 public class TestPrestoException
 {
     @Test
     public void testMessage()
     {
-        PrestoException exception = new PrestoException(new ErrorCode(0, "test"), "test");
-        Assert.assertEquals(exception.getMessage(), "test");
+        PrestoException exception = new PrestoException(new TestErrorCode(), "test");
+        assertEquals(exception.getMessage(), "test");
 
-        exception = new PrestoException(new ErrorCode(0, "test"), new RuntimeException("test2"));
-        Assert.assertEquals(exception.getMessage(), "test2");
+        exception = new PrestoException(new TestErrorCode(), new RuntimeException("test2"));
+        assertEquals(exception.getMessage(), "test2");
 
-        exception = new PrestoException(new ErrorCode(0, "test"), new RuntimeException());
-        Assert.assertEquals(exception.getMessage(), "test");
+        exception = new PrestoException(new TestErrorCode(), new RuntimeException());
+        assertEquals(exception.getMessage(), "test");
+    }
+
+    private static class TestErrorCode
+            implements ErrorCodeSupplier
+    {
+        @Override
+        public ErrorCode toErrorCode()
+        {
+            return new ErrorCode(0, "test", USER_ERROR);
+        }
     }
 }

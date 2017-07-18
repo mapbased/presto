@@ -13,13 +13,12 @@
  */
 package com.facebook.presto.operator;
 
-import com.facebook.presto.execution.TaskId;
-import com.facebook.presto.operator.FilterAndProjectOperator.FilterAndProjectOperatorFactory;
-import com.facebook.presto.spi.ConnectorSession;
-import com.facebook.presto.spi.RecordCursor;
-import com.facebook.presto.spi.block.BlockBuilder;
-import com.facebook.presto.spi.block.BlockCursor;
-import com.facebook.presto.spi.type.Type;
+import com.facebook.presto.metadata.Signature;
+import com.facebook.presto.operator.project.PageProcessor;
+import com.facebook.presto.spi.Page;
+import com.facebook.presto.sql.gen.ExpressionCompiler;
+import com.facebook.presto.sql.planner.plan.PlanNodeId;
+import com.facebook.presto.sql.relational.RowExpression;
 import com.facebook.presto.testing.MaterializedResult;
 import com.google.common.collect.ImmutableList;
 import org.testng.annotations.AfterMethod;
@@ -27,15 +26,23 @@ import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
 
 import java.util.List;
-import java.util.Locale;
+import java.util.Optional;
 import java.util.concurrent.ExecutorService;
+import java.util.function.Supplier;
 
+import static com.facebook.presto.RowPagesBuilder.rowPagesBuilder;
+import static com.facebook.presto.SessionTestUtils.TEST_SESSION;
+import static com.facebook.presto.metadata.MetadataManager.createTestMetadataManager;
 import static com.facebook.presto.operator.OperatorAssertion.assertOperatorEquals;
-import static com.facebook.presto.operator.ProjectionFunctions.singleColumn;
-import static com.facebook.presto.operator.RowPagesBuilder.rowPagesBuilder;
+import static com.facebook.presto.spi.function.OperatorType.ADD;
+import static com.facebook.presto.spi.function.OperatorType.BETWEEN;
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
-import static com.facebook.presto.spi.type.TimeZoneKey.UTC_KEY;
+import static com.facebook.presto.spi.type.BooleanType.BOOLEAN;
 import static com.facebook.presto.spi.type.VarcharType.VARCHAR;
+import static com.facebook.presto.sql.relational.Expressions.call;
+import static com.facebook.presto.sql.relational.Expressions.constant;
+import static com.facebook.presto.sql.relational.Expressions.field;
+import static com.facebook.presto.testing.TestingTaskContext.createTaskContext;
 import static io.airlift.concurrent.Threads.daemonThreadsNamed;
 import static java.util.concurrent.Executors.newCachedThreadPool;
 
@@ -48,10 +55,10 @@ public class TestFilterAndProjectOperator
     @BeforeMethod
     public void setUp()
     {
-        executor = newCachedThreadPool(daemonThreadsNamed("test"));
-        ConnectorSession session = new ConnectorSession("user", "source", "catalog", "schema", UTC_KEY, Locale.ENGLISH, "address", "agent");
-        driverContext = new TaskContext(new TaskId("query", "stage", "task"), executor, session)
-                .addPipelineContext(true, true)
+        executor = newCachedThreadPool(daemonThreadsNamed("test-%s"));
+
+        driverContext = createTaskContext(executor, TEST_SESSION)
+                .addPipelineContext(0, true, true)
                 .addDriverContext();
     }
 
@@ -69,80 +76,42 @@ public class TestFilterAndProjectOperator
                 .addSequencePage(100, 0, 0)
                 .build();
 
-        OperatorFactory operatorFactory = new FilterAndProjectOperatorFactory(
+        RowExpression filter = call(
+                Signature.internalOperator(BETWEEN, BOOLEAN.getTypeSignature(), ImmutableList.of(BIGINT.getTypeSignature(), BIGINT.getTypeSignature(), BIGINT.getTypeSignature())),
+                BOOLEAN,
+                field(1, BIGINT),
+                constant(10L, BIGINT),
+                constant(19L, BIGINT));
+
+        RowExpression field0 = field(0, VARCHAR);
+        RowExpression add5 = call(
+                Signature.internalOperator(ADD, BIGINT.getTypeSignature(), ImmutableList.of(BIGINT.getTypeSignature(), BIGINT.getTypeSignature())),
+                BIGINT,
+                field(1, BIGINT),
+                constant(5L, BIGINT));
+
+        ExpressionCompiler compiler = new ExpressionCompiler(createTestMetadataManager());
+        Supplier<PageProcessor> processor = compiler.compilePageProcessor(Optional.of(filter), ImmutableList.of(field0, add5));
+
+        OperatorFactory operatorFactory = new FilterAndProjectOperator.FilterAndProjectOperatorFactory(
                 0,
-                new FilterFunction()
-                {
-                    @Override
-                    public boolean filter(BlockCursor... cursors)
-                    {
-                        long value = cursors[1].getLong();
-                        return 10 <= value && value < 20;
-                    }
-
-                    @Override
-                    public boolean filter(RecordCursor cursor)
-                    {
-                        long value = cursor.getLong(0);
-                        return 10 <= value && value < 20;
-                    }
-                },
-                ImmutableList.of(singleColumn(VARCHAR, 0), new Add5Projection(1)));
-
-        Operator operator = operatorFactory.createOperator(driverContext);
+                new PlanNodeId("test"),
+                processor,
+                ImmutableList.of(VARCHAR, BIGINT));
 
         MaterializedResult expected = MaterializedResult.resultBuilder(driverContext.getSession(), VARCHAR, BIGINT)
-                .row("10", 15)
-                .row("11", 16)
-                .row("12", 17)
-                .row("13", 18)
-                .row("14", 19)
-                .row("15", 20)
-                .row("16", 21)
-                .row("17", 22)
-                .row("18", 23)
-                .row("19", 24)
+                .row("10", 15L)
+                .row("11", 16L)
+                .row("12", 17L)
+                .row("13", 18L)
+                .row("14", 19L)
+                .row("15", 20L)
+                .row("16", 21L)
+                .row("17", 22L)
+                .row("18", 23L)
+                .row("19", 24L)
                 .build();
 
-        assertOperatorEquals(operator, input, expected);
-    }
-
-    private static class Add5Projection
-            implements ProjectionFunction
-    {
-        private final int channelIndex;
-
-        public Add5Projection(int channelIndex)
-        {
-            this.channelIndex = channelIndex;
-        }
-
-        @Override
-        public Type getType()
-        {
-            return BIGINT;
-        }
-
-        @Override
-        public void project(BlockCursor[] cursors, BlockBuilder output)
-        {
-            if (cursors[channelIndex].isNull()) {
-                output.appendNull();
-            }
-            else {
-                output.appendLong(cursors[channelIndex].getLong() + 5);
-            }
-        }
-
-        @Override
-        public void project(RecordCursor cursor, BlockBuilder output)
-        {
-            if (cursor.isNull(channelIndex)) {
-                output.appendNull();
-            }
-            else {
-                output.appendLong(cursor.getLong(channelIndex) + 5);
-            }
-        }
+        assertOperatorEquals(operatorFactory, driverContext, input, expected);
     }
 }

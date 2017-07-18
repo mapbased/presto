@@ -13,26 +13,24 @@
  */
 package com.facebook.presto.operator;
 
-import com.facebook.presto.spi.block.BlockBuilderStatus;
-import com.facebook.presto.spi.block.BlockCursor;
-import com.facebook.presto.spi.block.RandomAccessBlock;
+import com.facebook.presto.memory.LocalMemoryContext;
+import com.facebook.presto.spi.Page;
+import com.facebook.presto.spi.PageBuilder;
+import com.facebook.presto.spi.block.Block;
 import com.facebook.presto.spi.block.SortOrder;
 import com.facebook.presto.spi.type.Type;
-import com.google.common.base.Optional;
+import com.facebook.presto.sql.planner.plan.PlanNodeId;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Ordering;
-import com.google.common.util.concurrent.ListenableFuture;
 import io.airlift.units.DataSize;
 
-import java.util.Comparator;
 import java.util.Iterator;
 import java.util.List;
 import java.util.PriorityQueue;
 
-import static com.facebook.presto.spi.type.BigintType.BIGINT;
 import static com.google.common.base.Preconditions.checkArgument;
-import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
+import static java.util.Objects.requireNonNull;
 
 /**
  * Returns the top N rows from the source sorted according to the specified ordering in the keyChannelIndex channel.
@@ -44,30 +42,39 @@ public class TopNOperator
             implements OperatorFactory
     {
         private final int operatorId;
+        private final PlanNodeId planNodeId;
         private final List<Type> sourceTypes;
         private final int n;
+        private final List<Type> sortTypes;
         private final List<Integer> sortChannels;
         private final List<SortOrder> sortOrders;
-        private final Optional<Integer> sampleWeight;
         private final boolean partial;
+        private final DataSize maxPartialMemory;
         private boolean closed;
 
         public TopNOperatorFactory(
                 int operatorId,
+                PlanNodeId planNodeId,
                 List<? extends Type> types,
                 int n,
                 List<Integer> sortChannels,
                 List<SortOrder> sortOrders,
-                Optional<Integer> sampleWeight,
-                boolean partial)
+                boolean partial,
+                DataSize maxPartialMemory)
         {
             this.operatorId = operatorId;
-            this.sourceTypes = ImmutableList.copyOf(checkNotNull(types, "types is null"));
+            this.planNodeId = requireNonNull(planNodeId, "planNodeId is null");
+            this.sourceTypes = ImmutableList.copyOf(requireNonNull(types, "types is null"));
             this.n = n;
-            this.sortChannels = ImmutableList.copyOf(checkNotNull(sortChannels, "sortChannels is null"));
-            this.sortOrders = ImmutableList.copyOf(checkNotNull(sortOrders, "sortOrders is null"));
+            this.maxPartialMemory = maxPartialMemory;
+            ImmutableList.Builder<Type> sortTypes = ImmutableList.builder();
+            for (int channel : sortChannels) {
+                sortTypes.add(types.get(channel));
+            }
+            this.sortTypes = sortTypes.build();
+            this.sortChannels = ImmutableList.copyOf(requireNonNull(sortChannels, "sortChannels is null"));
+            this.sortOrders = ImmutableList.copyOf(requireNonNull(sortOrders, "sortOrders is null"));
             this.partial = partial;
-            this.sampleWeight = sampleWeight;
         }
 
         @Override
@@ -80,21 +87,28 @@ public class TopNOperator
         public Operator createOperator(DriverContext driverContext)
         {
             checkState(!closed, "Factory is already closed");
-            OperatorContext operatorContext = driverContext.addOperatorContext(operatorId, TopNOperator.class.getSimpleName());
+            OperatorContext operatorContext = driverContext.addOperatorContext(operatorId, planNodeId, TopNOperator.class.getSimpleName());
             return new TopNOperator(
                     operatorContext,
                     sourceTypes,
                     n,
+                    sortTypes,
                     sortChannels,
                     sortOrders,
-                    sampleWeight,
-                    partial);
+                    partial,
+                    maxPartialMemory);
         }
 
         @Override
         public void close()
         {
             closed = true;
+        }
+
+        @Override
+        public OperatorFactory duplicate()
+        {
+            return new TopNOperatorFactory(operatorId, planNodeId, sourceTypes, n, sortChannels, sortOrders, partial, maxPartialMemory);
         }
     }
 
@@ -104,44 +118,47 @@ public class TopNOperator
     private final OperatorContext operatorContext;
     private final List<Type> types;
     private final int n;
+    private final List<Type> sortTypes;
     private final List<Integer> sortChannels;
     private final List<SortOrder> sortOrders;
-    private final TopNMemoryManager memoryManager;
     private final boolean partial;
-    private final Optional<Integer> sampleWeight;
+    private final DataSize maxPartialMemory;
 
     private final PageBuilder pageBuilder;
 
     private TopNBuilder topNBuilder;
     private boolean finishing;
 
-    private Iterator<RandomAccessBlock[]> outputIterator;
+    private Iterator<Block[]> outputIterator;
 
     public TopNOperator(
             OperatorContext operatorContext,
             List<Type> types,
             int n,
+            List<Type> sortTypes,
             List<Integer> sortChannels,
             List<SortOrder> sortOrders,
-            Optional<Integer> sampleWeight,
-            boolean partial)
+            boolean partial,
+            DataSize maxPartialMemory)
     {
-        this.operatorContext = checkNotNull(operatorContext, "operatorContext is null");
-        this.types = checkNotNull(types, "types is null");
+        this.operatorContext = requireNonNull(operatorContext, "operatorContext is null");
+        this.types = requireNonNull(types, "types is null");
 
-        checkArgument(n > 0, "n must be greater than zero");
+        checkArgument(n >= 0, "n must be positive");
         this.n = n;
 
-        this.sortChannels = checkNotNull(sortChannels, "sortChannels is null");
-        this.sortOrders = checkNotNull(sortOrders, "sortOrders is null");
+        this.sortTypes = requireNonNull(sortTypes, "sortTypes is null");
+        this.sortChannels = requireNonNull(sortChannels, "sortChannels is null");
+        this.sortOrders = requireNonNull(sortOrders, "sortOrders is null");
 
         this.partial = partial;
+        this.maxPartialMemory = requireNonNull(maxPartialMemory, "maxPartialMemory is null");
 
-        this.memoryManager = new TopNMemoryManager(checkNotNull(operatorContext, "operatorContext is null"));
+        this.pageBuilder = new PageBuilder(types);
 
-        this.pageBuilder = new PageBuilder(getTypes());
-
-        this.sampleWeight = sampleWeight;
+        if (n == 0) {
+            finishing = true;
+        }
     }
 
     @Override
@@ -169,29 +186,25 @@ public class TopNOperator
     }
 
     @Override
-    public ListenableFuture<?> isBlocked()
-    {
-        return NOT_BLOCKED;
-    }
-
-    @Override
     public boolean needsInput()
     {
-        return !finishing && outputIterator == null && (topNBuilder == null || !topNBuilder.isFull());
+        return !finishing && (outputIterator == null || !outputIterator.hasNext()) && (topNBuilder == null || !topNBuilder.isFull());
     }
 
     @Override
     public void addInput(Page page)
     {
         checkState(!finishing, "Operator is already finishing");
-        checkNotNull(page, "page is null");
+        requireNonNull(page, "page is null");
         if (topNBuilder == null) {
             topNBuilder = new TopNBuilder(
                     n,
+                    partial,
+                    sortTypes,
                     sortChannels,
                     sortOrders,
-                    sampleWeight,
-                    memoryManager);
+                    operatorContext,
+                    maxPartialMemory);
         }
 
         checkState(!topNBuilder.isFull(), "Aggregation buffer is full");
@@ -213,46 +226,59 @@ public class TopNOperator
             }
 
             // Only partial aggregation can flush early. Also, check that we are not flushing tiny bits at a time
-            checkState(finishing || partial, "Task exceeded max memory size of %s", memoryManager.getMaxMemorySize());
-
-            outputIterator = topNBuilder.build();
-            topNBuilder = null;
+            if (finishing || partial) {
+                outputIterator = topNBuilder.build();
+                topNBuilder = null;
+            }
         }
 
         pageBuilder.reset();
         while (!pageBuilder.isFull() && outputIterator.hasNext()) {
-            RandomAccessBlock[] next = outputIterator.next();
+            Block[] next = outputIterator.next();
+            pageBuilder.declarePosition();
             for (int i = 0; i < next.length; i++) {
-                next[i].appendTo(0, pageBuilder.getBlockBuilder(i));
+                Type type = types.get(i);
+                type.appendTo(next[i], 0, pageBuilder.getBlockBuilder(i));
             }
         }
 
-        Page page = pageBuilder.build();
-        return page;
+        return pageBuilder.build();
     }
 
     private static class TopNBuilder
     {
         private final int n;
+        private final boolean partial;
+        private final List<Type> sortTypes;
         private final List<Integer> sortChannels;
         private final List<SortOrder> sortOrders;
-        private final TopNMemoryManager memoryManager;
-        private final PriorityQueue<RandomAccessBlock[]> globalCandidates;
-        private final Optional<Integer> sampleWeightChannel;
+        private final OperatorContext operatorContext;
+        private final LocalMemoryContext systemMemoryContext;
+        private final long maxPartialMemory;
+        private final PriorityQueue<Block[]> globalCandidates;
 
         private long memorySize;
 
-        private TopNBuilder(int n, List<Integer> sortChannels, List<SortOrder> sortOrders, Optional<Integer> sampleWeightChannel, TopNMemoryManager memoryManager)
+        private TopNBuilder(int n,
+                boolean partial,
+                List<Type> sortTypes,
+                List<Integer> sortChannels,
+                List<SortOrder> sortOrders,
+                OperatorContext operatorContext,
+                DataSize maxPartialMemory)
         {
             this.n = n;
+            this.partial = partial;
 
+            this.sortTypes = sortTypes;
             this.sortChannels = sortChannels;
             this.sortOrders = sortOrders;
 
-            this.memoryManager = memoryManager;
-            this.sampleWeightChannel = sampleWeightChannel;
+            this.operatorContext = operatorContext;
+            this.systemMemoryContext = operatorContext.getSystemMemoryContext().newLocalMemoryContext();
+            this.maxPartialMemory = maxPartialMemory.toBytes();
 
-            Ordering<RandomAccessBlock[]> comparator = Ordering.from(new RowComparator(sortChannels, sortOrders)).reverse();
+            Ordering<Block[]> comparator = Ordering.from(new RowComparator(sortTypes, sortChannels, sortOrders)).reverse();
             this.globalCandidates = new PriorityQueue<>(Math.min(n, MAX_INITIAL_PRIORITY_QUEUE_SIZE), comparator);
         }
 
@@ -266,38 +292,28 @@ public class TopNOperator
         {
             long sizeDelta = 0;
 
-            BlockCursor[] cursors = new BlockCursor[page.getChannelCount()];
-            for (int i = 0; i < page.getChannelCount(); i++) {
-                cursors[i] = page.getBlock(i).cursor();
-            }
-
-            for (int i = 0; i < page.getPositionCount(); i++) {
-                for (BlockCursor cursor : cursors) {
-                    checkState(cursor.advanceNextPosition());
-                }
-
-                if (globalCandidates.size() < n) {
-                    sizeDelta += addRow(cursors);
-                }
-                else if (compare(cursors, globalCandidates.peek()) < 0) {
-                    sizeDelta += addRow(cursors);
+            Block[] blocks = page.getBlocks();
+            for (int position = 0; position < page.getPositionCount(); position++) {
+                if (globalCandidates.size() < n || compare(position, blocks, globalCandidates.peek()) < 0) {
+                    sizeDelta += addRow(position, blocks);
                 }
             }
 
             return sizeDelta;
         }
 
-        private int compare(BlockCursor[] cursors, RandomAccessBlock[] currentMax)
+        private int compare(int position, Block[] blocks, Block[] currentMax)
         {
             for (int i = 0; i < sortChannels.size(); i++) {
+                Type type = sortTypes.get(i);
                 int sortChannel = sortChannels.get(i);
                 SortOrder sortOrder = sortOrders.get(i);
 
-                BlockCursor cursor = cursors[sortChannel];
-                RandomAccessBlock currentMaxValue = currentMax[sortChannel];
+                Block block = blocks[sortChannel];
+                Block currentMaxValue = currentMax[sortChannel];
 
-                // compare the right value to the left cursor but negate the result since we are evaluating in the opposite order
-                int compare = -currentMaxValue.compareTo(sortOrder, 0, cursor);
+                // compare the right value to the left block but negate the result since we are evaluating in the opposite order
+                int compare = -sortOrder.compareBlockValue(type, currentMaxValue, 0, block, position);
                 if (compare != 0) {
                     return compare;
                 }
@@ -305,162 +321,60 @@ public class TopNOperator
             return 0;
         }
 
-        private long addRow(BlockCursor[] cursors)
+        private long addRow(int position, Block[] blocks)
         {
             long sizeDelta = 0;
-            RandomAccessBlock[] row = getValues(cursors);
-            long sampleWeight = 1;
-            if (sampleWeightChannel.isPresent()) {
-                sampleWeight = row[sampleWeightChannel.get()].getLong(0);
-                // Set the weight to one, since we're going to insert it multiple times in the priority queue
-                row[sampleWeightChannel.get()] = createBigintBlock(1);
-            }
+            Block[] row = getValues(position, blocks);
 
-            // Count the column sizes only once, because we insert the same object reference multiple times for sampled rows
             sizeDelta += sizeOfRow(row);
             globalCandidates.add(row);
-            sizeDelta += (sampleWeight - 1) * OVERHEAD_PER_VALUE.toBytes();
-            for (int i = 1; i < sampleWeight; i++) {
-                globalCandidates.add(row);
-            }
 
             while (globalCandidates.size() > n) {
-                RandomAccessBlock[] previous = globalCandidates.remove();
-                // We insert sampled rows multiple times, so use reference equality when checking if this row is still in the queue
-                if (previous != globalCandidates.peek()) {
-                    sizeDelta -= sizeOfRow(previous);
-                }
-                else {
-                    sizeDelta -= OVERHEAD_PER_VALUE.toBytes();
-                }
+                Block[] previous = globalCandidates.remove();
+                sizeDelta -= sizeOfRow(previous);
             }
             return sizeDelta;
         }
 
-        private long sizeOfRow(RandomAccessBlock[] row)
+        private static long sizeOfRow(Block[] row)
         {
             long size = OVERHEAD_PER_VALUE.toBytes();
-            for (RandomAccessBlock value : row) {
-                size += value.getSizeInBytes();
+            for (Block value : row) {
+                size += value.getRetainedSizeInBytes();
             }
             return size;
         }
 
-        private RandomAccessBlock[] getValues(BlockCursor[] cursors)
+        private static Block[] getValues(int position, Block[] blocks)
         {
-            RandomAccessBlock[] row = new RandomAccessBlock[cursors.length];
-            for (int i = 0; i < cursors.length; i++) {
-                row[i] = cursors[i].getSingleValueBlock();
+            Block[] row = new Block[blocks.length];
+            for (int i = 0; i < blocks.length; i++) {
+                row[i] = blocks[i].getSingleValueBlock(position);
             }
             return row;
         }
 
         private boolean isFull()
         {
-            return memoryManager.canUse(memorySize);
-        }
-
-        public Iterator<RandomAccessBlock[]> build()
-        {
-            ImmutableList.Builder<RandomAccessBlock[]> minSortedGlobalCandidates = ImmutableList.builder();
-            long sampleWeight = 1;
-            while (!globalCandidates.isEmpty()) {
-                RandomAccessBlock[] row = globalCandidates.remove();
-                if (sampleWeightChannel.isPresent()) {
-                    // sampled rows are inserted multiple times (we can use identity comparison here)
-                    // we could also test for equality to "pack" results further, but that would require another equality function
-                    if (globalCandidates.peek() != null && row == globalCandidates.peek()) {
-                        sampleWeight++;
-                    }
-                    else {
-                        row[sampleWeightChannel.get()] = createBigintBlock(sampleWeight);
-                        minSortedGlobalCandidates.add(row);
-                        sampleWeight = 1;
-                    }
-                }
-                else {
-                    minSortedGlobalCandidates.add(row);
-                }
+            long memorySize = this.memorySize;
+            if (partial) {
+                systemMemoryContext.setBytes(memorySize);
+                return (memorySize > maxPartialMemory);
             }
-            return minSortedGlobalCandidates.build().reverse().iterator();
-        }
-
-        private static RandomAccessBlock createBigintBlock(long value)
-        {
-            return BIGINT.createBlockBuilder(new BlockBuilderStatus())
-                    .appendLong(value)
-                    .build()
-                    .toRandomAccessBlock();
-        }
-    }
-
-    public static class TopNMemoryManager
-    {
-        private final OperatorContext operatorContext;
-        private long currentMemoryReservation;
-
-        public TopNMemoryManager(OperatorContext operatorContext)
-        {
-            this.operatorContext = operatorContext;
-        }
-
-        public boolean canUse(long memorySize)
-        {
-            // remove the pre-allocated memory from this size
-            memorySize -= operatorContext.getOperatorPreAllocatedMemory().toBytes();
-
-            long delta = memorySize - currentMemoryReservation;
-            if (delta <= 0) {
+            else {
+                operatorContext.setMemoryReservation(memorySize);
                 return false;
             }
+        }
 
-            if (!operatorContext.reserveMemory(delta)) {
-                return true;
+        public Iterator<Block[]> build()
+        {
+            ImmutableList.Builder<Block[]> minSortedGlobalCandidates = ImmutableList.builder();
+            while (!globalCandidates.isEmpty()) {
+                Block[] row = globalCandidates.remove();
+                minSortedGlobalCandidates.add(row);
             }
-
-            // reservation worked, record the reservation
-            currentMemoryReservation = Math.max(currentMemoryReservation, memorySize);
-            return false;
-        }
-
-        public DataSize getMaxMemorySize()
-        {
-            return operatorContext.getMaxMemorySize();
-        }
-    }
-
-    private static class RowComparator
-            implements Comparator<RandomAccessBlock[]>
-    {
-        private final List<Integer> sortChannels;
-        private final List<SortOrder> sortOrders;
-
-        public RowComparator(List<Integer> sortChannels, List<SortOrder> sortOrders)
-        {
-            checkNotNull(sortChannels, "sortChannels is null");
-            checkNotNull(sortOrders, "sortOrders is null");
-            checkArgument(sortChannels.size() == sortOrders.size(), "sortFields size (%s) doesn't match sortOrders size (%s)", sortChannels.size(), sortOrders.size());
-
-            this.sortChannels = ImmutableList.copyOf(sortChannels);
-            this.sortOrders = ImmutableList.copyOf(sortOrders);
-        }
-
-        @Override
-        public int compare(RandomAccessBlock[] leftRow, RandomAccessBlock[] rightRow)
-        {
-            for (int index = 0; index < sortChannels.size(); index++) {
-                int channel = sortChannels.get(index);
-                SortOrder sortOrder = sortOrders.get(index);
-
-                RandomAccessBlock left = leftRow[channel];
-                RandomAccessBlock right = rightRow[channel];
-
-                int comparison = left.compareTo(sortOrder, 0, right, 0);
-                if (comparison != 0) {
-                    return comparison;
-                }
-            }
-            return 0;
+            return minSortedGlobalCandidates.build().reverse().iterator();
         }
     }
 }

@@ -13,6 +13,12 @@
  */
 package com.facebook.presto.operator.aggregation.state;
 
+import com.facebook.presto.spi.block.BlockBuilder;
+import com.facebook.presto.spi.function.AccumulatorState;
+import com.facebook.presto.spi.function.AccumulatorStateMetadata;
+import com.facebook.presto.spi.type.Type;
+
+@AccumulatorStateMetadata(stateSerializerClass = NullableLongStateSerializer.class)
 public interface NullableLongState
         extends AccumulatorState
 {
@@ -20,7 +26,18 @@ public interface NullableLongState
 
     void setLong(long value);
 
-    boolean isNotNull();
+    @InitialBooleanValue(true)
+    boolean isNull();
 
-    void setNotNull(boolean value);
+    void setNull(boolean value);
+
+    static void write(Type type, NullableLongState state, BlockBuilder out)
+    {
+        if (state.isNull()) {
+            out.appendNull();
+        }
+        else {
+            type.writeLong(out, state.getLong());
+        }
+    }
 }

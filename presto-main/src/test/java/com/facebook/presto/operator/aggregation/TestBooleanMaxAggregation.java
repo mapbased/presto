@@ -13,41 +13,12 @@
  */
 package com.facebook.presto.operator.aggregation;
 
-import com.facebook.presto.spi.block.Block;
-import com.facebook.presto.spi.block.BlockBuilder;
-import com.facebook.presto.spi.block.BlockBuilderStatus;
-
-import static com.facebook.presto.operator.aggregation.BooleanMaxAggregation.BOOLEAN_MAX;
-import static com.facebook.presto.spi.type.BooleanType.BOOLEAN;
-import static java.lang.Boolean.FALSE;
-import static java.lang.Boolean.TRUE;
-
 public class TestBooleanMaxAggregation
-        extends AbstractTestAggregationFunction
+        extends TestBooleanOrAggregation
 {
     @Override
-    public Block getSequenceBlock(int start, int length)
+    protected String getFunctionName()
     {
-        BlockBuilder blockBuilder = BOOLEAN.createBlockBuilder(new BlockBuilderStatus());
-        for (int i = start; i < start + length; i++) {
-            // false, true, false, true...
-            blockBuilder.appendBoolean(i % 2 != 0);
-        }
-        return blockBuilder.build();
-    }
-
-    @Override
-    public AggregationFunction getFunction()
-    {
-        return BOOLEAN_MAX;
-    }
-
-    @Override
-    public Boolean getExpectedValue(int start, int length)
-    {
-        if (length == 0) {
-            return null;
-        }
-        return length > 1 ? TRUE : FALSE;
+        return "max";
     }
 }

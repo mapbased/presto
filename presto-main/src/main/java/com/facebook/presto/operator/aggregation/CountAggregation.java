@@ -13,235 +13,39 @@
  */
 package com.facebook.presto.operator.aggregation;
 
-import com.facebook.presto.spi.block.Block;
+import com.facebook.presto.operator.aggregation.state.LongState;
 import com.facebook.presto.spi.block.BlockBuilder;
-import com.facebook.presto.spi.block.BlockBuilderStatus;
-import com.facebook.presto.spi.block.BlockCursor;
-import com.facebook.presto.operator.GroupByIdBlock;
-import com.facebook.presto.operator.Page;
-import com.facebook.presto.spi.type.Type;
-import com.facebook.presto.util.array.LongBigArray;
-import com.google.common.base.Optional;
-import com.google.common.collect.ImmutableList;
-
-import java.util.List;
+import com.facebook.presto.spi.function.AggregationFunction;
+import com.facebook.presto.spi.function.AggregationState;
+import com.facebook.presto.spi.function.CombineFunction;
+import com.facebook.presto.spi.function.InputFunction;
+import com.facebook.presto.spi.function.OutputFunction;
+import com.facebook.presto.spi.type.StandardTypes;
 
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
-import static com.google.common.base.Preconditions.checkArgument;
-import static com.google.common.base.Preconditions.checkState;
 
-public class CountAggregation
-        implements AggregationFunction
+@AggregationFunction("count")
+public final class CountAggregation
 {
-    public static final CountAggregation COUNT = new CountAggregation();
-
-    @Override
-    public List<Type> getParameterTypes()
+    private CountAggregation()
     {
-        return ImmutableList.of();
     }
 
-    @Override
-    public Type getFinalType()
+    @InputFunction
+    public static void input(@AggregationState LongState state)
     {
-        return BIGINT;
+        state.setLong(state.getLong() + 1);
     }
 
-    @Override
-    public Type getIntermediateType()
+    @CombineFunction
+    public static void combine(@AggregationState LongState state, @AggregationState LongState otherState)
     {
-        return BIGINT;
+        state.setLong(state.getLong() + otherState.getLong());
     }
 
-    @Override
-    public boolean isDecomposable()
+    @OutputFunction(StandardTypes.BIGINT)
+    public static void output(@AggregationState LongState state, BlockBuilder out)
     {
-        return true;
-    }
-
-    @Override
-    public CountGroupedAccumulator createGroupedAggregation(Optional<Integer> maskChannel, Optional<Integer> sampleWeightChannel, double confidence, int[] argumentChannels)
-    {
-        checkArgument(confidence == 1.0, "count does not support approximate queries");
-        return new CountGroupedAccumulator(maskChannel, sampleWeightChannel);
-    }
-
-    @Override
-    public GroupedAccumulator createGroupedIntermediateAggregation(double confidence)
-    {
-        checkArgument(confidence == 1.0, "count does not support approximate queries");
-        return new CountGroupedAccumulator(Optional.<Integer>absent(), Optional.<Integer>absent());
-    }
-
-    public static class CountGroupedAccumulator
-            implements GroupedAccumulator
-    {
-        private final LongBigArray counts;
-        private final Optional<Integer> maskChannel;
-        private final Optional<Integer> sampleWeightChannel;
-
-        public CountGroupedAccumulator(Optional<Integer> maskChannel, Optional<Integer> sampleWeightChannel)
-        {
-            this.counts = new LongBigArray();
-            this.maskChannel = maskChannel;
-            this.sampleWeightChannel = sampleWeightChannel;
-        }
-
-        @Override
-        public long getEstimatedSize()
-        {
-            return counts.sizeOf();
-        }
-
-        @Override
-        public Type getFinalType()
-        {
-            return BIGINT;
-        }
-
-        @Override
-        public Type getIntermediateType()
-        {
-            return BIGINT;
-        }
-
-        @Override
-        public void addInput(GroupByIdBlock groupIdsBlock, Page page)
-        {
-            counts.ensureCapacity(groupIdsBlock.getGroupCount());
-            BlockCursor masks = maskChannel.isPresent() ? page.getBlock(maskChannel.get()).cursor() : null;
-            BlockCursor sampleWeights = sampleWeightChannel.isPresent() ? page.getBlock(sampleWeightChannel.get()).cursor() : null;
-
-            for (int position = 0; position < groupIdsBlock.getPositionCount(); position++) {
-                long groupId = groupIdsBlock.getGroupId(position);
-                checkState(masks == null || masks.advanceNextPosition());
-                checkState(sampleWeights == null || sampleWeights.advanceNextPosition());
-                counts.add(groupId, SimpleAggregationFunction.computeSampleWeight(masks, sampleWeights));
-            }
-        }
-
-        @Override
-        public void addIntermediate(GroupByIdBlock groupIdsBlock, Block block)
-        {
-            counts.ensureCapacity(groupIdsBlock.getGroupCount());
-
-            BlockCursor intermediates = block.cursor();
-
-            for (int position = 0; position < groupIdsBlock.getPositionCount(); position++) {
-                checkState(intermediates.advanceNextPosition());
-
-                long groupId = groupIdsBlock.getGroupId(position);
-                counts.add(groupId, intermediates.getLong());
-            }
-        }
-
-        @Override
-        public void evaluateIntermediate(int groupId, BlockBuilder output)
-        {
-            evaluateFinal(groupId, output);
-        }
-
-        @Override
-        public void evaluateFinal(int groupId, BlockBuilder output)
-        {
-            long value = counts.get((long) groupId);
-            output.appendLong(value);
-        }
-    }
-
-    @Override
-    public CountAccumulator createAggregation(Optional<Integer> maskChannel, Optional<Integer> sampleWeightChannel, double confidence, int... argumentChannels)
-    {
-        checkArgument(confidence == 1.0, "count does not support approximate queries");
-        return new CountAccumulator(maskChannel, sampleWeightChannel);
-    }
-
-    @Override
-    public CountAccumulator createIntermediateAggregation(double confidence)
-    {
-        checkArgument(confidence == 1.0, "count does not support approximate queries");
-        return new CountAccumulator(Optional.<Integer>absent(), Optional.<Integer>absent());
-    }
-
-    public static class CountAccumulator
-            implements Accumulator
-    {
-        private long count;
-        private final Optional<Integer> maskChannel;
-        private final Optional<Integer> sampleWeightChannel;
-
-        public CountAccumulator(Optional<Integer> maskChannel, Optional<Integer> sampleWeightChannel)
-        {
-            this.maskChannel = maskChannel;
-            this.sampleWeightChannel = sampleWeightChannel;
-        }
-
-        @Override
-        public long getEstimatedSize()
-        {
-            return 0;
-        }
-
-        @Override
-        public Type getFinalType()
-        {
-            return BIGINT;
-        }
-
-        @Override
-        public Type getIntermediateType()
-        {
-            return BIGINT;
-        }
-
-        @Override
-        public void addInput(Page page)
-        {
-            if (!maskChannel.isPresent() && !sampleWeightChannel.isPresent()) {
-                count += page.getPositionCount();
-            }
-            else {
-                BlockCursor masks = null;
-                if (maskChannel.isPresent()) {
-                    masks = page.getBlock(maskChannel.get()).cursor();
-                }
-                BlockCursor sampleWeights = null;
-                if (sampleWeightChannel.isPresent()) {
-                    sampleWeights = page.getBlock(sampleWeightChannel.get()).cursor();
-                }
-                for (int i = 0; i < page.getPositionCount(); i++) {
-                    checkState(masks == null || masks.advanceNextPosition());
-                    checkState(sampleWeights == null || sampleWeights.advanceNextPosition());
-                    count += SimpleAggregationFunction.computeSampleWeight(masks, sampleWeights);
-                }
-            }
-        }
-
-        @Override
-        public void addIntermediate(Block block)
-        {
-            BlockCursor intermediates = block.cursor();
-
-            for (int position = 0; position < block.getPositionCount(); position++) {
-                checkState(intermediates.advanceNextPosition());
-                count += intermediates.getLong();
-            }
-        }
-
-        @Override
-        public final Block evaluateIntermediate()
-        {
-            return evaluateFinal();
-        }
-
-        @Override
-        public final Block evaluateFinal()
-        {
-            BlockBuilder out = getFinalType().createBlockBuilder(new BlockBuilderStatus());
-
-            out.appendLong(count);
-
-            return out.build();
-        }
+        BIGINT.writeLong(out, state.getLong());
     }
 }

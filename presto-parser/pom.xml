@@ -5,7 +5,7 @@
     <parent>
         <groupId>com.facebook.presto</groupId>
         <artifactId>presto-root</artifactId>
-        <version>0.70-SNAPSHOT</version>
+        <version>0.181-SNAPSHOT</version>
     </parent>
 
     <artifactId>presto-parser</artifactId>
@@ -17,18 +17,13 @@
 
     <dependencies>
         <dependency>
+            <groupId>javax.inject</groupId>
+            <artifactId>javax.inject</artifactId>
+        </dependency>
+
+        <dependency>
             <groupId>com.google.code.findbugs</groupId>
             <artifactId>annotations</artifactId>
-        </dependency>
-
-        <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
-            <artifactId>jackson-core</artifactId>
-        </dependency>
-
-        <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
-            <artifactId>jackson-databind</artifactId>
         </dependency>
 
         <dependency>
@@ -43,7 +38,7 @@
 
         <dependency>
             <groupId>org.antlr</groupId>
-            <artifactId>antlr-runtime</artifactId>
+            <artifactId>antlr4-runtime</artifactId>
         </dependency>
 
         <!-- for testing -->
@@ -58,7 +53,7 @@
         <plugins>
             <plugin>
                 <groupId>org.antlr</groupId>
-                <artifactId>antlr3-maven-plugin</artifactId>
+                <artifactId>antlr4-maven-plugin</artifactId>
             </plugin>
         </plugins>
     </build>

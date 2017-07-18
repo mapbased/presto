@@ -5,11 +5,11 @@ Deploying Presto
 Installing Presto
 -----------------
 
-Download the Presto server tarball, :download:`server`, and unpack it.
+Download the Presto server tarball, :maven_download:`server`, and unpack it.
 The tarball will contain a single top-level directory,
 |presto_server_release|, which we will call the *installation* directory.
 
-Presto needs a *data* directory for storing logs, local metadata, etc.
+Presto needs a *data* directory for storing logs, etc.
 We recommend creating a data directory outside of the installation directory,
 which allows it to be easily preserved when upgrading Presto.
 
@@ -22,7 +22,7 @@ This will hold the following configuration:
 * Node Properties: environmental configuration specific to each node
 * JVM Config: command line options for the Java Virtual Machine
 * Config Properties: configuration for the Presto server
-* Catalog Properties: configuration for connectors (data sources)
+* Catalog Properties: configuration for :doc:`/connector` (data sources)
 
 .. _presto_node_properties:
 
@@ -66,8 +66,7 @@ The JVM config file, ``etc/jvm.config``, contains a list of command line
 options used for launching the Java Virtual Machine. The format of the file
 is a list of options, one per line. These options are not interpreted by
 the shell, so options containing spaces or other special characters should
-not be quoted (as demonstrated by the ``OnOutOfMemoryError`` option in the
-example below).
+not be quoted.
 
 The following provides a good starting point for creating ``etc/jvm.config``:
 
@@ -75,31 +74,17 @@ The following provides a good starting point for creating ``etc/jvm.config``:
 
     -server
     -Xmx16G
-    -XX:+UseConcMarkSweepGC
+    -XX:+UseG1GC
+    -XX:G1HeapRegionSize=32M
+    -XX:+UseGCOverheadLimit
     -XX:+ExplicitGCInvokesConcurrent
-    -XX:+CMSClassUnloadingEnabled
-    -XX:+AggressiveOpts
     -XX:+HeapDumpOnOutOfMemoryError
-    -XX:OnOutOfMemoryError=kill -9 %p
-    -XX:PermSize=150M
-    -XX:MaxPermSize=150M
-    -XX:ReservedCodeCacheSize=150M
-    -Xbootclasspath/p:/var/presto/installation/lib/floatingdecimal-0.1.jar
+    -XX:+ExitOnOutOfMemoryError
 
 Because an ``OutOfMemoryError`` will typically leave the JVM in an
 inconsistent state, we write a heap dump (for debugging) and forcibly
 terminate the process when this occurs.
 
-Presto compiles queries to bytecode at runtime and thus produces many classes,
-so we increase the permanent generation size (the garbage collector region
-where classes are stored) and enable class unloading.
-
-The last option in the above configuration loads the
-`floatingdecimal <https://github.com/airlift/floatingdecimal>`_
-patch for the JDK that substantially improves performance when parsing
-floating point numbers. This is important because many Hive file formats
-store floating point values as text. Change the path
-``/var/presto/installation`` to match the Presto installation directory.
 
 .. _config_properties:
 
@@ -119,7 +104,8 @@ The following is a minimal configuration for the coordinator:
     coordinator=true
     node-scheduler.include-coordinator=false
     http-server.http.port=8080
-    task.max-memory=1GB
+    query.max-memory=50GB
+    query.max-memory-per-node=1GB
     discovery-server.enabled=true
     discovery.uri=http://example.net:8080
 
@@ -129,7 +115,21 @@ And this is a minimal configuration for the workers:
 
     coordinator=false
     http-server.http.port=8080
-    task.max-memory=1GB
+    query.max-memory=50GB
+    query.max-memory-per-node=1GB
+    discovery.uri=http://example.net:8080
+
+Alternatively, if you are setting up a single machine for testing that
+will function as both a coordinator and worker, use this configuration:
+
+.. code-block:: none
+
+    coordinator=true
+    node-scheduler.include-coordinator=true
+    http-server.http.port=8080
+    query.max-memory=5GB
+    query.max-memory-per-node=1GB
+    discovery-server.enabled=true
     discovery.uri=http://example.net:8080
 
 These properties require some explanation:
@@ -149,16 +149,11 @@ These properties require some explanation:
   Specifies the port for the HTTP server. Presto uses HTTP for all
   communication, internal and external.
 
-* ``task.max-memory=1GB``:
-  The maximum amount of memory used by a single task
-  (a fragment of a query plan running on a specific node).
-  In particular, this limits the number of groups in a ``GROUP BY``,
-  the size of the right-hand table in a ``JOIN``, the number of rows
-  in an ``ORDER BY`` or the number of rows processed by a window function.
-  This value should be tuned based on the number of concurrent queries and
-  the size and complexity of queries.  Setting it too low will limit the
-  queries that can be run, while setting it too high will cause the JVM
-  to run out of memory.
+* ``query.max-memory``:
+  The maximum amount of distributed memory that a query may use.
+
+* ``query.max-memory-per-node``:
+  The maximum amount of memory that a query may use on any one machine.
 
 * ``discovery-server.enabled``:
   Presto uses the Discovery service to find all the nodes in the cluster.
@@ -166,8 +161,7 @@ These properties require some explanation:
   on startup. In order to simplify deployment and avoid running an additional
   service, the Presto coordinator can run an embedded version of the
   Discovery service. It shares the HTTP server with Presto and thus uses
-  the same port. For larger clusters, we recommend running Discovery as a
-  dedicated service. See :doc:`discovery` for details.
+  the same port.
 
 * ``discovery.uri``:
   The URI to the Discovery server. Because we have enabled the embedded
@@ -175,6 +169,15 @@ These properties require some explanation:
   URI of the Presto coordinator. Replace ``example.net:8080`` to match
   the host and port of the Presto coordinator. This URI must not end
   in a slash.
+
+You may also wish to set the following properties:
+
+* ``query.queue-config-file``:
+  Specifies the file to read the :doc:`/admin/queue` from.
+
+* ``jmx.rmiserver.port``:
+  Specifies the port for the JMX RMI server. Presto exports many metrics
+  that are useful for monitoring via JMX.
 
 Log Levels
 ^^^^^^^^^^
@@ -187,11 +190,12 @@ For example, consider the following log levels file:
 
 .. code-block:: none
 
-    com.facebook.presto=DEBUG
+    com.facebook.presto=INFO
 
-This would set the minimum level to ``DEBUG`` for both
+This would set the minimum level to ``INFO`` for both
 ``com.facebook.presto.server`` and ``com.facebook.presto.hive``.
-The default minimum level is ``INFO``.
+The default minimum level is ``INFO``
+(thus the above example does not actually change anything).
 There are four levels: ``DEBUG``, ``INFO``, ``WARN`` and ``ERROR``.
 
 Catalog Properties
@@ -201,8 +205,8 @@ Presto accesses data via *connectors*, which are mounted in catalogs.
 The connector provides all of the schemas and tables inside of the catalog.
 For example, the Hive connector maps each Hive database to a schema,
 so if the Hive connector is mounted as the ``hive`` catalog, and Hive
-contains a table ``bar`` in database ``foo``, that table would be accessed
-in Presto as ``hive.foo.bar``.
+contains a table ``clicks`` in database ``web``, that table would be accessed
+in Presto as ``hive.web.clicks``.
 
 Catalogs are registered by creating a catalog properties file
 in the ``etc/catalog`` directory.
@@ -213,60 +217,7 @@ contents to mount the ``jmx`` connector as the ``jmx`` catalog:
 
     connector.name=jmx
 
-Hive
-""""
-
-Presto includes Hive connectors for multiple versions of Hadoop:
-
-* ``hive-hadoop1``: Apache Hadoop 1.x
-* ``hive-hadoop2``: Apache Hadoop 2.x
-* ``hive-cdh4``: Cloudera CDH 4
-* ``hive-cdh5``: Cloudera CDH 5
-
-Create ``etc/catalog/hive.properties`` with the following contents
-to mount the ``hive-cdh4`` connector as the ``hive`` catalog,
-replacing ``hive-cdh4`` with the proper connector for your version
-of Hadoop and ``example.net:9083`` with the correct host and port
-for your Hive metastore Thrift service:
-
-.. code-block:: none
-
-    connector.name=hive-cdh4
-    hive.metastore.uri=thrift://example.net:9083
-
-If your Hive metastore references files stored on a federated HDFS,
-or if your HDFS cluster requires other non-standard client options
-to access it, add this property to reference your HDFS config files:
-
-.. code-block:: none
-
-    hive.config.resources=/etc/hadoop/conf/core-site.xml,/etc/hadoop/conf/hdfs-site.xml
-
-Note that Presto configures the HDFS client automatically for most
-setups and does not require any configuration files. Only specify
-additional configuration files if absolutely necessary. We also
-recommend minimizing the configuration files to have the minimum set
-of requried properties, as additional properties may cause problems.
-
-You can have as many catalogs as you need, so if you have additional
-Hive clusters, simply add another properties file to ``etc/catalog``
-with a different name (making sure it ends in ``.properties``).
-
-Cassandra
-"""""""""
-
-Create ``etc/catalog/cassandra.properties`` with the following contents
-to mount the ``cassandra`` connector as the ``cassandra`` catalog,
-replacing ``host1,host2`` with a comma-separated list of the Cassandra
-nodes used to discovery the cluster topology:
-
-.. code-block:: none
-
-    connector.name=cassandra
-    cassandra.contact-points=host1,host2
-
-You will also need to set ``cassandra.native-protocol-port`` if your
-Cassandra nodes are not using the default port (9142).
+See :doc:`/connector` for more information about configuring connectors.
 
 .. _running_presto:
 
@@ -274,7 +225,7 @@ Running Presto
 --------------
 
 The installation directory contains the launcher script in ``bin/launcher``.
-Presto can be started as a daemon by running running the following:
+Presto can be started as a daemon by running the following:
 
 .. code-block:: none
 

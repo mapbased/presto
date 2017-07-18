@@ -13,15 +13,26 @@
  */
 package com.facebook.presto.execution;
 
+import com.facebook.presto.operator.BlockedReason;
+import com.facebook.presto.operator.OperatorStats;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
 import io.airlift.units.DataSize;
 import io.airlift.units.Duration;
 import org.joda.time.DateTime;
 
+import java.util.List;
+import java.util.OptionalDouble;
+import java.util.Set;
+
 import static com.google.common.base.Preconditions.checkArgument;
-import static com.google.common.base.Preconditions.checkNotNull;
+import static io.airlift.units.Duration.succinctNanos;
+import static java.lang.Math.min;
+import static java.util.Objects.requireNonNull;
+import static java.util.concurrent.TimeUnit.NANOSECONDS;
 
 public class QueryStats
 {
@@ -36,6 +47,7 @@ public class QueryStats
     private final Duration analysisTime;
     private final Duration distributedPlanningTime;
     private final Duration totalPlanningTime;
+    private final Duration finishingTime;
 
     private final int totalTasks;
     private final int runningTasks;
@@ -44,14 +56,20 @@ public class QueryStats
     private final int totalDrivers;
     private final int queuedDrivers;
     private final int runningDrivers;
+    private final int blockedDrivers;
     private final int completedDrivers;
 
+    private final double cumulativeMemory;
     private final DataSize totalMemoryReservation;
+    private final DataSize peakMemoryReservation;
 
+    private final boolean scheduled;
     private final Duration totalScheduledTime;
     private final Duration totalCpuTime;
     private final Duration totalUserTime;
     private final Duration totalBlockedTime;
+    private final boolean fullyBlocked;
+    private final Set<BlockedReason> blockedReasons;
 
     private final DataSize rawInputDataSize;
     private final long rawInputPositions;
@@ -61,6 +79,8 @@ public class QueryStats
 
     private final DataSize outputDataSize;
     private final long outputPositions;
+
+    private final List<OperatorStats> operatorSummaries;
 
     @VisibleForTesting
     public QueryStats()
@@ -74,24 +94,32 @@ public class QueryStats
         this.analysisTime = null;
         this.distributedPlanningTime = null;
         this.totalPlanningTime = null;
+        this.finishingTime = null;
         this.totalTasks = 0;
         this.runningTasks = 0;
+        this.blockedDrivers = 0;
         this.completedTasks = 0;
         this.totalDrivers = 0;
         this.queuedDrivers = 0;
         this.runningDrivers = 0;
         this.completedDrivers = 0;
+        this.cumulativeMemory = 0.0;
         this.totalMemoryReservation = null;
+        this.peakMemoryReservation = null;
+        this.scheduled = false;
         this.totalScheduledTime = null;
         this.totalCpuTime = null;
         this.totalUserTime = null;
         this.totalBlockedTime = null;
+        this.fullyBlocked = false;
+        this.blockedReasons = ImmutableSet.of();
         this.rawInputDataSize = null;
         this.rawInputPositions = 0;
         this.processedInputDataSize = null;
         this.processedInputPositions = 0;
         this.outputDataSize = null;
         this.outputPositions = 0;
+        this.operatorSummaries = null;
     }
 
     @JsonCreator
@@ -106,6 +134,7 @@ public class QueryStats
             @JsonProperty("analysisTime") Duration analysisTime,
             @JsonProperty("distributedPlanningTime") Duration distributedPlanningTime,
             @JsonProperty("totalPlanningTime") Duration totalPlanningTime,
+            @JsonProperty("finishingTime") Duration finishingTime,
 
             @JsonProperty("totalTasks") int totalTasks,
             @JsonProperty("runningTasks") int runningTasks,
@@ -114,14 +143,20 @@ public class QueryStats
             @JsonProperty("totalDrivers") int totalDrivers,
             @JsonProperty("queuedDrivers") int queuedDrivers,
             @JsonProperty("runningDrivers") int runningDrivers,
+            @JsonProperty("blockedDrivers") int blockedDrivers,
             @JsonProperty("completedDrivers") int completedDrivers,
 
+            @JsonProperty("cumulativeMemory") double cumulativeMemory,
             @JsonProperty("totalMemoryReservation") DataSize totalMemoryReservation,
+            @JsonProperty("peakMemoryReservation") DataSize peakMemoryReservation,
 
+            @JsonProperty("scheduled") boolean scheduled,
             @JsonProperty("totalScheduledTime") Duration totalScheduledTime,
             @JsonProperty("totalCpuTime") Duration totalCpuTime,
             @JsonProperty("totalUserTime") Duration totalUserTime,
             @JsonProperty("totalBlockedTime") Duration totalBlockedTime,
+            @JsonProperty("fullyBlocked") boolean fullyBlocked,
+            @JsonProperty("blockedReasons") Set<BlockedReason> blockedReasons,
 
             @JsonProperty("rawInputDataSize") DataSize rawInputDataSize,
             @JsonProperty("rawInputPositions") long rawInputPositions,
@@ -130,11 +165,13 @@ public class QueryStats
             @JsonProperty("processedInputPositions") long processedInputPositions,
 
             @JsonProperty("outputDataSize") DataSize outputDataSize,
-            @JsonProperty("outputPositions") long outputPositions)
+            @JsonProperty("outputPositions") long outputPositions,
+
+            @JsonProperty("operatorSummaries") List<OperatorStats> operatorSummaries)
     {
-        this.createTime = checkNotNull(createTime, "createTime is null");
+        this.createTime = requireNonNull(createTime, "createTime is null");
         this.executionStartTime = executionStartTime;
-        this.lastHeartbeat = checkNotNull(lastHeartbeat, "lastHeartbeat is null");
+        this.lastHeartbeat = requireNonNull(lastHeartbeat, "lastHeartbeat is null");
         this.endTime = endTime;
 
         this.elapsedTime = elapsedTime;
@@ -142,6 +179,7 @@ public class QueryStats
         this.analysisTime = analysisTime;
         this.distributedPlanningTime = distributedPlanningTime;
         this.totalPlanningTime = totalPlanningTime;
+        this.finishingTime = finishingTime;
 
         checkArgument(totalTasks >= 0, "totalTasks is negative");
         this.totalTasks = totalTasks;
@@ -156,26 +194,34 @@ public class QueryStats
         this.queuedDrivers = queuedDrivers;
         checkArgument(runningDrivers >= 0, "runningDrivers is negative");
         this.runningDrivers = runningDrivers;
+        checkArgument(blockedDrivers >= 0, "blockedDrivers is negative");
+        this.blockedDrivers = blockedDrivers;
         checkArgument(completedDrivers >= 0, "completedDrivers is negative");
         this.completedDrivers = completedDrivers;
 
-        this.totalMemoryReservation = checkNotNull(totalMemoryReservation, "totalMemoryReservation is null");
-        this.totalScheduledTime = checkNotNull(totalScheduledTime, "totalScheduledTime is null");
-        this.totalCpuTime = checkNotNull(totalCpuTime, "totalCpuTime is null");
-        this.totalUserTime = checkNotNull(totalUserTime, "totalUserTime is null");
-        this.totalBlockedTime = checkNotNull(totalBlockedTime, "totalBlockedTime is null");
+        this.cumulativeMemory = requireNonNull(cumulativeMemory, "cumulativeMemory is null");
+        this.totalMemoryReservation = requireNonNull(totalMemoryReservation, "totalMemoryReservation is null");
+        this.peakMemoryReservation = requireNonNull(peakMemoryReservation, "peakMemoryReservation is null");
+        this.scheduled = scheduled;
+        this.totalScheduledTime = requireNonNull(totalScheduledTime, "totalScheduledTime is null");
+        this.totalCpuTime = requireNonNull(totalCpuTime, "totalCpuTime is null");
+        this.totalUserTime = requireNonNull(totalUserTime, "totalUserTime is null");
+        this.totalBlockedTime = requireNonNull(totalBlockedTime, "totalBlockedTime is null");
+        this.fullyBlocked = fullyBlocked;
+        this.blockedReasons = ImmutableSet.copyOf(requireNonNull(blockedReasons, "blockedReasons is null"));
 
-        this.rawInputDataSize = checkNotNull(rawInputDataSize, "rawInputDataSize is null");
+        this.rawInputDataSize = requireNonNull(rawInputDataSize, "rawInputDataSize is null");
         checkArgument(rawInputPositions >= 0, "rawInputPositions is negative");
         this.rawInputPositions = rawInputPositions;
 
-        this.processedInputDataSize = checkNotNull(processedInputDataSize, "processedInputDataSize is null");
+        this.processedInputDataSize = requireNonNull(processedInputDataSize, "processedInputDataSize is null");
         checkArgument(processedInputPositions >= 0, "processedInputPositions is negative");
         this.processedInputPositions = processedInputPositions;
 
-        this.outputDataSize = checkNotNull(outputDataSize, "outputDataSize is null");
+        this.outputDataSize = requireNonNull(outputDataSize, "outputDataSize is null");
         checkArgument(outputPositions >= 0, "outputPositions is negative");
         this.outputPositions = outputPositions;
+        this.operatorSummaries = ImmutableList.copyOf(requireNonNull(operatorSummaries, "operatorSummaries is null"));
     }
 
     @JsonProperty
@@ -215,6 +261,16 @@ public class QueryStats
     }
 
     @JsonProperty
+    public Duration getExecutionTime()
+    {
+        if (queuedTime == null) {
+            // counter-intuitively, this means that the query is still queued
+            return new Duration(0, NANOSECONDS);
+        }
+        return succinctNanos((long) elapsedTime.getValue(NANOSECONDS) - (long) queuedTime.getValue(NANOSECONDS));
+    }
+
+    @JsonProperty
     public Duration getAnalysisTime()
     {
         return analysisTime;
@@ -230,6 +286,12 @@ public class QueryStats
     public Duration getTotalPlanningTime()
     {
         return totalPlanningTime;
+    }
+
+    @JsonProperty
+    public Duration getFinishingTime()
+    {
+        return finishingTime;
     }
 
     @JsonProperty
@@ -269,15 +331,39 @@ public class QueryStats
     }
 
     @JsonProperty
+    public int getBlockedDrivers()
+    {
+        return blockedDrivers;
+    }
+
+    @JsonProperty
     public int getCompletedDrivers()
     {
         return completedDrivers;
     }
 
     @JsonProperty
+    public double getCumulativeMemory()
+    {
+        return cumulativeMemory;
+    }
+
+    @JsonProperty
     public DataSize getTotalMemoryReservation()
     {
         return totalMemoryReservation;
+    }
+
+    @JsonProperty
+    public DataSize getPeakMemoryReservation()
+    {
+        return peakMemoryReservation;
+    }
+
+    @JsonProperty
+    public boolean isScheduled()
+    {
+        return scheduled;
     }
 
     @JsonProperty
@@ -302,6 +388,18 @@ public class QueryStats
     public Duration getTotalBlockedTime()
     {
         return totalBlockedTime;
+    }
+
+    @JsonProperty
+    public boolean isFullyBlocked()
+    {
+        return fullyBlocked;
+    }
+
+    @JsonProperty
+    public Set<BlockedReason> getBlockedReasons()
+    {
+        return blockedReasons;
     }
 
     @JsonProperty
@@ -338,5 +436,20 @@ public class QueryStats
     public long getOutputPositions()
     {
         return outputPositions;
+    }
+
+    @JsonProperty
+    public List<OperatorStats> getOperatorSummaries()
+    {
+        return operatorSummaries;
+    }
+
+    @JsonProperty
+    public OptionalDouble getProgressPercentage()
+    {
+        if (!scheduled || totalDrivers == 0) {
+             return OptionalDouble.empty();
+        }
+        return OptionalDouble.of(min(100, (completedDrivers * 100.0) / totalDrivers));
     }
 }

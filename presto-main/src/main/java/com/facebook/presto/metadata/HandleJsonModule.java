@@ -14,14 +14,10 @@
 package com.facebook.presto.metadata;
 
 import com.facebook.presto.index.IndexHandleJacksonModule;
-import com.facebook.presto.spi.ConnectorHandleResolver;
-import com.facebook.presto.spi.ConnectorOutputHandleResolver;
 import com.google.inject.Binder;
 import com.google.inject.Module;
 import com.google.inject.Scopes;
-import com.google.inject.multibindings.MapBinder;
 
-import static com.google.inject.multibindings.MapBinder.newMapBinder;
 import static io.airlift.json.JsonBinder.jsonBinder;
 
 public class HandleJsonModule
@@ -31,16 +27,15 @@ public class HandleJsonModule
     public void configure(Binder binder)
     {
         jsonBinder(binder).addModuleBinding().to(TableHandleJacksonModule.class);
+        jsonBinder(binder).addModuleBinding().to(TableLayoutHandleJacksonModule.class);
         jsonBinder(binder).addModuleBinding().to(ColumnHandleJacksonModule.class);
         jsonBinder(binder).addModuleBinding().to(SplitJacksonModule.class);
         jsonBinder(binder).addModuleBinding().to(OutputTableHandleJacksonModule.class);
+        jsonBinder(binder).addModuleBinding().to(InsertTableHandleJacksonModule.class);
         jsonBinder(binder).addModuleBinding().to(IndexHandleJacksonModule.class);
+        jsonBinder(binder).addModuleBinding().to(TransactionHandleJacksonModule.class);
+        jsonBinder(binder).addModuleBinding().to(PartitioningHandleJacksonModule.class);
 
         binder.bind(HandleResolver.class).in(Scopes.SINGLETON);
-        MapBinder<String, ConnectorHandleResolver> connectorHandleResolverBinder = newMapBinder(binder, String.class, ConnectorHandleResolver.class);
-        connectorHandleResolverBinder.addBinding("remote").to(RemoteSplitHandleResolver.class).in(Scopes.SINGLETON);
-
-        binder.bind(OutputTableHandleResolver.class).in(Scopes.SINGLETON);
-        newMapBinder(binder, String.class, ConnectorOutputHandleResolver.class);
     }
 }

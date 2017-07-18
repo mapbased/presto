@@ -13,41 +13,57 @@
  */
 package com.facebook.presto.connector.system;
 
-import com.facebook.presto.connector.InternalConnector;
-import com.facebook.presto.spi.ConnectorHandleResolver;
-import com.facebook.presto.spi.ConnectorIndexResolver;
-import com.facebook.presto.spi.ConnectorMetadata;
-import com.facebook.presto.spi.ConnectorOutputHandleResolver;
-import com.facebook.presto.spi.ConnectorRecordSetProvider;
-import com.facebook.presto.spi.ConnectorRecordSinkProvider;
-import com.facebook.presto.spi.ConnectorSplitManager;
-import com.facebook.presto.split.ConnectorDataStreamProvider;
-import com.google.common.base.Preconditions;
+import com.facebook.presto.connector.ConnectorId;
+import com.facebook.presto.metadata.InternalNodeManager;
+import com.facebook.presto.spi.SystemTable;
+import com.facebook.presto.spi.connector.ConnectorMetadata;
+import com.facebook.presto.spi.connector.ConnectorPageSourceProvider;
+import com.facebook.presto.spi.connector.ConnectorSplitManager;
+import com.facebook.presto.spi.connector.ConnectorTransactionHandle;
+import com.facebook.presto.spi.transaction.IsolationLevel;
+import com.facebook.presto.transaction.InternalConnector;
+import com.facebook.presto.transaction.TransactionId;
 
-import javax.inject.Inject;
+import java.util.Set;
+import java.util.function.Function;
+
+import static java.util.Objects.requireNonNull;
 
 public class SystemConnector
         implements InternalConnector
 {
-    public static final String CONNECTOR_ID = "system";
+    private final ConnectorId connectorId;
+    private final ConnectorMetadata metadata;
+    private final ConnectorSplitManager splitManager;
+    private final ConnectorPageSourceProvider pageSourceProvider;
+    private final Function<TransactionId, ConnectorTransactionHandle> transactionHandleFunction;
 
-    private final SystemTablesMetadata metadata;
-    private final SystemSplitManager splitManager;
-    private final SystemDataStreamProvider dataStreamProvider;
-
-    @Inject
     public SystemConnector(
-            SystemTablesMetadata metadata,
-            SystemSplitManager splitManager,
-            SystemDataStreamProvider dataStreamProvider)
+            ConnectorId connectorId,
+            InternalNodeManager nodeManager,
+            Set<SystemTable> tables,
+            Function<TransactionId, ConnectorTransactionHandle> transactionHandleFunction)
     {
-        this.metadata = Preconditions.checkNotNull(metadata, "metadata is null");
-        this.splitManager = Preconditions.checkNotNull(splitManager, "splitManager is null");
-        this.dataStreamProvider = Preconditions.checkNotNull(dataStreamProvider, "dataStreamProvider is null");
+        requireNonNull(connectorId, "connectorId is null");
+        requireNonNull(nodeManager, "nodeManager is null");
+        requireNonNull(tables, "tables is null");
+        requireNonNull(transactionHandleFunction, "transactionHandleFunction is null");
+
+        this.connectorId = connectorId;
+        this.metadata = new SystemTablesMetadata(connectorId, tables);
+        this.splitManager = new SystemSplitManager(nodeManager, tables);
+        this.pageSourceProvider = new SystemPageSourceProvider(tables);
+        this.transactionHandleFunction = transactionHandleFunction;
     }
 
     @Override
-    public ConnectorMetadata getMetadata()
+    public ConnectorTransactionHandle beginTransaction(TransactionId transactionId, IsolationLevel isolationLevel, boolean readOnly)
+    {
+        return new SystemTransactionHandle(connectorId, transactionId, transactionHandleFunction);
+    }
+
+    @Override
+    public ConnectorMetadata getMetadata(ConnectorTransactionHandle transactionHandle)
     {
         return metadata;
     }
@@ -59,38 +75,8 @@ public class SystemConnector
     }
 
     @Override
-    public ConnectorDataStreamProvider getDataStreamProvider()
+    public ConnectorPageSourceProvider getPageSourceProvider()
     {
-        return dataStreamProvider;
-    }
-
-    @Override
-    public ConnectorHandleResolver getHandleResolver()
-    {
-        return new SystemHandleResolver();
-    }
-
-    @Override
-    public ConnectorRecordSetProvider getRecordSetProvider()
-    {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public ConnectorRecordSinkProvider getRecordSinkProvider()
-    {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public ConnectorOutputHandleResolver getOutputHandleResolver()
-    {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public ConnectorIndexResolver getIndexResolver()
-    {
-        throw new UnsupportedOperationException();
+        return pageSourceProvider;
     }
 }

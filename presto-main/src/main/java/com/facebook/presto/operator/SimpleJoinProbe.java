@@ -13,11 +13,15 @@
  */
 package com.facebook.presto.operator;
 
-import com.facebook.presto.spi.block.BlockCursor;
+import com.facebook.presto.spi.Page;
+import com.facebook.presto.spi.PageBuilder;
+import com.facebook.presto.spi.block.Block;
+import com.facebook.presto.spi.type.Type;
 
 import java.util.List;
+import java.util.Optional;
 
-import static com.google.common.base.Preconditions.checkState;
+import static com.facebook.presto.spi.type.BigintType.BIGINT;
 
 public class SimpleJoinProbe
         implements JoinProbe
@@ -25,62 +29,80 @@ public class SimpleJoinProbe
     public static class SimpleJoinProbeFactory
             implements JoinProbeFactory
     {
+        private List<Type> types;
+        private List<Integer> probeOutputChannels;
         private List<Integer> probeJoinChannels;
+        private final Optional<Integer> probeHashChannel;
 
-        public SimpleJoinProbeFactory(List<Integer> probeJoinChannels)
+        public SimpleJoinProbeFactory(List<Type> types, List<Integer> probeOutputChannels, List<Integer> probeJoinChannels, Optional<Integer> probeHashChannel)
         {
+            this.types = types;
+            this.probeOutputChannels = probeOutputChannels;
             this.probeJoinChannels = probeJoinChannels;
+            this.probeHashChannel = probeHashChannel;
         }
 
         @Override
         public JoinProbe createJoinProbe(LookupSource lookupSource, Page page)
         {
-            return new SimpleJoinProbe(lookupSource, page, probeJoinChannels);
+            return new SimpleJoinProbe(types, probeOutputChannels, lookupSource, page, probeJoinChannels, probeHashChannel);
         }
     }
 
+    private final List<Type> types;
+    private final List<Integer> probeOutputChannels;
     private final LookupSource lookupSource;
-    private final BlockCursor[] cursors;
-    private final BlockCursor[] probeCursors;
+    private final int positionCount;
+    private final Block[] blocks;
+    private final Block[] probeBlocks;
+    private final Page page;
+    private final Page probePage;
+    private final Optional<Block> probeHashBlock;
 
-    private SimpleJoinProbe(LookupSource lookupSource, Page page, List<Integer> probeJoinChannels)
+    private int position = -1;
+
+    private SimpleJoinProbe(List<Type> types, List<Integer> probeOutputChannels, LookupSource lookupSource, Page page, List<Integer> probeJoinChannels, Optional<Integer> hashChannel)
     {
+        this.types = types;
+        this.probeOutputChannels = probeOutputChannels;
         this.lookupSource = lookupSource;
-        this.cursors = new BlockCursor[page.getChannelCount()];
-        this.probeCursors = new BlockCursor[probeJoinChannels.size()];
+        this.positionCount = page.getPositionCount();
+        this.blocks = new Block[page.getChannelCount()];
+        this.probeBlocks = new Block[probeJoinChannels.size()];
 
         for (int i = 0; i < page.getChannelCount(); i++) {
-            cursors[i] = page.getBlock(i).cursor();
+            blocks[i] = page.getBlock(i);
         }
 
         for (int i = 0; i < probeJoinChannels.size(); i++) {
-            probeCursors[i] = cursors[probeJoinChannels.get(i)];
+            probeBlocks[i] = blocks[probeJoinChannels.get(i)];
         }
+        this.page = page;
+        this.probePage = new Page(page.getPositionCount(), probeBlocks);
+        this.probeHashBlock = hashChannel.isPresent() ? Optional.of(page.getBlock(hashChannel.get())) : Optional.empty();
     }
 
     @Override
-    public int getChannelCount()
+    public int getOutputChannelCount()
     {
-        return cursors.length;
+        return probeOutputChannels.size();
     }
 
     @Override
     public boolean advanceNextPosition()
     {
-        // advance all cursors
-        boolean advanced = cursors[0].advanceNextPosition();
-        for (int i = 1; i < cursors.length; i++) {
-            checkState(advanced == cursors[i].advanceNextPosition());
-        }
-        return advanced;
+        position++;
+        return position < positionCount;
     }
 
     @Override
     public void appendTo(PageBuilder pageBuilder)
     {
-        for (int outputIndex = 0; outputIndex < cursors.length; outputIndex++) {
-            BlockCursor cursor = cursors[outputIndex];
-            cursor.appendTo(pageBuilder.getBlockBuilder(outputIndex));
+        int pageBuilderOutputChannel = 0;
+        for (int outputIndex : probeOutputChannels) {
+            Type type = types.get(outputIndex);
+            Block block = blocks[outputIndex];
+            type.appendTo(block, position, pageBuilder.getBlockBuilder(pageBuilderOutputChannel++));
         }
     }
 
@@ -90,16 +112,32 @@ public class SimpleJoinProbe
         if (currentRowContainsNull()) {
             return -1;
         }
-        return lookupSource.getJoinPosition(probeCursors);
+        if (probeHashBlock.isPresent()) {
+            long rawHash = BIGINT.getLong(probeHashBlock.get(), position);
+            return lookupSource.getJoinPosition(position, probePage, page, rawHash);
+        }
+        return lookupSource.getJoinPosition(position, probePage, page);
     }
 
     private boolean currentRowContainsNull()
     {
-        for (BlockCursor probeCursor : probeCursors) {
-            if (probeCursor.isNull()) {
+        for (Block probeBlock : probeBlocks) {
+            if (probeBlock.isNull(position)) {
                 return true;
             }
         }
         return false;
+    }
+
+    @Override
+    public int getPosition()
+    {
+        return position;
+    }
+
+    @Override
+    public Page getPage()
+    {
+        return page;
     }
 }

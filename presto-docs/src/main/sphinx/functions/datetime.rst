@@ -22,6 +22,17 @@ Operator Example                                               Result
 ``-``    ``interval '3' year - interval '5' month``            ``2-7``
 ======== ===================================================== ===========================
 
+Time Zone Conversion
+--------------------
+
+The ``AT TIME ZONE`` operator sets the time zone of a timestamp::
+
+    SELECT timestamp '2012-10-31 01:00 UTC';
+    2012-10-31 01:00:00.000 UTC
+
+    SELECT timestamp '2012-10-31 01:00 UTC' AT TIME ZONE 'America/Los_Angeles';
+    2012-10-30 18:00:00.000 America/Los_Angeles
+
 Date and Time Functions
 -----------------------
 
@@ -37,9 +48,31 @@ Date and Time Functions
 
     Returns the current timestamp as of the start of the query.
 
+.. function:: current_timezone() -> varchar
+
+    Returns the current time zone in the format defined by IANA
+    (e.g., ``America/Los_Angeles``) or as fixed offset from UTC (e.g., ``+08:35``)
+
+.. function:: date(x) -> date
+
+    This is an alias for ``CAST(x AS date)``.
+
+.. function:: from_iso8601_timestamp(string) -> timestamp with time zone
+
+    Parses the ISO 8601 formatted ``string`` into a ``timestamp with time zone``.
+
+.. function:: from_iso8601_date(string) -> date
+
+    Parses the ISO 8601 formatted ``string`` into a ``date``.
+
 .. function:: from_unixtime(unixtime) -> timestamp
 
     Returns the UNIX timestamp ``unixtime`` as a timestamp.
+
+.. function:: from_unixtime(unixtime, string) -> timestamp with time zone
+
+    Returns the UNIX timestamp ``unixtime`` as a timestamp with time zone
+    using ``string`` for the time zone.
 
 .. function:: from_unixtime(unixtime, hours, minutes) -> timestamp with time zone
 
@@ -50,13 +83,18 @@ Date and Time Functions
 
     Returns the current time as of the start of the query.
 
-.. function:: localtimestamp -> time
+.. function:: localtimestamp -> timestamp
 
     Returns the current timestamp as of the start of the query.
 
 .. function:: now() -> timestamp with time zone
 
     This is an alias for ``current_timestamp``.
+
+.. function:: to_iso8601(x) -> varchar
+
+    Formats ``x`` as an ISO 8601 string. ``x`` can be date, timestamp, or
+    timestamp with time zone.
 
 .. function:: to_unixtime(timestamp) -> double
 
@@ -99,18 +137,19 @@ Interval Functions
 
 The functions in this section support the following interval units:
 
-=========== ==================
-Unit        Description
-=========== ==================
-``second``  Seconds
-``minute``  Minutes
-``hour``    Hours
-``day``     Days
-``week``    Weeks
-``month``   Months
-``quarter`` Quarters of a year
-``year``    Years
-=========== ==================
+================= ==================
+Unit              Description
+================= ==================
+``millisecond``   Milliseconds
+``second``        Seconds
+``minute``        Minutes
+``hour``          Hours
+``day``           Days
+``week``          Weeks
+``month``         Months
+``quarter``       Quarters of a year
+``year``          Years
+================= ==================
 
 .. function:: date_add(unit, value, timestamp) -> [same as input]
 
@@ -120,6 +159,32 @@ Unit        Description
 .. function:: date_diff(unit, timestamp1, timestamp2) -> bigint
 
     Returns ``timestamp2 - timestamp1`` expressed in terms of ``unit``.
+
+Duration Function
+-----------------
+
+The ``parse_duration`` function supports the following units:
+
+======= =============
+Unit    Description
+======= =============
+``ns``  Nanoseconds
+``us``  Microseconds
+``ms``  Milliseconds
+``s``   Seconds
+``m``   Minutes
+``h``   Hours
+``d``   Days
+======= =============
+
+.. function:: parse_duration(string) -> interval
+
+    Parses ``string`` of format ``value unit`` into an interval, where
+    ``value`` is fractional number of ``unit`` values::
+
+        SELECT parse_duration('42.8ms'); -- 0 00:00:00.043
+        SELECT parse_duration('3.81 d'); -- 3 19:26:24.000
+        SELECT parse_duration('5m');     -- 0 00:05:00.000
 
 MySQL Date Functions
 --------------------
@@ -133,11 +198,11 @@ Specifier Description
 ========= ===========
 ``%a``    Abbreviated weekday name (``Sun`` .. ``Sat``)
 ``%b``    Abbreviated month name (``Jan`` .. ``Dec``)
-``%c``    Month, numeric (``0`` .. ``12``)
+``%c``    Month, numeric (``1`` .. ``12``) [#z]_
 ``%D``    Day of the month with English suffix (``0th``, ``1st``, ``2nd``, ``3rd``, ...)
-``%d``    Day of the month, numeric (``00`` .. ``31``)
-``%e``    Day of the month, numeric (``0`` .. ``31``)
-``%f``    Microseconds (``000000`` .. ``999999``)
+``%d``    Day of the month, numeric (``01`` .. ``31``) [#z]_
+``%e``    Day of the month, numeric (``1`` .. ``31``) [#z]_
+``%f``    Fraction of second (6 digits for printing: ``000000`` .. ``999000``; 1 - 9 digits for parsing: ``0`` .. ``999999999``) [#f]_
 ``%H``    Hour (``00`` .. ``23``)
 ``%h``    Hour (``01`` .. ``12``)
 ``%I``    Hour (``01`` .. ``12``)
@@ -146,7 +211,7 @@ Specifier Description
 ``%k``    Hour (``0`` .. ``23``)
 ``%l``    Hour (``1`` .. ``12``)
 ``%M``    Month name (``January`` .. ``December``)
-``%m``    Month, numeric (``00`` .. ``12``)
+``%m``    Month, numeric (``01`` .. ``12``) [#z]_
 ``%p``    ``AM`` or ``PM``
 ``%r``    Time, 12-hour (``hh:mm:ss`` followed by ``AM`` or ``PM``)
 ``%S``    Seconds (``00`` .. ``59``)
@@ -157,16 +222,21 @@ Specifier Description
 ``%V``    Week (``01`` .. ``53``), where Sunday is the first day of the week; used with ``%X``
 ``%v``    Week (``01`` .. ``53``), where Monday is the first day of the week; used with ``%x``
 ``%W``    Weekday name (``Sunday`` .. ``Saturday``)
-``%w``    Day of the week (``0`` .. ``6``), where Sunday is the first day of the week
+``%w``    Day of the week (``0`` .. ``6``), where Sunday is the first day of the week [#w]_
 ``%X``    Year for the week where Sunday is the first day of the week, numeric, four digits; used with ``%V``
 ``%x``    Year for the week, where Monday is the first day of the week, numeric, four digits; used with ``%v``
 ``%Y``    Year, numeric, four digits
-``%y``    Year, numeric (two digits)
+``%y``    Year, numeric (two digits) [#y]_
 ``%%``    A literal ``%`` character
 ``%x``    ``x``, for any ``x`` not listed above
 ========= ===========
 
-.. warning:: The following specifiers are not currently supported: ``%D %U %u %V %X``
+.. [#f] Timestamp is truncated to milliseconds.
+.. [#y] When parsing, two-digit year format assumes range ``1970`` .. ``2069``, so "70" will result in year ``1970`` but "69" will produce ``2069``.
+.. [#w] This specifier is not supported yet. Consider using :func:`day_of_week` (it uses ``1-7`` instead of ``0-6``).
+.. [#z] This specifier does not support ``0`` as a month or day.
+
+.. warning:: The following specifiers are not currently supported: ``%D %U %u %V %w %X``
 
 .. function:: date_format(timestamp, format) -> varchar
 
@@ -180,9 +250,9 @@ Java Date Functions
 -------------------
 
 The functions in this section use a format string that is compatible with
-the Java `SimpleDateFormat`_ pattern format.
+JodaTime's `DateTimeFormat`_ pattern format.
 
-.. _SimpleDateFormat: http://docs.oracle.com/javase/7/docs/api/java/text/SimpleDateFormat.html
+.. _DateTimeFormat: http://joda-time.sourceforge.net/apidocs/org/joda/time/format/DateTimeFormat.html
 
 .. function:: format_datetime(timestamp, format) -> varchar
 
@@ -210,6 +280,8 @@ Field               Description
 ``DOW``             :func:`day_of_week`
 ``DAY_OF_YEAR``     :func:`day_of_year`
 ``DOY``             :func:`day_of_year`
+``YEAR_OF_WEEK``    :func:`year_of_week`
+``YOW``             :func:`year_of_week`
 ``HOUR``            :func:`hour`
 ``MINUTE``          :func:`minute`
 ``SECOND``          :func:`second`
@@ -299,3 +371,11 @@ Convenience Extraction Functions
 .. function:: year(x) -> bigint
 
     Returns the year from ``x``.
+
+.. function:: year_of_week(x) -> bigint
+
+    Returns the year of the `ISO week`_ from ``x``.
+
+.. function:: yow(x) -> bigint
+
+    This is an alias for :func:`year_of_week`.

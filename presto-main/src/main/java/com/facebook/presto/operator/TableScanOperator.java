@@ -13,31 +13,42 @@
  */
 package com.facebook.presto.operator;
 
-import com.facebook.presto.metadata.ColumnHandle;
+import com.facebook.presto.memory.LocalMemoryContext;
 import com.facebook.presto.metadata.Split;
-import com.facebook.presto.split.DataStreamProvider;
-import com.facebook.presto.sql.planner.plan.PlanNodeId;
+import com.facebook.presto.spi.ColumnHandle;
+import com.facebook.presto.spi.ConnectorPageSource;
+import com.facebook.presto.spi.Page;
+import com.facebook.presto.spi.UpdatablePageSource;
 import com.facebook.presto.spi.type.Type;
-import com.google.common.base.Suppliers;
+import com.facebook.presto.split.EmptySplit;
+import com.facebook.presto.split.EmptySplitPageSource;
+import com.facebook.presto.split.PageSourceProvider;
+import com.facebook.presto.sql.planner.plan.PlanNodeId;
+import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.SettableFuture;
 
-import javax.annotation.concurrent.GuardedBy;
-
+import java.io.Closeable;
+import java.io.IOException;
 import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.function.Supplier;
 
-import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
+import static io.airlift.concurrent.MoreFutures.toListenableFuture;
+import static java.util.Objects.requireNonNull;
 
 public class TableScanOperator
-        implements SourceOperator
+        implements SourceOperator, Closeable
 {
     public static class TableScanOperatorFactory
             implements SourceOperatorFactory
     {
         private final int operatorId;
         private final PlanNodeId sourceId;
-        private final DataStreamProvider dataStreamProvider;
+        private final PageSourceProvider pageSourceProvider;
         private final List<Type> types;
         private final List<ColumnHandle> columns;
         private boolean closed;
@@ -45,15 +56,15 @@ public class TableScanOperator
         public TableScanOperatorFactory(
                 int operatorId,
                 PlanNodeId sourceId,
-                DataStreamProvider dataStreamProvider,
+                PageSourceProvider pageSourceProvider,
                 List<Type> types,
                 Iterable<ColumnHandle> columns)
         {
             this.operatorId = operatorId;
-            this.sourceId = checkNotNull(sourceId, "sourceId is null");
-            this.types = checkNotNull(types, "types is null");
-            this.dataStreamProvider = checkNotNull(dataStreamProvider, "dataStreamProvider is null");
-            this.columns = ImmutableList.copyOf(checkNotNull(columns, "columns is null"));
+            this.sourceId = requireNonNull(sourceId, "sourceId is null");
+            this.types = requireNonNull(types, "types is null");
+            this.pageSourceProvider = requireNonNull(pageSourceProvider, "pageSourceProvider is null");
+            this.columns = ImmutableList.copyOf(requireNonNull(columns, "columns is null"));
         }
 
         @Override
@@ -72,11 +83,11 @@ public class TableScanOperator
         public SourceOperator createOperator(DriverContext driverContext)
         {
             checkState(!closed, "Factory is already closed");
-            OperatorContext operatorContext = driverContext.addOperatorContext(operatorId, TableScanOperator.class.getSimpleName());
+            OperatorContext operatorContext = driverContext.addOperatorContext(operatorId, sourceId, TableScanOperator.class.getSimpleName());
             return new TableScanOperator(
                     operatorContext,
                     sourceId,
-                    dataStreamProvider,
+                    pageSourceProvider,
                     types,
                     columns);
         }
@@ -90,25 +101,33 @@ public class TableScanOperator
 
     private final OperatorContext operatorContext;
     private final PlanNodeId planNodeId;
-    private final DataStreamProvider dataStreamProvider;
+    private final PageSourceProvider pageSourceProvider;
     private final List<Type> types;
     private final List<ColumnHandle> columns;
+    private final LocalMemoryContext systemMemoryContext;
+    private final SettableFuture<?> blocked = SettableFuture.create();
 
-    @GuardedBy("this")
-    private Operator source;
+    private Split split;
+    private ConnectorPageSource source;
+
+    private boolean finished;
+
+    private long completedBytes;
+    private long readTimeNanos;
 
     public TableScanOperator(
             OperatorContext operatorContext,
             PlanNodeId planNodeId,
-            DataStreamProvider dataStreamProvider,
+            PageSourceProvider pageSourceProvider,
             List<Type> types,
             Iterable<ColumnHandle> columns)
     {
-        this.operatorContext = checkNotNull(operatorContext, "operatorContext is null");
-        this.planNodeId = checkNotNull(planNodeId, "planNodeId is null");
-        this.types = checkNotNull(types, "types is null");
-        this.dataStreamProvider = checkNotNull(dataStreamProvider, "dataStreamProvider is null");
-        this.columns = ImmutableList.copyOf(checkNotNull(columns, "columns is null"));
+        this.operatorContext = requireNonNull(operatorContext, "operatorContext is null");
+        this.planNodeId = requireNonNull(planNodeId, "planNodeId is null");
+        this.types = requireNonNull(types, "types is null");
+        this.pageSourceProvider = requireNonNull(pageSourceProvider, "pageSourceProvider is null");
+        this.columns = ImmutableList.copyOf(requireNonNull(columns, "columns is null"));
+        this.systemMemoryContext = operatorContext.getSystemMemoryContext().newLocalMemoryContext();
     }
 
     @Override
@@ -124,30 +143,43 @@ public class TableScanOperator
     }
 
     @Override
-    public synchronized void addSplit(final Split split)
+    public Supplier<Optional<UpdatablePageSource>> addSplit(Split split)
     {
-        checkNotNull(split, "split is null");
-        checkState(getSource() == null, "Table scan split already set");
+        requireNonNull(split, "split is null");
+        checkState(this.split == null, "Table scan split already set");
 
-        source = dataStreamProvider.createNewDataStream(operatorContext, split, columns);
+        if (finished) {
+            return Optional::empty;
+        }
+
+        this.split = split;
 
         Object splitInfo = split.getInfo();
         if (splitInfo != null) {
-            operatorContext.setInfoSupplier(Suppliers.ofInstance(splitInfo));
+            operatorContext.setInfoSupplier(() -> new SplitOperatorInfo(splitInfo));
         }
+
+        blocked.set(null);
+
+        if (split.getConnectorSplit() instanceof EmptySplit) {
+            source = new EmptySplitPageSource();
+        }
+
+        return () -> {
+            if (source instanceof UpdatablePageSource) {
+                return Optional.of((UpdatablePageSource) source);
+            }
+            return Optional.empty();
+        };
     }
 
     @Override
-    public synchronized void noMoreSplits()
+    public void noMoreSplits()
     {
-        if (source == null) {
-            source = new FinishedOperator(operatorContext, types);
+        if (split == null) {
+            finished = true;
         }
-    }
-
-    private synchronized Operator getSource()
-    {
-        return source;
+        blocked.set(null);
     }
 
     @Override
@@ -157,26 +189,51 @@ public class TableScanOperator
     }
 
     @Override
+    public void close()
+    {
+        finish();
+    }
+
+    @Override
     public void finish()
     {
-        Operator delegate = getSource();
-        if (delegate == null) {
-            return;
+        finished = true;
+        blocked.set(null);
+
+        if (source != null) {
+            try {
+                source.close();
+            }
+            catch (IOException e) {
+                throw Throwables.propagate(e);
+            }
+            systemMemoryContext.setBytes(source.getSystemMemoryUsage());
         }
-        delegate.finish();
     }
 
     @Override
     public boolean isFinished()
     {
-        Operator delegate = getSource();
-        return delegate != null && delegate.isFinished();
+        if (!finished) {
+            finished = (source != null) && source.isFinished();
+            if (source != null) {
+                systemMemoryContext.setBytes(source.getSystemMemoryUsage());
+            }
+        }
+
+        return finished;
     }
 
     @Override
     public ListenableFuture<?> isBlocked()
     {
-        // todo should be blocked until split is added
+        if (!blocked.isDone()) {
+            return blocked;
+        }
+        if (source != null) {
+            CompletableFuture<?> pageSourceBlocked = source.isBlocked();
+            return pageSourceBlocked.isDone() ? NOT_BLOCKED : toListenableFuture(pageSourceBlocked);
+        }
         return NOT_BLOCKED;
     }
 
@@ -195,10 +252,29 @@ public class TableScanOperator
     @Override
     public Page getOutput()
     {
-        Operator delegate = getSource();
-        if (delegate == null) {
+        if (split == null) {
             return null;
         }
-        return delegate.getOutput();
+        if (source == null) {
+            source = pageSourceProvider.createPageSource(operatorContext.getSession(), split, columns);
+        }
+
+        Page page = source.getNextPage();
+        if (page != null) {
+            // assure the page is in memory before handing to another operator
+            page.assureLoaded();
+
+            // update operator stats
+            long endCompletedBytes = source.getCompletedBytes();
+            long endReadTimeNanos = source.getReadTimeNanos();
+            operatorContext.recordGeneratedInput(endCompletedBytes - completedBytes, page.getPositionCount(), endReadTimeNanos - readTimeNanos);
+            completedBytes = endCompletedBytes;
+            readTimeNanos = endReadTimeNanos;
+        }
+
+        // updating system memory usage should happen after page is loaded.
+        systemMemoryContext.setBytes(source.getSystemMemoryUsage());
+
+        return page;
     }
 }

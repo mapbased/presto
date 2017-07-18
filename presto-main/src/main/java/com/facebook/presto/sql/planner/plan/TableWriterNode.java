@@ -13,97 +13,62 @@
  */
 package com.facebook.presto.sql.planner.plan;
 
+import com.facebook.presto.metadata.InsertTableHandle;
+import com.facebook.presto.metadata.NewTableLayout;
 import com.facebook.presto.metadata.OutputTableHandle;
-import com.facebook.presto.metadata.TableMetadata;
+import com.facebook.presto.metadata.TableHandle;
+import com.facebook.presto.spi.ConnectorTableMetadata;
+import com.facebook.presto.spi.SchemaTableName;
+import com.facebook.presto.sql.planner.PartitioningScheme;
 import com.facebook.presto.sql.planner.Symbol;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.google.common.base.Optional;
+import com.fasterxml.jackson.annotation.JsonSubTypes;
+import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.Iterables;
 
 import javax.annotation.concurrent.Immutable;
 
 import java.util.List;
+import java.util.Optional;
 
 import static com.google.common.base.Preconditions.checkArgument;
-import static com.google.common.base.Preconditions.checkNotNull;
+import static java.util.Objects.requireNonNull;
 
 @Immutable
 public class TableWriterNode
         extends PlanNode
 {
     private final PlanNode source;
-    private final OutputTableHandle target;
+    private final WriterTarget target;
     private final List<Symbol> outputs;
     private final List<Symbol> columns;
     private final List<String> columnNames;
-    private final Optional<Symbol> sampleWeightSymbol;
-    private final String catalog;
-    private final TableMetadata tableMetadata;
-    private final boolean sampleWeightSupported;
+    private final Optional<PartitioningScheme> partitioningScheme;
 
     @JsonCreator
     public TableWriterNode(
             @JsonProperty("id") PlanNodeId id,
             @JsonProperty("source") PlanNode source,
-            @JsonProperty("target") OutputTableHandle target,
+            @JsonProperty("target") WriterTarget target,
             @JsonProperty("columns") List<Symbol> columns,
             @JsonProperty("columnNames") List<String> columnNames,
             @JsonProperty("outputs") List<Symbol> outputs,
-            @JsonProperty("sampleWeightSymbol") Optional<Symbol> sampleWeightSymbol)
-    {
-        this(id, source, target, columns, columnNames, outputs, sampleWeightSymbol, null, null, false);
-    }
-
-    public TableWriterNode(
-            PlanNodeId id,
-            PlanNode source,
-            OutputTableHandle target,
-            List<Symbol> columns,
-            List<String> columnNames,
-            List<Symbol> outputs,
-            Optional<Symbol> sampleWeightSymbol,
-            String catalog,
-            TableMetadata tableMetadata,
-            boolean sampleWeightSupported)
+            @JsonProperty("partitioningScheme") Optional<PartitioningScheme> partitioningScheme)
     {
         super(id);
 
-        checkNotNull(columns, "columns is null");
-        checkNotNull(columnNames, "columnNames is null");
+        requireNonNull(columns, "columns is null");
+        requireNonNull(columnNames, "columnNames is null");
         checkArgument(columns.size() == columnNames.size(), "columns and columnNames sizes don't match");
-        checkArgument((target == null) ^ (catalog == null && tableMetadata == null), "exactly one of target or (catalog, tableMetadata) must be set");
 
-        this.source = checkNotNull(source, "source is null");
-        this.target = target;
+        this.source = requireNonNull(source, "source is null");
+        this.target = requireNonNull(target, "target is null");
         this.columns = ImmutableList.copyOf(columns);
         this.columnNames = ImmutableList.copyOf(columnNames);
-        this.outputs = ImmutableList.copyOf(checkNotNull(outputs, "outputs is null"));
-        this.sampleWeightSymbol = checkNotNull(sampleWeightSymbol, "sampleWeightSymbol is null");
-        this.catalog = catalog;
-        this.tableMetadata = tableMetadata;
-        this.sampleWeightSupported = sampleWeightSupported;
-    }
-
-    public String getCatalog()
-    {
-        return catalog;
-    }
-
-    public TableMetadata getTableMetadata()
-    {
-        return tableMetadata;
-    }
-
-    public boolean isSampleWeightSupported()
-    {
-        return sampleWeightSupported;
-    }
-
-    @JsonProperty
-    public Optional<Symbol> getSampleWeightSymbol()
-    {
-        return sampleWeightSymbol;
+        this.outputs = ImmutableList.copyOf(requireNonNull(outputs, "outputs is null"));
+        this.partitioningScheme = requireNonNull(partitioningScheme, "partitioningScheme is null");
     }
 
     @JsonProperty
@@ -113,7 +78,7 @@ public class TableWriterNode
     }
 
     @JsonProperty
-    public OutputTableHandle getTarget()
+    public WriterTarget getTarget()
     {
         return target;
     }
@@ -137,6 +102,12 @@ public class TableWriterNode
         return outputs;
     }
 
+    @JsonProperty
+    public Optional<PartitioningScheme> getPartitioningScheme()
+    {
+        return partitioningScheme;
+    }
+
     @Override
     public List<PlanNode> getSources()
     {
@@ -144,8 +115,189 @@ public class TableWriterNode
     }
 
     @Override
-    public <C, R> R accept(PlanVisitor<C, R> visitor, C context)
+    public <R, C> R accept(PlanVisitor<R, C> visitor, C context)
     {
         return visitor.visitTableWriter(this, context);
+    }
+
+    @Override
+    public PlanNode replaceChildren(List<PlanNode> newChildren)
+    {
+        return new TableWriterNode(getId(), Iterables.getOnlyElement(newChildren), target, columns, columnNames, outputs, partitioningScheme);
+    }
+
+    @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "@type")
+    @JsonSubTypes({
+            @JsonSubTypes.Type(value = CreateHandle.class, name = "CreateHandle"),
+            @JsonSubTypes.Type(value = InsertHandle.class, name = "InsertHandle"),
+            @JsonSubTypes.Type(value = DeleteHandle.class, name = "DeleteHandle"),
+    })
+    @SuppressWarnings({"EmptyClass", "ClassMayBeInterface"})
+    public abstract static class WriterTarget
+    {
+        @Override
+        public abstract String toString();
+    }
+
+    // only used during planning -- will not be serialized
+    public static class CreateName
+            extends WriterTarget
+    {
+        private final String catalog;
+        private final ConnectorTableMetadata tableMetadata;
+        private final Optional<NewTableLayout> layout;
+
+        public CreateName(String catalog, ConnectorTableMetadata tableMetadata, Optional<NewTableLayout> layout)
+        {
+            this.catalog = requireNonNull(catalog, "catalog is null");
+            this.tableMetadata = requireNonNull(tableMetadata, "tableMetadata is null");
+            this.layout = requireNonNull(layout, "layout is null");
+        }
+
+        public String getCatalog()
+        {
+            return catalog;
+        }
+
+        public ConnectorTableMetadata getTableMetadata()
+        {
+            return tableMetadata;
+        }
+
+        public Optional<NewTableLayout> getLayout()
+        {
+            return layout;
+        }
+
+        @Override
+        public String toString()
+        {
+            return catalog + "." + tableMetadata.getTable();
+        }
+    }
+
+    public static class CreateHandle
+            extends WriterTarget
+    {
+        private final OutputTableHandle handle;
+        private final SchemaTableName schemaTableName;
+
+        @JsonCreator
+        public CreateHandle(
+                @JsonProperty("handle") OutputTableHandle handle,
+                @JsonProperty("schemaTableName") SchemaTableName schemaTableName)
+        {
+            this.handle = requireNonNull(handle, "handle is null");
+            this.schemaTableName = requireNonNull(schemaTableName, "schemaTableName is null");
+        }
+
+        @JsonProperty
+        public OutputTableHandle getHandle()
+        {
+            return handle;
+        }
+
+        @JsonProperty
+        public SchemaTableName getSchemaTableName()
+        {
+            return schemaTableName;
+        }
+
+        @Override
+        public String toString()
+        {
+            return handle.toString();
+        }
+    }
+
+    // only used during planning -- will not be serialized
+    public static class InsertReference
+            extends WriterTarget
+    {
+        private final TableHandle handle;
+
+        public InsertReference(TableHandle handle)
+        {
+            this.handle = requireNonNull(handle, "handle is null");
+        }
+
+        public TableHandle getHandle()
+        {
+            return handle;
+        }
+
+        @Override
+        public String toString()
+        {
+            return handle.toString();
+        }
+    }
+
+    public static class InsertHandle
+            extends WriterTarget
+    {
+        private final InsertTableHandle handle;
+        private final SchemaTableName schemaTableName;
+
+        @JsonCreator
+        public InsertHandle(
+                @JsonProperty("handle") InsertTableHandle handle,
+                @JsonProperty("schemaTableName") SchemaTableName schemaTableName)
+        {
+            this.handle = requireNonNull(handle, "handle is null");
+            this.schemaTableName = requireNonNull(schemaTableName, "schemaTableName is null");
+        }
+
+        @JsonProperty
+        public InsertTableHandle getHandle()
+        {
+            return handle;
+        }
+
+        @JsonProperty
+        public SchemaTableName getSchemaTableName()
+        {
+            return schemaTableName;
+        }
+
+        @Override
+        public String toString()
+        {
+            return handle.toString();
+        }
+    }
+
+    public static class DeleteHandle
+            extends WriterTarget
+    {
+        private final TableHandle handle;
+        private final SchemaTableName schemaTableName;
+
+        @JsonCreator
+        public DeleteHandle(
+                @JsonProperty("handle") TableHandle handle,
+                @JsonProperty("schemaTableName") SchemaTableName schemaTableName)
+        {
+            this.handle = requireNonNull(handle, "handle is null");
+            this.schemaTableName = requireNonNull(schemaTableName, "schemaTableName is null");
+        }
+
+        @JsonProperty
+        public TableHandle getHandle()
+        {
+            return handle;
+        }
+
+        @JsonProperty
+        public SchemaTableName getSchemaTableName()
+        {
+            return schemaTableName;
+        }
+
+        @Override
+        public String toString()
+        {
+            return handle.toString();
+        }
     }
 }

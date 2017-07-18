@@ -14,13 +14,13 @@
 package com.facebook.presto.ml;
 
 import com.facebook.presto.spi.PrestoException;
-import com.facebook.presto.spi.StandardErrorCode;
 import com.google.common.base.Splitter;
 import libsvm.svm_parameter;
 
 import static com.facebook.presto.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT;
 import static com.google.common.base.Preconditions.checkArgument;
 import static java.lang.String.format;
+import static java.util.Locale.ENGLISH;
 
 public final class LibSvmUtils
 {
@@ -75,7 +75,7 @@ public final class LibSvmUtils
                     params.eps = Double.parseDouble(value);
                     break;
                 default:
-                    throw new PrestoException(StandardErrorCode.INVALID_FUNCTION_ARGUMENT.toErrorCode(), format("Unknown parameter %s", pair[0]));
+                    throw new PrestoException(INVALID_FUNCTION_ARGUMENT, format("Unknown parameter %s", pair[0]));
             }
         }
 
@@ -84,7 +84,7 @@ public final class LibSvmUtils
 
     private static int parseKernelType(String value)
     {
-        switch (value.toLowerCase()) {
+        switch (value.toLowerCase(ENGLISH)) {
             case "linear":
                 return svm_parameter.LINEAR;
             case "poly":
@@ -94,7 +94,7 @@ public final class LibSvmUtils
             case "sigmoid":
                 return svm_parameter.SIGMOID;
             default:
-                throw new PrestoException(INVALID_FUNCTION_ARGUMENT.toErrorCode(), format("Unknown kernel type %s", value));
+                throw new PrestoException(INVALID_FUNCTION_ARGUMENT, format("Unknown kernel type %s", value));
         }
     }
 }

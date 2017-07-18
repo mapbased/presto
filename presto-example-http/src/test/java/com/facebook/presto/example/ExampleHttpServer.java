@@ -14,7 +14,6 @@
 package com.facebook.presto.example;
 
 import com.google.common.collect.ImmutableMap;
-import com.google.common.io.ByteStreams;
 import com.google.common.io.Resources;
 import com.google.inject.Binder;
 import com.google.inject.Injector;
@@ -76,7 +75,7 @@ public class ExampleHttpServer
         @Override
         public void configure(Binder binder)
         {
-            binder.bind(new TypeLiteral<Map<String, String>>() {}).annotatedWith(TheServlet.class).toInstance(ImmutableMap.<String, String>of());
+            binder.bind(new TypeLiteral<Map<String, String>>() {}).annotatedWith(TheServlet.class).toInstance(ImmutableMap.of());
             binder.bind(Servlet.class).annotatedWith(TheServlet.class).toInstance(new ExampleHttpServlet());
         }
     }
@@ -89,7 +88,7 @@ public class ExampleHttpServer
                 throws IOException
         {
             URL dataUrl = Resources.getResource(TestExampleClient.class, request.getPathInfo());
-            ByteStreams.copy(Resources.newInputStreamSupplier(dataUrl), response.getOutputStream());
+            Resources.asByteSource(dataUrl).copyTo(response.getOutputStream());
         }
     }
 }

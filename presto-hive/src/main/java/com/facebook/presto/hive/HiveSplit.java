@@ -13,20 +13,22 @@
  */
 package com.facebook.presto.hive;
 
-import com.facebook.presto.spi.ConnectorSession;
 import com.facebook.presto.spi.ConnectorSplit;
 import com.facebook.presto.spi.HostAddress;
+import com.facebook.presto.spi.predicate.TupleDomain;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.google.common.base.Objects;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 
 import java.util.List;
+import java.util.Map;
+import java.util.OptionalInt;
 import java.util.Properties;
 
+import static com.google.common.base.MoreObjects.toStringHelper;
 import static com.google.common.base.Preconditions.checkArgument;
-import static com.google.common.base.Preconditions.checkNotNull;
+import static java.util.Objects.requireNonNull;
 
 public class HiveSplit
         implements ConnectorSplit
@@ -35,13 +37,17 @@ public class HiveSplit
     private final String path;
     private final long start;
     private final long length;
+    private final long fileSize;
     private final Properties schema;
     private final List<HivePartitionKey> partitionKeys;
     private final List<HostAddress> addresses;
     private final String database;
     private final String table;
     private final String partitionName;
-    private final ConnectorSession session;
+    private final TupleDomain<HiveColumnHandle> effectivePredicate;
+    private final OptionalInt bucketNumber;
+    private final boolean forceLocalScheduling;
+    private final Map<Integer, HiveType> columnCoercions;
 
     @JsonCreator
     public HiveSplit(
@@ -52,22 +58,29 @@ public class HiveSplit
             @JsonProperty("path") String path,
             @JsonProperty("start") long start,
             @JsonProperty("length") long length,
+            @JsonProperty("fileSize") long fileSize,
             @JsonProperty("schema") Properties schema,
             @JsonProperty("partitionKeys") List<HivePartitionKey> partitionKeys,
             @JsonProperty("addresses") List<HostAddress> addresses,
-            @JsonProperty("session") ConnectorSession session)
+            @JsonProperty("bucketNumber") OptionalInt bucketNumber,
+            @JsonProperty("forceLocalScheduling") boolean forceLocalScheduling,
+            @JsonProperty("effectivePredicate") TupleDomain<HiveColumnHandle> effectivePredicate,
+            @JsonProperty("columnCoercions") Map<Integer, HiveType> columnCoercions)
     {
-        this.session = session;
-        checkNotNull(clientId, "clientId is null");
+        requireNonNull(clientId, "clientId is null");
         checkArgument(start >= 0, "start must be positive");
         checkArgument(length >= 0, "length must be positive");
-        checkNotNull(database, "database is null");
-        checkNotNull(table, "table is null");
-        checkNotNull(partitionName, "partitionName is null");
-        checkNotNull(path, "path is null");
-        checkNotNull(schema, "schema is null");
-        checkNotNull(partitionKeys, "partitionKeys is null");
-        checkNotNull(addresses, "addresses is null");
+        checkArgument(fileSize >= 0, "fileSize must be positive");
+        requireNonNull(database, "database is null");
+        requireNonNull(table, "table is null");
+        requireNonNull(partitionName, "partitionName is null");
+        requireNonNull(path, "path is null");
+        requireNonNull(schema, "schema is null");
+        requireNonNull(partitionKeys, "partitionKeys is null");
+        requireNonNull(addresses, "addresses is null");
+        requireNonNull(bucketNumber, "bucketNumber is null");
+        requireNonNull(effectivePredicate, "tupleDomain is null");
+        requireNonNull(columnCoercions, "columnCoercions is null");
 
         this.clientId = clientId;
         this.database = database;
@@ -76,9 +89,14 @@ public class HiveSplit
         this.path = path;
         this.start = start;
         this.length = length;
+        this.fileSize = fileSize;
         this.schema = schema;
         this.partitionKeys = ImmutableList.copyOf(partitionKeys);
         this.addresses = ImmutableList.copyOf(addresses);
+        this.bucketNumber = bucketNumber;
+        this.forceLocalScheduling = forceLocalScheduling;
+        this.effectivePredicate = effectivePredicate;
+        this.columnCoercions = columnCoercions;
     }
 
     @JsonProperty
@@ -124,6 +142,12 @@ public class HiveSplit
     }
 
     @JsonProperty
+    public long getFileSize()
+    {
+        return fileSize;
+    }
+
+    @JsonProperty
     public Properties getSchema()
     {
         return schema;
@@ -143,15 +167,33 @@ public class HiveSplit
     }
 
     @JsonProperty
-    public ConnectorSession getSession()
+    public OptionalInt getBucketNumber()
     {
-        return session;
+        return bucketNumber;
+    }
+
+    @JsonProperty
+    public TupleDomain<HiveColumnHandle> getEffectivePredicate()
+    {
+        return effectivePredicate;
+    }
+
+    @JsonProperty
+    public boolean isForceLocalScheduling()
+    {
+        return forceLocalScheduling;
+    }
+
+    @JsonProperty
+    public Map<Integer, HiveType> getColumnCoercions()
+    {
+        return columnCoercions;
     }
 
     @Override
     public boolean isRemotelyAccessible()
     {
-        return true;
+        return !forceLocalScheduling;
     }
 
     @Override
@@ -161,9 +203,11 @@ public class HiveSplit
                 .put("path", path)
                 .put("start", start)
                 .put("length", length)
+                .put("fileSize", fileSize)
                 .put("hosts", addresses)
                 .put("database", database)
                 .put("table", table)
+                .put("forceLocalScheduling", forceLocalScheduling)
                 .put("partitionName", partitionName)
                 .build();
     }
@@ -171,10 +215,12 @@ public class HiveSplit
     @Override
     public String toString()
     {
-        return Objects.toStringHelper(this)
+        return toStringHelper(this)
                 .addValue(path)
                 .addValue(start)
                 .addValue(length)
+                .addValue(fileSize)
+                .addValue(effectivePredicate)
                 .toString();
     }
 }

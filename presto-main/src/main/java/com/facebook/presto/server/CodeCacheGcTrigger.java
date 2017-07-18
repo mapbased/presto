@@ -14,56 +14,67 @@
 package com.facebook.presto.server;
 
 import io.airlift.log.Logger;
+import io.airlift.units.Duration;
+
+import javax.annotation.PostConstruct;
+import javax.inject.Inject;
 
 import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryPoolMXBean;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 final class CodeCacheGcTrigger
 {
+    private static final Logger log = Logger.get(CodeCacheGcTrigger.class);
     private static final AtomicBoolean installed = new AtomicBoolean();
 
-    private CodeCacheGcTrigger() {}
+    private final Duration interval;
+    private final int collectionThreshold;
 
-    public static void installCodeCacheGcTrigger()
+    @Inject
+    public CodeCacheGcTrigger(CodeCacheGcConfig config)
+    {
+        this.interval = config.getCodeCacheCheckInterval();
+        this.collectionThreshold = config.getCodeCacheCollectionThreshold();
+    }
+
+    @PostConstruct
+    public void start()
+    {
+        installCodeCacheGcTrigger();
+    }
+
+    public void installCodeCacheGcTrigger()
     {
         if (installed.getAndSet(true)) {
             return;
         }
 
-        // Hack to work around bugs in java 7 related to code cache management.
-        // See http://mail.openjdk.java.net/pipermail/hotspot-compiler-dev/2013-August/011333.html for more info.
-        final MemoryPoolMXBean codeCacheMbean = findCodeCacheMBean();
+        // Hack to work around bugs in java 8 (8u45+) related to code cache management.
+        // See http://openjdk.5641.n7.nabble.com/JIT-stops-compiling-after-a-while-java-8u45-td259603.html for more info.
+        MemoryPoolMXBean codeCacheMbean = findCodeCacheMBean();
 
-        Thread gcThread = new Thread(new Runnable()
-        {
-            @SuppressWarnings("CallToSystemGC")
-            @Override
-            public void run()
-            {
-                Logger log = Logger.get("Code-Cache-GC-Trigger");
+        Thread gcThread = new Thread(() -> {
+            while (!Thread.currentThread().isInterrupted()) {
+                long used = codeCacheMbean.getUsage().getUsed();
+                long max = codeCacheMbean.getUsage().getMax();
 
-                while (!Thread.currentThread().isInterrupted()) {
-                    long used = codeCacheMbean.getUsage().getUsed();
-                    long max = codeCacheMbean.getUsage().getMax();
+                if (used > 0.95 * max) {
+                    log.error("Code Cache is more than 95% full. JIT may stop working.");
+                }
+                if (used > (max * collectionThreshold) / 100) {
+                    // Due to some obscure bug in hotspot (java 8), once the code cache fills up the JIT stops compiling
+                    // By forcing a GC, we let the code cache evictor make room before the cache fills up.
+                    log.info("Triggering GC to avoid Code Cache eviction bugs");
+                    System.gc();
+                }
 
-                    if (used > 0.95 * max) {
-                        log.error("Code Cache is more than 95% full. JIT may stop working.");
-                    }
-                    if (used > 0.7 * max) {
-                        // Due to some obscure bug in hotspot (java 7), once the code cache fills up the JIT stops compiling and never recovers from this condition.
-                        // By forcing classes to unload from the perm gen, we let the code cache evictor make room before the cache fills up.
-                        // For best results, the server should be run with -XX:+UseConcMarkSweepGC -XX:+ExplicitGCInvokesConcurrent -XX:+CMSClassUnloadingEnabled
-                        log.info("Triggering GC to avoid Code Cache eviction bugs");
-                        System.gc();
-                    }
-
-                    try {
-                        Thread.sleep(1000);
-                    }
-                    catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                    }
+                try {
+                    TimeUnit.MILLISECONDS.sleep(interval.toMillis());
+                }
+                catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
                 }
             }
         });

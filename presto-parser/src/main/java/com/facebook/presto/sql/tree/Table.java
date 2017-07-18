@@ -13,7 +13,13 @@
  */
 package com.facebook.presto.sql.tree;
 
-import com.google.common.base.Objects;
+import com.google.common.collect.ImmutableList;
+
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+
+import static com.google.common.base.MoreObjects.toStringHelper;
 
 public class Table
         extends QueryBody
@@ -22,6 +28,17 @@ public class Table
 
     public Table(QualifiedName name)
     {
+        this(Optional.empty(), name);
+    }
+
+    public Table(NodeLocation location, QualifiedName name)
+    {
+        this(Optional.of(location), name);
+    }
+
+    private Table(Optional<NodeLocation> location, QualifiedName name)
+    {
+        super(location);
         this.name = name;
     }
 
@@ -37,9 +54,15 @@ public class Table
     }
 
     @Override
+    public List<Node> getChildren()
+    {
+        return ImmutableList.of();
+    }
+
+    @Override
     public String toString()
     {
-        return Objects.toStringHelper(this)
+        return toStringHelper(this)
                 .addValue(name)
                 .toString();
     }
@@ -55,12 +78,7 @@ public class Table
         }
 
         Table table = (Table) o;
-
-        if (!name.equals(table.name)) {
-            return false;
-        }
-
-        return true;
+        return Objects.equals(name, table.name);
     }
 
     @Override

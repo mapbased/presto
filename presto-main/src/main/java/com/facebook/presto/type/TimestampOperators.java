@@ -13,36 +13,38 @@
  */
 package com.facebook.presto.type;
 
-import com.facebook.presto.operator.scalar.ScalarOperator;
 import com.facebook.presto.spi.ConnectorSession;
 import com.facebook.presto.spi.PrestoException;
-import com.facebook.presto.spi.type.BooleanType;
-import com.facebook.presto.spi.type.DateType;
-import com.facebook.presto.spi.type.TimeType;
-import com.facebook.presto.spi.type.TimeWithTimeZoneType;
-import com.facebook.presto.spi.type.TimestampType;
-import com.facebook.presto.spi.type.TimestampWithTimeZoneType;
-import com.facebook.presto.spi.type.VarcharType;
+import com.facebook.presto.spi.function.IsNull;
+import com.facebook.presto.spi.function.LiteralParameters;
+import com.facebook.presto.spi.function.ScalarFunction;
+import com.facebook.presto.spi.function.ScalarOperator;
+import com.facebook.presto.spi.function.SqlType;
+import com.facebook.presto.spi.type.AbstractLongType;
+import com.facebook.presto.spi.type.StandardTypes;
 import io.airlift.slice.Slice;
-import io.airlift.slice.Slices;
 import org.joda.time.chrono.ISOChronology;
 
-import static com.facebook.presto.metadata.OperatorType.BETWEEN;
-import static com.facebook.presto.metadata.OperatorType.CAST;
-import static com.facebook.presto.metadata.OperatorType.EQUAL;
-import static com.facebook.presto.metadata.OperatorType.GREATER_THAN;
-import static com.facebook.presto.metadata.OperatorType.GREATER_THAN_OR_EQUAL;
-import static com.facebook.presto.metadata.OperatorType.HASH_CODE;
-import static com.facebook.presto.metadata.OperatorType.LESS_THAN;
-import static com.facebook.presto.metadata.OperatorType.LESS_THAN_OR_EQUAL;
-import static com.facebook.presto.metadata.OperatorType.NOT_EQUAL;
+import java.util.concurrent.TimeUnit;
+
 import static com.facebook.presto.spi.StandardErrorCode.INVALID_CAST_ARGUMENT;
+import static com.facebook.presto.spi.function.OperatorType.BETWEEN;
+import static com.facebook.presto.spi.function.OperatorType.CAST;
+import static com.facebook.presto.spi.function.OperatorType.EQUAL;
+import static com.facebook.presto.spi.function.OperatorType.GREATER_THAN;
+import static com.facebook.presto.spi.function.OperatorType.GREATER_THAN_OR_EQUAL;
+import static com.facebook.presto.spi.function.OperatorType.HASH_CODE;
+import static com.facebook.presto.spi.function.OperatorType.IS_DISTINCT_FROM;
+import static com.facebook.presto.spi.function.OperatorType.LESS_THAN;
+import static com.facebook.presto.spi.function.OperatorType.LESS_THAN_OR_EQUAL;
+import static com.facebook.presto.spi.function.OperatorType.NOT_EQUAL;
 import static com.facebook.presto.spi.type.DateTimeEncoding.packDateTimeWithZone;
 import static com.facebook.presto.type.DateTimeOperators.modulo24Hour;
 import static com.facebook.presto.util.DateTimeUtils.parseTimestampWithoutTimeZone;
 import static com.facebook.presto.util.DateTimeUtils.printTimestampWithoutTimeZone;
 import static com.facebook.presto.util.DateTimeZoneIndex.getChronology;
-import static java.nio.charset.StandardCharsets.UTF_8;
+import static io.airlift.slice.SliceUtf8.trim;
+import static io.airlift.slice.Slices.utf8Slice;
 
 public final class TimestampOperators
 {
@@ -51,110 +53,132 @@ public final class TimestampOperators
     }
 
     @ScalarOperator(EQUAL)
-    @SqlType(BooleanType.class)
-    public static boolean equal(@SqlType(TimestampType.class) long left, @SqlType(TimestampType.class) long right)
+    @SqlType(StandardTypes.BOOLEAN)
+    public static boolean equal(@SqlType(StandardTypes.TIMESTAMP) long left, @SqlType(StandardTypes.TIMESTAMP) long right)
     {
         return left == right;
     }
 
     @ScalarOperator(NOT_EQUAL)
-    @SqlType(BooleanType.class)
-    public static boolean notEqual(@SqlType(TimestampType.class) long left, @SqlType(TimestampType.class) long right)
+    @SqlType(StandardTypes.BOOLEAN)
+    public static boolean notEqual(@SqlType(StandardTypes.TIMESTAMP) long left, @SqlType(StandardTypes.TIMESTAMP) long right)
     {
         return left != right;
     }
 
     @ScalarOperator(LESS_THAN)
-    @SqlType(BooleanType.class)
-    public static boolean lessThan(@SqlType(TimestampType.class) long left, @SqlType(TimestampType.class) long right)
+    @SqlType(StandardTypes.BOOLEAN)
+    public static boolean lessThan(@SqlType(StandardTypes.TIMESTAMP) long left, @SqlType(StandardTypes.TIMESTAMP) long right)
     {
         return left < right;
     }
 
     @ScalarOperator(LESS_THAN_OR_EQUAL)
-    @SqlType(BooleanType.class)
-    public static boolean lessThanOrEqual(@SqlType(TimestampType.class) long left, @SqlType(TimestampType.class) long right)
+    @SqlType(StandardTypes.BOOLEAN)
+    public static boolean lessThanOrEqual(@SqlType(StandardTypes.TIMESTAMP) long left, @SqlType(StandardTypes.TIMESTAMP) long right)
     {
         return left <= right;
     }
 
     @ScalarOperator(GREATER_THAN)
-    @SqlType(BooleanType.class)
-    public static boolean greaterThan(@SqlType(TimestampType.class) long left, @SqlType(TimestampType.class) long right)
+    @SqlType(StandardTypes.BOOLEAN)
+    public static boolean greaterThan(@SqlType(StandardTypes.TIMESTAMP) long left, @SqlType(StandardTypes.TIMESTAMP) long right)
     {
         return left > right;
     }
 
     @ScalarOperator(GREATER_THAN_OR_EQUAL)
-    @SqlType(BooleanType.class)
-    public static boolean greaterThanOrEqual(@SqlType(TimestampType.class) long left, @SqlType(TimestampType.class) long right)
+    @SqlType(StandardTypes.BOOLEAN)
+    public static boolean greaterThanOrEqual(@SqlType(StandardTypes.TIMESTAMP) long left, @SqlType(StandardTypes.TIMESTAMP) long right)
     {
         return left >= right;
     }
 
     @ScalarOperator(BETWEEN)
-    @SqlType(BooleanType.class)
-    public static boolean between(@SqlType(TimestampType.class) long value, @SqlType(TimestampType.class) long min, @SqlType(TimestampType.class) long max)
+    @SqlType(StandardTypes.BOOLEAN)
+    public static boolean between(@SqlType(StandardTypes.TIMESTAMP) long value, @SqlType(StandardTypes.TIMESTAMP) long min, @SqlType(StandardTypes.TIMESTAMP) long max)
     {
         return min <= value && value <= max;
     }
 
+    @ScalarFunction("date")
     @ScalarOperator(CAST)
-    @SqlType(DateType.class)
-    public static long castToDate(ConnectorSession session, @SqlType(TimestampType.class) long value)
+    @SqlType(StandardTypes.DATE)
+    public static long castToDate(ConnectorSession session, @SqlType(StandardTypes.TIMESTAMP) long value)
     {
         // round down the current timestamp to days
         ISOChronology chronology = getChronology(session.getTimeZoneKey());
         long date = chronology.dayOfYear().roundFloor(value);
         // date is currently midnight in timezone of the session
         // convert to UTC
-        return date + chronology.getZone().getOffset(date);
+        long millis = date + chronology.getZone().getOffset(date);
+        return TimeUnit.MILLISECONDS.toDays(millis);
     }
 
     @ScalarOperator(CAST)
-    @SqlType(TimeType.class)
-    public static long castToTime(ConnectorSession session, @SqlType(TimestampType.class) long value)
+    @SqlType(StandardTypes.TIME)
+    public static long castToTime(ConnectorSession session, @SqlType(StandardTypes.TIMESTAMP) long value)
     {
         return modulo24Hour(getChronology(session.getTimeZoneKey()), value);
     }
 
     @ScalarOperator(CAST)
-    @SqlType(TimeWithTimeZoneType.class)
-    public static long castToTimeWithTimeZone(ConnectorSession session, @SqlType(TimestampType.class) long value)
+    @SqlType(StandardTypes.TIME_WITH_TIME_ZONE)
+    public static long castToTimeWithTimeZone(ConnectorSession session, @SqlType(StandardTypes.TIMESTAMP) long value)
     {
         int timeMillis = modulo24Hour(getChronology(session.getTimeZoneKey()), value);
         return packDateTimeWithZone(timeMillis, session.getTimeZoneKey());
     }
 
     @ScalarOperator(CAST)
-    @SqlType(TimestampWithTimeZoneType.class)
-    public static long castToTimestampWithTimeZone(ConnectorSession session, @SqlType(TimestampType.class) long value)
+    @SqlType(StandardTypes.TIMESTAMP_WITH_TIME_ZONE)
+    public static long castToTimestampWithTimeZone(ConnectorSession session, @SqlType(StandardTypes.TIMESTAMP) long value)
     {
         return packDateTimeWithZone(value, session.getTimeZoneKey());
     }
 
     @ScalarOperator(CAST)
-    @SqlType(VarcharType.class)
-    public static Slice castToSlice(ConnectorSession session, @SqlType(TimestampType.class) long value)
+    @LiteralParameters("x")
+    @SqlType("varchar(x)")
+    public static Slice castToSlice(ConnectorSession session, @SqlType(StandardTypes.TIMESTAMP) long value)
     {
-        return Slices.copiedBuffer(printTimestampWithoutTimeZone(session.getTimeZoneKey(), value), UTF_8);
+        return utf8Slice(printTimestampWithoutTimeZone(session.getTimeZoneKey(), value));
     }
 
     @ScalarOperator(CAST)
-    @SqlType(TimestampType.class)
-    public static long castFromSlice(ConnectorSession session, @SqlType(VarcharType.class) Slice value)
+    @LiteralParameters("x")
+    @SqlType(StandardTypes.TIMESTAMP)
+    public static long castFromSlice(ConnectorSession session, @SqlType("varchar(x)") Slice value)
     {
         try {
-            return parseTimestampWithoutTimeZone(session.getTimeZoneKey(), value.toStringUtf8());
+            return parseTimestampWithoutTimeZone(session.getTimeZoneKey(), trim(value).toStringUtf8());
         }
         catch (IllegalArgumentException e) {
-            throw new PrestoException(INVALID_CAST_ARGUMENT.toErrorCode(), e);
+            throw new PrestoException(INVALID_CAST_ARGUMENT, "Value cannot be cast to timestamp: " + value.toStringUtf8(), e);
         }
     }
 
     @ScalarOperator(HASH_CODE)
-    public static int hashCode(@SqlType(TimestampType.class) long value)
+    @SqlType(StandardTypes.BIGINT)
+    public static long hashCode(@SqlType(StandardTypes.TIMESTAMP) long value)
     {
-        return (int) (value ^ (value >>> 32));
+        return AbstractLongType.hash(value);
+    }
+
+    @ScalarOperator(IS_DISTINCT_FROM)
+    @SqlType(StandardTypes.BOOLEAN)
+    public static boolean isDistinctFrom(
+            @SqlType(StandardTypes.TIMESTAMP) long left,
+            @IsNull boolean leftNull,
+            @SqlType(StandardTypes.TIMESTAMP) long right,
+            @IsNull boolean rightNull)
+    {
+        if (leftNull != rightNull) {
+            return true;
+        }
+        if (leftNull) {
+            return false;
+        }
+        return notEqual(left, right);
     }
 }

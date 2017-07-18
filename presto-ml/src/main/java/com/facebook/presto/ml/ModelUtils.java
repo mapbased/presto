@@ -13,9 +13,7 @@
  */
 package com.facebook.presto.ml;
 
-import com.fasterxml.jackson.core.JsonFactory;
-import com.fasterxml.jackson.core.JsonParser;
-import com.fasterxml.jackson.core.JsonToken;
+import com.facebook.presto.spi.block.Block;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Throwables;
 import com.google.common.collect.BiMap;
@@ -26,7 +24,6 @@ import com.google.common.hash.Hashing;
 import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
 
-import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -34,19 +31,17 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import static com.fasterxml.jackson.core.JsonFactory.Feature.CANONICALIZE_FIELD_NAMES;
+import static com.facebook.presto.spi.type.BigintType.BIGINT;
+import static com.facebook.presto.spi.type.DoubleType.DOUBLE;
 import static com.google.common.base.Preconditions.checkArgument;
-import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 import static io.airlift.slice.SizeOf.SIZE_OF_INT;
 import static io.airlift.slice.SizeOf.SIZE_OF_LONG;
 import static java.lang.String.format;
+import static java.util.Objects.requireNonNull;
 
 public final class ModelUtils
 {
-    private static final JsonFactory JSON_FACTORY = new JsonFactory()
-            .disable(CANONICALIZE_FIELD_NAMES);
-
     private static final int VERSION_OFFSET = 0;
     private static final int HASH_OFFSET = VERSION_OFFSET + SIZE_OF_INT;
     private static final int ALGORITHM_OFFSET = HASH_OFFSET + 32;
@@ -57,12 +52,20 @@ public final class ModelUtils
 
     // These ids are serialized to disk. Do not change them.
     @VisibleForTesting
-    static final BiMap<? extends Class<? extends Model>, Integer> MODEL_SERIALIZATION_IDS = ImmutableBiMap.of(
-            SvmClassifier.class, 1,
-            SvmRegressor.class, 2,
-            FeatureVectorUnitNormalizer.class, 3,
-            ClassifierFeatureTransformer.class, 4,
-            RegressorFeatureTransformer.class, 5);
+    static final BiMap<Class<? extends Model>, Integer> MODEL_SERIALIZATION_IDS;
+
+    static {
+        ImmutableBiMap.Builder<Class<? extends Model>, Integer> builder = ImmutableBiMap.builder();
+        builder.put(SvmClassifier.class, 1);
+        builder.put(SvmRegressor.class, 2);
+        builder.put(FeatureVectorUnitNormalizer.class, 3);
+        builder.put(ClassifierFeatureTransformer.class, 4);
+        builder.put(RegressorFeatureTransformer.class, 5);
+        builder.put(FeatureUnitNormalizer.class, 6);
+        builder.put(StringClassifierAdapter.class, 7);
+
+        MODEL_SERIALIZATION_IDS = builder.build();
+    }
 
     private ModelUtils()
     {
@@ -82,9 +85,9 @@ public final class ModelUtils
      */
     public static Slice serialize(Model model)
     {
-        checkNotNull(model, "model is null");
+        requireNonNull(model, "model is null");
         Integer id = MODEL_SERIALIZATION_IDS.get(model.getClass());
-        checkNotNull(id, "id is null");
+        requireNonNull(id, "id is null");
         int size = HYPERPARAMETERS_OFFSET;
 
         // hyperparameters aren't implemented yet
@@ -134,7 +137,7 @@ public final class ModelUtils
 
         int id = slice.getInt(ALGORITHM_OFFSET);
         Class<? extends Model> algorithm = MODEL_SERIALIZATION_IDS.inverse().get(id);
-        checkNotNull(algorithm, "Unsupported algorith %d", id);
+        requireNonNull(algorithm, format("Unsupported algorith %d", id));
 
         int hyperparameterLength = slice.getInt(HYPERPARAMETER_LENGTH_OFFSET);
 
@@ -198,34 +201,15 @@ public final class ModelUtils
     }
 
     //TODO: instead of having this function, we should add feature extractors that extend Model and extract features from Strings
-    public static FeatureVector jsonToFeatures(Slice json)
+    public static FeatureVector toFeatures(Block map)
     {
         Map<Integer, Double> features = new HashMap<>();
-        try (JsonParser parser = JSON_FACTORY.createJsonParser(json.getInput())) {
-            if (parser.nextToken() != JsonToken.START_OBJECT) {
-                throw new RuntimeException("Bad row. Expected a json object");
-            }
 
-            while (true) {
-                JsonToken token = parser.nextValue();
-                if (token == null) {
-                    throw new RuntimeException("Bad row. Expected a json object");
-                }
-                if (token == JsonToken.END_OBJECT) {
-                    break;
-                }
-                int key = Integer.parseInt(parser.getCurrentName());
-                double value = parser.getDoubleValue();
-                features.put(key, value);
+        if (map != null) {
+            for (int position = 0; position < map.getPositionCount(); position += 2) {
+                features.put((int) BIGINT.getLong(map, position), DOUBLE.getDouble(map, position + 1));
             }
         }
-        catch (IOException e) {
-            throw Throwables.propagate(e);
-        }
-        catch (RuntimeException e) {
-            throw new RuntimeException(format("Bad features: %s", json.toStringUtf8()), e);
-        }
-
         return new FeatureVector(features);
     }
 }

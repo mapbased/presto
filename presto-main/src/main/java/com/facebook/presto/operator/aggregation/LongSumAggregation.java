@@ -15,35 +15,43 @@ package com.facebook.presto.operator.aggregation;
 
 import com.facebook.presto.operator.aggregation.state.NullableLongState;
 import com.facebook.presto.spi.block.BlockBuilder;
-import com.facebook.presto.spi.block.BlockCursor;
+import com.facebook.presto.spi.function.AggregationFunction;
+import com.facebook.presto.spi.function.AggregationState;
+import com.facebook.presto.spi.function.CombineFunction;
+import com.facebook.presto.spi.function.InputFunction;
+import com.facebook.presto.spi.function.OutputFunction;
+import com.facebook.presto.spi.function.SqlType;
+import com.facebook.presto.spi.type.BigintType;
+import com.facebook.presto.spi.type.StandardTypes;
+import com.facebook.presto.type.BigintOperators;
 
-import static com.facebook.presto.spi.type.BigintType.BIGINT;
-
-public class LongSumAggregation
-        extends AbstractAggregationFunction<NullableLongState>
+@AggregationFunction("sum")
+public final class LongSumAggregation
 {
-    public static final AggregationFunction LONG_SUM = new LongSumAggregation();
+    private LongSumAggregation() {}
 
-    public LongSumAggregation()
+    @InputFunction
+    public static void sum(@AggregationState NullableLongState state, @SqlType(StandardTypes.BIGINT) long value)
     {
-        super(BIGINT, BIGINT, BIGINT);
+        state.setNull(false);
+        state.setLong(BigintOperators.add(state.getLong(), value));
     }
 
-    @Override
-    public void processInput(NullableLongState state, BlockCursor cursor)
+    @CombineFunction
+    public static void combine(@AggregationState NullableLongState state, @AggregationState NullableLongState otherState)
     {
-        state.setNotNull(true);
-        state.setLong(state.getLong() + cursor.getLong());
+        if (state.isNull()) {
+            state.setNull(false);
+            state.setLong(otherState.getLong());
+            return;
+        }
+
+        state.setLong(BigintOperators.add(state.getLong(), otherState.getLong()));
     }
 
-    @Override
-    public void evaluateFinal(NullableLongState state, BlockBuilder out)
+    @OutputFunction(StandardTypes.BIGINT)
+    public static void output(@AggregationState NullableLongState state, BlockBuilder out)
     {
-        if (state.isNotNull()) {
-            out.appendLong(state.getLong());
-        }
-        else {
-            out.appendNull();
-        }
+        NullableLongState.write(BigintType.BIGINT, state, out);
     }
 }

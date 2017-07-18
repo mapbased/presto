@@ -17,13 +17,13 @@ import com.facebook.presto.spi.ConnectorSplit;
 import com.facebook.presto.spi.HostAddress;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.google.common.base.Objects;
 import com.google.common.collect.ImmutableList;
 
 import java.net.URI;
 import java.util.List;
 
-import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.MoreObjects.toStringHelper;
+import static java.util.Objects.requireNonNull;
 
 public class RemoteSplit
         implements ConnectorSplit
@@ -33,7 +33,7 @@ public class RemoteSplit
     @JsonCreator
     public RemoteSplit(@JsonProperty("location") URI location)
     {
-        this.location = checkNotNull(location, "location is null");
+        this.location = requireNonNull(location, "location is null");
     }
 
     @JsonProperty
@@ -63,7 +63,7 @@ public class RemoteSplit
     @Override
     public String toString()
     {
-        return Objects.toStringHelper(this)
+        return toStringHelper(this)
                 .add("location", location)
                 .toString();
     }

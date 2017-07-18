@@ -13,68 +13,57 @@
  */
 package com.facebook.presto.raptor;
 
-import com.facebook.presto.spi.ConnectorFactory;
-import com.facebook.presto.spi.NodeManager;
 import com.facebook.presto.spi.Plugin;
-import com.facebook.presto.spi.block.BlockEncodingSerde;
-import com.facebook.presto.spi.type.TypeManager;
+import com.facebook.presto.spi.connector.ConnectorFactory;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
-
-import javax.inject.Inject;
+import com.google.inject.Module;
 
 import java.util.List;
 import java.util.Map;
+import java.util.ServiceLoader;
 
-import static com.google.common.base.Preconditions.checkNotNull;
-import static com.google.common.base.Preconditions.checkState;
+import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Strings.isNullOrEmpty;
+import static com.google.common.collect.Iterables.getOnlyElement;
+import static java.util.Objects.requireNonNull;
 
 public class RaptorPlugin
         implements Plugin
 {
-    private Map<String, String> optionalConfig = ImmutableMap.of();
-    private NodeManager nodeManager;
-    private BlockEncodingSerde blockEncodingSerde;
-    private TypeManager typeManager;
+    private final String name;
+    private final Module metadataModule;
+    private final Map<String, Module> backupProviders;
 
-    @Override
-    public void setOptionalConfig(Map<String, String> optionalConfig)
+    public RaptorPlugin()
     {
-        this.optionalConfig = ImmutableMap.copyOf(checkNotNull(optionalConfig, "optionalConfig is null"));
+        this(getPluginInfo());
     }
 
-    @Inject
-    public void setNodeManager(NodeManager nodeManager)
+    private RaptorPlugin(PluginInfo info)
     {
-        this.nodeManager = nodeManager;
+        this(info.getName(), info.getMetadataModule(), info.getBackupProviders());
     }
 
-    @Inject
-    public void setBlockEncodingSerde(BlockEncodingSerde blockEncodingSerde)
+    public RaptorPlugin(String name, Module metadataModule, Map<String, Module> backupProviders)
     {
-        this.blockEncodingSerde = checkNotNull(blockEncodingSerde, "blockEncodingSerde is null");
-    }
-
-    @Inject
-    public void setTypeManager(TypeManager typeManager)
-    {
-        this.typeManager = checkNotNull(typeManager, "typeManager is null");
+        checkArgument(!isNullOrEmpty(name), "name is null or empty");
+        this.name = name;
+        this.metadataModule = requireNonNull(metadataModule, "metadataModule is null");
+        this.backupProviders = ImmutableMap.copyOf(requireNonNull(backupProviders, "backupProviders is null"));
     }
 
     @Override
-    public <T> List<T> getServices(Class<T> type)
+    public Iterable<ConnectorFactory> getConnectorFactories()
     {
-        checkState(nodeManager != null, "NodeManager has not been set");
-        checkState(blockEncodingSerde != null, "BlockEncodingSerde has not been set");
-        checkState(typeManager != null, "TypeManager has not been set");
+        return ImmutableList.of(new RaptorConnectorFactory(name, metadataModule, backupProviders));
+    }
 
-        if (type == ConnectorFactory.class) {
-            return ImmutableList.of(type.cast(new RaptorConnectorFactory(
-                    optionalConfig,
-                    nodeManager,
-                    blockEncodingSerde,
-                    typeManager)));
-        }
-        return ImmutableList.of();
+    private static PluginInfo getPluginInfo()
+    {
+        ClassLoader classLoader = RaptorPlugin.class.getClassLoader();
+        ServiceLoader<PluginInfo> loader = ServiceLoader.load(PluginInfo.class, classLoader);
+        List<PluginInfo> list = ImmutableList.copyOf(loader);
+        return list.isEmpty() ? new PluginInfo() : getOnlyElement(list);
     }
 }
